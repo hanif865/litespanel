@@ -11,6 +11,7 @@ socket paths, MySQL admin auth). Fill these in for your distro before use.
 """
 from __future__ import annotations
 
+import re
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,6 +22,22 @@ from .base import CertInfo, DbCredentials, Provider
 # On Debian/Ubuntu these are the conventional locations.
 NGINX_SITES = Path("/etc/nginx/sites-enabled")
 WEB_ROOT = Path("/var/www")
+
+# Database/user names must be plain identifiers — validated here as defense in
+# depth so a bad name can never be interpolated into SQL, even if a caller
+# forgets to check.
+_IDENT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,63}$")
+
+
+def _ident(value: str, what: str) -> str:
+    if not _IDENT_RE.match(value):
+        raise ValueError(f"Unsafe {what}: {value!r}")
+    return value
+
+
+def _mysql_str(value: str) -> str:
+    """Escape a value for use inside a single-quoted MySQL string literal."""
+    return value.replace("\\", "\\\\").replace("'", "\\'")
 
 
 def _run(cmd: list[str]) -> str:
@@ -88,6 +105,7 @@ class LinuxProvider(Provider):
             raise RuntimeError(f"crontab update failed: {result.stderr.strip()}")
 
     def db_tables(self, name: str) -> list[str]:
+        _ident(name, "database name")
         out = _run(["mysql", "-N", "-e", f"SHOW TABLES FROM `{name}`;"])
         return [line.strip() for line in out.splitlines() if line.strip()]
 
@@ -111,10 +129,14 @@ class LinuxProvider(Provider):
         return result
 
     def create_database(self, name: str, user: str, password: str) -> DbCredentials:
-        # NOTE: supply MySQL admin auth via ~/.my.cnf or a socket, never inline.
+        # Names are validated to plain identifiers; the password is escaped for
+        # the SQL string literal so it can't break out or inject.
+        _ident(name, "database name")
+        _ident(user, "database user")
+        pw = _mysql_str(password)
         sql = (
             f"CREATE DATABASE `{name}`; "
-            f"CREATE USER '{user}'@'localhost' IDENTIFIED BY '{password}'; "
+            f"CREATE USER '{user}'@'localhost' IDENTIFIED BY '{pw}'; "
             f"GRANT ALL PRIVILEGES ON `{name}`.* TO '{user}'@'localhost'; "
             f"FLUSH PRIVILEGES;"
         )
@@ -122,6 +144,8 @@ class LinuxProvider(Provider):
         return DbCredentials(name=name, user=user, password=password)
 
     def drop_database(self, name: str, user: str) -> None:
+        _ident(name, "database name")
+        _ident(user, "database user")
         _run(["mysql", "-e", f"DROP DATABASE IF EXISTS `{name}`; DROP USER IF EXISTS '{user}'@'localhost';"])
 
     def issue_certificate(self, domain: str) -> CertInfo:
@@ -231,17 +255,24 @@ class LinuxProvider(Provider):
     def restore_backup(self, zip_path: Path) -> dict:
         import zipfile
 
+        from .base import safe_extract_path
+
         items = []
         with zipfile.ZipFile(zip_path) as zf:
             for member in zf.namelist():
+                if member.endswith("/"):
+                    continue
                 if member.startswith("homedir/"):
-                    target = WEB_ROOT / member[len("homedir/"):]
+                    target = safe_extract_path(WEB_ROOT, member[len("homedir/"):])
+                    if target is None:
+                        continue  # Zip Slip attempt
                     target.parent.mkdir(parents=True, exist_ok=True)
                     with zf.open(member) as src, open(target, "wb") as out:
                         out.write(src.read())
                     items.append(member)
                 elif member.startswith("databases/") and member.endswith(".sql"):
                     name = Path(member).stem
+                    _ident(name, "database name")
                     sql = zf.read(member).decode()
                     subprocess.run(["mysql", name], input=sql, text=True)
                     items.append(member)

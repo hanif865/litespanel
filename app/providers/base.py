@@ -12,6 +12,19 @@ from datetime import datetime
 from pathlib import Path
 
 
+def safe_extract_path(base: Path, relative: str) -> Path | None:
+    """Resolve `relative` under `base`, returning None if it escapes (Zip Slip).
+
+    Used when unpacking a backup archive so a crafted member like
+    "../../etc/passwd" can never write outside the intended directory.
+    """
+    base = base.resolve()
+    target = (base / relative).resolve()
+    if target == base or base in target.parents:
+        return target
+    return None
+
+
 @dataclass
 class CertInfo:
     issuer: str

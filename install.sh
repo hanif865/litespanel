@@ -160,7 +160,7 @@ After=network.target mysql.service
 User=root
 WorkingDirectory=${PANEL_DIR}
 EnvironmentFile=${ENV_FILE}
-ExecStart=${PANEL_DIR}/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
+ExecStart=${PANEL_DIR}/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1 --proxy-headers --forwarded-allow-ips=127.0.0.1
 Restart=always
 RestartSec=3
 
@@ -224,6 +224,9 @@ if [ -n "$DOMAIN" ]; then
     step "Requesting a Let's Encrypt certificate for ${DOMAIN}"
     if certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos -m "admin@${DOMAIN}" --redirect >/dev/null 2>&1; then
         ok "HTTPS enabled for ${DOMAIN}"
+        # Now that we're on HTTPS, turn on Secure session cookies.
+        if ! grep -q '^PANEL_HTTPS=' "$ENV_FILE"; then echo "PANEL_HTTPS=true" >> "$ENV_FILE"; fi
+        systemctl restart litespanel
         URL="https://${DOMAIN}"
     else
         warn "SSL request failed — is ${DOMAIN}'s DNS pointing to ${SERVER_IP}? You can retry later:"

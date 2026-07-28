@@ -47,6 +47,10 @@ DEFAULT_ADMIN_PASSWORD = _env("PANEL_ADMIN_PASSWORD", "admin")
 
 # --- App -------------------------------------------------------------------
 APP_NAME = _env("PANEL_APP_NAME", "LitesPanel")
+
+# Set PANEL_HTTPS=true once the panel is served over HTTPS so the session cookie
+# gets the Secure flag (don't enable while still on plain HTTP or logins break).
+HTTPS_ONLY = _env("PANEL_HTTPS", "false").lower() in ("1", "true", "yes")
 # Base domain used to build demo URLs and default nginx server_name hints.
 PANEL_HOST = _env("PANEL_HOST", "localhost")
 

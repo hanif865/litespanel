@@ -54,6 +54,33 @@ itself, and a **systemd service** — then prints your panel URL and admin login
   stats (stdlib + ctypes sampler on Windows, /proc on Linux — no psutil)
 - 🌙 **Dark mode** — persistent theme toggle (applied before paint, no flash)
 
+## Security
+
+Built-in protections:
+
+- **CSRF** — SameSite=Lax session cookies + same-origin (Origin/Referer) checks
+  on every state-changing request.
+- **Session cookies** — HttpOnly, SameSite=Lax, and Secure once `PANEL_HTTPS=true`;
+  the session id is rotated on login (anti session-fixation).
+- **Login throttling** — 5 failed attempts per IP triggers a 5-minute lockout.
+- **Security headers** — `X-Content-Type-Options`, `X-Frame-Options: SAMEORIGIN`,
+  `Referrer-Policy`, `Permissions-Policy`.
+- **SQL safety** — database/user names are validated to plain identifiers and
+  passwords are escaped before hitting MySQL (no string-built injection).
+- **Path safety** — the file manager confines every path to the site root, and
+  backup restore rejects Zip-Slip paths that escape the target directory.
+- **Passwords** — PBKDF2-HMAC-SHA256 (200k iterations), constant-time compare.
+
+Remaining hardening for **untrusted multi-tenant shared hosting** (not yet done):
+
+- Per-account **system-user isolation** — today hosted sites share one OS user.
+  Real shared hosting needs a separate user + permissions per account.
+- The panel runs as **root** (the linux provider expects it, like cPanel). A
+  more locked-down setup would drop to a service user with scoped `sudo` rules.
+
+For a **single operator / trusted team**, the current posture is production-ready
+behind HTTPS; the two items above matter when you sell hosting to strangers.
+
 ## Roles
 
 | Role | Can do |

@@ -313,20 +313,27 @@ class DemoProvider(Provider):
     def restore_backup(self, zip_path: Path) -> dict:
         import zipfile
 
+        from .base import safe_extract_path
+
+        # Map each archive prefix to the base dir it may write into.
+        bases = {
+            "homedir/": config.SITES_DIR,
+            "dns/": config.DNS_DIR,
+            "mail/": config.MAIL_DIR,
+            "databases/": config.DB_SANDBOX_DIR,
+        }
         items = []
         with zipfile.ZipFile(zip_path) as zf:
             for member in zf.namelist():
-                if member.startswith("homedir/"):
-                    rel = member[len("homedir/"):]
-                    target = config.SITES_DIR / rel
-                elif member.startswith("dns/"):
-                    target = config.DNS_DIR / member[len("dns/"):]
-                elif member.startswith("mail/"):
-                    target = config.MAIL_DIR / member[len("mail/"):]
-                elif member.startswith("databases/"):
-                    target = config.DB_SANDBOX_DIR / member[len("databases/"):]
-                else:
+                if member.endswith("/"):
+                    continue  # directory entry
+                base = next((b for p, b in bases.items() if member.startswith(p)), None)
+                if base is None:
                     continue  # skip manifest.json and anything unexpected
+                rel = member.split("/", 1)[1]
+                target = safe_extract_path(base, rel)
+                if target is None:
+                    continue  # Zip Slip attempt — refuse to write outside base
                 target.parent.mkdir(parents=True, exist_ok=True)
                 with zf.open(member) as src, open(target, "wb") as out:
                     out.write(src.read())

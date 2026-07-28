@@ -64,6 +64,13 @@ def run_query(
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
+    # When real phpMyAdmin is wired up, the built-in console is disabled — use
+    # phpMyAdmin (which authenticates as the database's own scoped MySQL user)
+    # instead of this passthrough.
+    if config.PHPMYADMIN_URL:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=404, detail="Use phpMyAdmin.")
     selected = db.scalar(
         select(Database).where(Database.owner_id == user.id, Database.name == db_name)
     )

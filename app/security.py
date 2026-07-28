@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import secrets
+import time
 
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy import select
@@ -18,6 +19,34 @@ from .models import User
 
 _ALGO = "sha256"
 _ITERATIONS = 200_000
+
+# --- Login brute-force throttle (in-memory; fine for a single-worker panel) ---
+_MAX_ATTEMPTS = 5
+_WINDOW_SECONDS = 300  # lock out for 5 minutes after 5 failures
+_failed_logins: dict[str, list[float]] = {}
+
+
+def client_ip(request: Request) -> str:
+    """Real client IP, honoring the reverse proxy's X-Forwarded-For."""
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        return xff.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def login_throttled(key: str) -> bool:
+    now = time.time()
+    recent = [t for t in _failed_logins.get(key, []) if now - t < _WINDOW_SECONDS]
+    _failed_logins[key] = recent
+    return len(recent) >= _MAX_ATTEMPTS
+
+
+def record_login_failure(key: str) -> None:
+    _failed_logins.setdefault(key, []).append(time.time())
+
+
+def clear_login_failures(key: str) -> None:
+    _failed_logins.pop(key, None)
 
 
 def hash_password(password: str) -> str:

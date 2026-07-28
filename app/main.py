@@ -13,6 +13,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from . import config
 from .db import SessionLocal, init_db
+from .middleware import CSRFMiddleware, SecurityHeadersMiddleware
 from .models import User
 from .security import hash_password
 from .web import TEMPLATES_DIR, templates
@@ -23,7 +24,18 @@ from .routers import (
 
 app = FastAPI(title=config.APP_NAME, docs_url=None, redoc_url=None)
 
-app.add_middleware(SessionMiddleware, secret_key=config.SECRET_KEY, session_cookie=config.SESSION_COOKIE)
+# Middleware order: the LAST added is the OUTERMOST. Session must be inner so
+# the security layers wrap around it.
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=config.SECRET_KEY,
+    session_cookie=config.SESSION_COOKIE,
+    same_site="lax",              # blocks the cookie on cross-site requests (CSRF)
+    https_only=config.HTTPS_ONLY,  # Secure flag once served over HTTPS
+    max_age=60 * 60 * 12,          # 12h sessions
+)
+app.add_middleware(CSRFMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
 
 # Static assets (CSS). Directory is created by init_db()/ensure_dirs isn't
 # responsible for it, so ensure it exists here.
@@ -55,6 +67,19 @@ app.include_router(users.router)
 def _startup() -> None:
     init_db()
     _bootstrap_admin()
+    _security_warnings()
+
+
+def _security_warnings() -> None:
+    """Print loud warnings for insecure production configuration."""
+    import logging
+
+    log = logging.getLogger("litespanel.security")
+    if config.PROVIDER == "linux":
+        if config.DEFAULT_ADMIN_PASSWORD == "admin":
+            log.warning("⚠️  Admin password is the default 'admin' — set PANEL_ADMIN_PASSWORD!")
+        if not config.HTTPS_ONLY:
+            log.warning("⚠️  PANEL_HTTPS is off — enable it once served over HTTPS for Secure cookies.")
 
 
 def _bootstrap_admin() -> None:
