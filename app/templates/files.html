@@ -2,108 +2,162 @@
 {% block title %}File Manager{% endblock %}
 {% block content %}
 <div class="breadcrumb"><a href="/">🏠 Home</a> / File Manager</div>
-<h1>File Manager</h1>
 
 {% if not domains %}
 <div class="empty">Add a domain first — the file manager works inside each site's <code>public_html</code>.</div>
 {% else %}
 
-<form method="get" action="/files" class="row-form">
+<form method="get" action="/files" class="row-form" style="margin-bottom:.6rem">
   <select name="domain_id" onchange="this.form.submit()">
     {% for d in domains %}
       <option value="{{ d.id }}" {{ 'selected' if selected and d.id == selected.id }}>{{ d.name }}</option>
     {% endfor %}
   </select>
-  <span class="muted">/ public_html / {{ path }}</span>
 </form>
 
-<div class="toolbar card">
-  <form method="post" action="/files/upload" enctype="multipart/form-data" class="inline-form">
-    <input type="hidden" name="domain_id" value="{{ selected.id }}">
-    <input type="hidden" name="path" value="{{ path }}">
-    <input type="file" name="file" required>
-    <button type="submit" class="btn btn-sm btn-primary">⬆️ Upload</button>
-  </form>
-  <form method="post" action="/files/mkdir" class="inline-form">
-    <input type="hidden" name="domain_id" value="{{ selected.id }}">
-    <input type="hidden" name="path" value="{{ path }}">
-    <input type="text" name="name" placeholder="new-folder" required style="max-width:130px">
-    <button type="submit" class="btn btn-sm">📁 New folder</button>
-  </form>
-  <form method="post" action="/files/newfile" class="inline-form">
-    <input type="hidden" name="domain_id" value="{{ selected.id }}">
-    <input type="hidden" name="path" value="{{ path }}">
-    <input type="text" name="name" placeholder="index.php" required style="max-width:130px">
-    <button type="submit" class="btn btn-sm">📄 New file</button>
-  </form>
+<!-- ===== cPanel-style top toolbar ===== -->
+<div class="fm-toolbar">
+  <button type="button" class="fm-btn" onclick="fmPrompt('newfile','name','New file name:','index.php')"><span>➕</span>File</button>
+  <button type="button" class="fm-btn" onclick="fmPrompt('mkdir','name','New folder name:','new-folder')"><span>📁</span>Folder</button>
+  <button type="button" class="fm-btn" onclick="fmPrompt('copy','new_name','Copy selected as:','copy')"><span>📋</span>Copy</button>
+  <button type="button" class="fm-btn" onclick="fmPrompt('move','dest','Move into folder (path):','')"><span>➡️</span>Move</button>
+  <button type="button" class="fm-btn" onclick="document.getElementById('upfile').click()"><span>⬆️</span>Upload</button>
+  <button type="button" class="fm-btn" onclick="fmDownload()"><span>⬇️</span>Download</button>
+  {% if in_trash %}
+  <button type="submit" class="fm-btn" form="fm" formaction="/files/restore"><span>♻️</span>Restore</button>
+  <button type="submit" class="fm-btn danger" form="fm" formaction="/files/delete"
+          onclick="return confirm('Permanently delete selected items?')"><span>❌</span>Delete</button>
+  {% else %}
+  <button type="submit" class="fm-btn" form="fm" formaction="/files/trash"><span>🗑️</span>Delete</button>
+  {% endif %}
+  <button type="button" class="fm-btn" onclick="fmPrompt('rename','new_name','Rename to:','')"><span>✏️</span>Rename</button>
+  <button type="button" class="fm-btn" onclick="fmEdit()"><span>📝</span>Edit</button>
+  <button type="button" class="fm-btn" onclick="fmPrompt('chmod','perms','Permissions (octal, e.g. 755):','644')"><span>🔧</span>Permissions</button>
+  <button type="submit" class="fm-btn" form="fm" formaction="/files/extract"><span>📦</span>Extract</button>
+  <button type="button" class="fm-btn" onclick="fmPrompt('compress','archive_name','Archive name:','archive.zip')"><span>🗜️</span>Compress</button>
 </div>
 
-<table class="table">
-  <thead><tr><th>Name</th><th>Size</th><th>Actions</th></tr></thead>
-  <tbody>
-  {% if parent is not none %}
-    <tr><td colspan="3"><a href="/files?domain_id={{ selected.id }}&path={{ parent }}">⬆️ ..</a></td></tr>
-  {% endif %}
-  {% for e in entries %}
-    <tr>
-      <td>
-        {% if e.is_dir %}
-          📁 <a href="/files?domain_id={{ selected.id }}&path={{ e.rel }}"><strong>{{ e.name }}</strong></a>
-        {% else %}
-          📄 {{ e.name }}
-        {% endif %}
-      </td>
-      <td class="muted">{{ '' if e.is_dir else e.size | human_size }}</td>
-      <td class="actions">
-        {% if e.editable %}
-          <a href="/files/edit?domain_id={{ selected.id }}&path={{ e.rel }}" class="btn btn-sm">Edit</a>
-        {% endif %}
-        {% if not e.is_dir %}
-          <a href="/files/download?domain_id={{ selected.id }}&path={{ e.rel }}" class="btn btn-sm">Download</a>
-        {% endif %}
-        {% if not e.is_dir and (e.name.endswith('.zip') or e.name.endswith('.tar') or e.name.endswith('.tar.gz') or e.name.endswith('.tgz')) %}
-        <form method="post" action="/files/extract" style="display:inline;margin:0">
-          <input type="hidden" name="domain_id" value="{{ selected.id }}">
-          <input type="hidden" name="path" value="{{ path }}">
-          <input type="hidden" name="target_rel" value="{{ e.rel }}">
-          <button type="submit" class="btn btn-sm">📦 Extract</button>
-        </form>
-        {% endif %}
-        <button type="button" class="btn btn-sm" onclick="doOp('rename', {{ e.rel|tojson }}, {{ e.name|tojson }})">Rename</button>
-        <button type="button" class="btn btn-sm" onclick="doOp('copy', {{ e.rel|tojson }}, {{ e.name|tojson }})">Copy</button>
-        <form method="post" action="/files/delete" onsubmit="return confirm('Delete {{ e.name }}?')" style="display:inline;margin:0">
-          <input type="hidden" name="domain_id" value="{{ selected.id }}">
-          <input type="hidden" name="path" value="{{ path }}">
-          <input type="hidden" name="target_rel" value="{{ e.rel }}">
-          <button type="submit" class="btn btn-sm btn-danger">Delete</button>
-        </form>
-      </td>
-    </tr>
-  {% endfor %}
-  {% if not entries %}
-    <tr><td colspan="3" class="muted">Empty folder.</td></tr>
-  {% endif %}
-  </tbody>
-</table>
+<!-- ===== secondary nav bar ===== -->
+<div class="fm-subbar">
+  <a href="/files?domain_id={{ selected.id }}&path=">🏠 Home</a>
+  {% if parent is not none %}<a href="/files?domain_id={{ selected.id }}&path={{ parent }}">⬆️ Up One Level</a>{% endif %}
+  <a href="/files?domain_id={{ selected.id }}&path={{ path }}">🔄 Reload</a>
+  <a href="#" onclick="fmToggle(true);return false;">☑️ Select All</a>
+  <a href="#" onclick="fmToggle(false);return false;">◻️ Unselect All</a>
+  <span class="fm-spacer"></span>
+  <a href="/files?domain_id={{ selected.id }}&path=.trash">🗑️ View Trash</a>
+  <a href="#" onclick="if(confirm('Empty the trash permanently?')){document.getElementById('emptytrash').submit()}return false;">🧹 Empty Trash</a>
+</div>
 
-<form id="opform" method="post" style="display:none">
+<div class="fm-body">
+  <!-- left folder tree -->
+  <aside class="fm-tree">
+    <div class="fm-tree-head">📂 {{ selected.name }}</div>
+    <a class="fm-tnode {{ 'active' if not path }}" href="/files?domain_id={{ selected.id }}&path=">🏠 public_html</a>
+    {% for node in tree %}
+      <a class="fm-tnode {{ 'active' if node.rel == path }}" style="padding-left:{{ 8 + node.depth * 14 }}px"
+         href="/files?domain_id={{ selected.id }}&path={{ node.rel }}">📁 {{ node.name }}</a>
+    {% endfor %}
+  </aside>
+
+  <!-- main listing -->
+  <section class="fm-main">
+    <div class="fm-crumbs">
+      <a href="/files?domain_id={{ selected.id }}&path=">public_html</a>
+      {% for c in crumbs %} / <a href="/files?domain_id={{ selected.id }}&path={{ c.path }}">{{ c.name }}</a>{% endfor %}
+      {% if in_trash %} <span class="pill" style="background:#fdecec;color:#e5484d">Trash</span>{% endif %}
+    </div>
+
+    <form id="fm" method="post">
+      <input type="hidden" name="domain_id" value="{{ selected.id }}">
+      <input type="hidden" name="path" value="{{ path }}">
+      <input type="hidden" name="name" id="fm-name">
+      <input type="hidden" name="new_name" id="fm-new_name">
+      <input type="hidden" name="dest" id="fm-dest">
+      <input type="hidden" name="perms" id="fm-perms">
+      <input type="hidden" name="archive_name" id="fm-archive_name">
+      <table class="table fm-table">
+        <thead><tr>
+          <th style="width:28px"><input type="checkbox" onclick="fmToggle(this.checked)"></th>
+          <th>Name</th><th style="width:90px">Size</th><th style="width:150px">Last Modified</th>
+          <th style="width:110px">Type</th><th style="width:90px">Perms</th>
+        </tr></thead>
+        <tbody>
+        {% for e in entries %}
+          <tr>
+            <td><input type="checkbox" name="targets" value="{{ e.rel }}"></td>
+            <td>
+              {% if e.is_dir %}📁 <a href="/files?domain_id={{ selected.id }}&path={{ e.rel }}"><strong>{{ e.name }}</strong></a>
+              {% else %}📄 {{ e.name }}{% endif %}
+            </td>
+            <td class="muted">{{ '' if e.is_dir else e.size | human_size }}</td>
+            <td class="muted small">{{ e.mtime }}</td>
+            <td class="muted small">{{ e.kind }}</td>
+            <td class="muted small">{{ e.perms }}</td>
+          </tr>
+        {% endfor %}
+        {% if not entries %}<tr><td colspan="6" class="muted">Empty folder.</td></tr>{% endif %}
+        </tbody>
+      </table>
+    </form>
+  </section>
+</div>
+
+<!-- hidden helper forms -->
+<form id="upform" method="post" action="/files/upload" enctype="multipart/form-data" style="display:none">
   <input type="hidden" name="domain_id" value="{{ selected.id }}">
   <input type="hidden" name="path" value="{{ path }}">
-  <input type="hidden" name="target_rel" id="op-target">
-  <input type="hidden" name="new_name" id="op-newname">
+  <input type="file" name="file" id="upfile" onchange="this.form.submit()">
 </form>
+<form id="emptytrash" method="post" action="/files/emptytrash" style="display:none">
+  <input type="hidden" name="domain_id" value="{{ selected.id }}">
+  <input type="hidden" name="path" value="{{ path }}">
+</form>
+
+<style>
+.fm-toolbar { display:flex; flex-wrap:wrap; gap:2px; background:var(--card); border:1px solid var(--border);
+  border-radius:8px 8px 0 0; padding:6px; }
+.fm-btn { display:flex; flex-direction:column; align-items:center; gap:2px; min-width:64px; padding:6px 8px;
+  background:transparent; border:1px solid transparent; border-radius:6px; cursor:pointer; font-size:.7rem;
+  color:var(--text); font-weight:500; }
+.fm-btn span { font-size:1.1rem; }
+.fm-btn:hover { background:var(--orange-soft); border-color:var(--border); }
+.fm-btn.danger:hover { background:#fdecec; }
+.fm-subbar { display:flex; flex-wrap:wrap; align-items:center; gap:.9rem; background:#f8fafc; border:1px solid var(--border);
+  border-top:none; padding:.5rem .8rem; font-size:.8rem; }
+[data-theme="dark"] .fm-subbar { background:#141a21; }
+.fm-subbar a { color:var(--text); }
+.fm-subbar a:hover { color:var(--orange); }
+.fm-spacer { flex:1; }
+.fm-body { display:flex; gap:0; border:1px solid var(--border); border-top:none; border-radius:0 0 8px 8px; overflow:hidden; }
+.fm-tree { width:230px; flex-shrink:0; background:#f8fafc; border-right:1px solid var(--border); padding:.4rem 0;
+  max-height:65vh; overflow:auto; }
+[data-theme="dark"] .fm-tree { background:#141a21; }
+.fm-tree-head { font-weight:700; font-size:.78rem; padding:.4rem .8rem; color:var(--ink); }
+.fm-tnode { display:block; padding:.3rem .8rem; font-size:.8rem; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.fm-tnode:hover { background:var(--orange-soft); text-decoration:none; }
+.fm-tnode.active { background:var(--orange-soft); color:var(--orange-dark); font-weight:600; }
+.fm-main { flex:1; min-width:0; padding:.6rem .8rem; overflow:auto; }
+.fm-crumbs { font-size:.82rem; margin-bottom:.5rem; color:var(--muted); }
+.fm-table { box-shadow:none; }
+.fm-table th { position:sticky; top:0; }
+@media (max-width:760px){ .fm-tree{display:none;} }
+</style>
 <script>
-function doOp(kind, rel, cur) {
-  var label = kind === "rename" ? "Rename to:" : "Copy as:";
-  var suggested = kind === "rename" ? cur : "copy-of-" + cur;
-  var name = prompt(label, suggested);
-  if (!name) return;
-  var f = document.getElementById("opform");
-  f.action = "/files/" + kind;
-  document.getElementById("op-target").value = rel;
-  document.getElementById("op-newname").value = name;
-  f.submit();
+function fmToggle(on){ document.querySelectorAll('#fm input[name=targets]').forEach(function(c){c.checked=on;}); }
+function fmSelected(){ return Array.prototype.slice.call(document.querySelectorAll('#fm input[name=targets]:checked')); }
+function fmSingle(){ var s=fmSelected(); if(s.length!==1){alert('Select exactly one item.');return null;} return s[0].value; }
+function fmSubmit(action){ var f=document.getElementById('fm'); f.action='/files/'+action; f.submit(); }
+function fmPrompt(action, field, label, def){
+  // Actions that create things (file/folder/compress) don't need a selection.
+  var needsSel = ['copy','move','rename','chmod'].indexOf(action) !== -1;
+  if(needsSel && fmSelected().length===0){ alert('Select an item first.'); return; }
+  var v = prompt(label, def||''); if(v===null || v==='') return;
+  document.getElementById('fm-'+field).value = v;
+  fmSubmit(action);
 }
+function fmEdit(){ var r=fmSingle(); if(r) location.href='/files/edit?domain_id={{ selected.id }}&path='+encodeURIComponent(r); }
+function fmDownload(){ var r=fmSingle(); if(r) location.href='/files/download?domain_id={{ selected.id }}&path='+encodeURIComponent(r); }
 </script>
 {% endif %}
 {% endblock %}

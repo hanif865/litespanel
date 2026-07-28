@@ -5,6 +5,8 @@ document root, so a crafted "../.." can never escape the sandbox.
 """
 from __future__ import annotations
 
+import shutil
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
@@ -82,15 +84,23 @@ def browse(
         current = docroot
         path = ""
 
+    in_trash = path.split("/")[0] == ".trash"
     entries = []
     for child in sorted(current.iterdir(), key=lambda p: (p.is_file(), p.name.lower())):
+        if child.name == ".trash" and not path:
+            continue  # hide the trash folder from the normal root view
         stat = child.stat()
         rel = child.relative_to(docroot.resolve()).as_posix()
+        is_dir = child.is_dir()
         entries.append({
             "name": child.name,
             "rel": rel,
-            "is_dir": child.is_dir(),
+            "is_dir": is_dir,
             "size": stat.st_size,
+            "mtime": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
+            "perms": oct(stat.st_mode)[-4:],
+            "kind": "Folder" if is_dir else _file_kind(child.name),
+            "is_archive": (not is_dir) and child.name.lower().endswith((".zip", ".tar", ".tar.gz", ".tgz")),
             "editable": child.is_file()
             and stat.st_size <= MAX_EDIT_BYTES
             and (child.suffix.lower() in TEXT_SUFFIXES or child.name in TEXT_SUFFIXES),
@@ -101,8 +111,39 @@ def browse(
         parent = str(Path(path).parent.as_posix())
         parent = "" if parent == "." else parent
 
-    ctx.update({"selected": domain, "entries": entries, "path": path, "parent": parent})
+    # Breadcrumb segments for the current path.
+    crumbs, acc = [], ""
+    for seg in [s for s in path.split("/") if s]:
+        acc = f"{acc}/{seg}" if acc else seg
+        crumbs.append({"name": seg, "path": acc})
+
+    ctx.update({
+        "selected": domain, "entries": entries, "path": path, "parent": parent,
+        "crumbs": crumbs, "tree": _folder_tree(docroot), "in_trash": in_trash,
+    })
     return templates.TemplateResponse(request, "files.html", ctx)
+
+
+def _file_kind(name: str) -> str:
+    suffix = Path(name).suffix.lower().lstrip(".")
+    return f"{suffix.upper()} File" if suffix else "File"
+
+
+def _folder_tree(docroot: Path, max_entries: int = 300) -> list[dict]:
+    """A flat, depth-tagged list of folders under docroot for the left tree."""
+    root = docroot.resolve()
+    items, count = [], 0
+    for p in sorted(root.rglob("*")):
+        if count >= max_entries:
+            break
+        try:
+            if p.is_dir() and not any(part.startswith(".trash") for part in p.parts):
+                rel = p.relative_to(root)
+                items.append({"name": p.name, "rel": rel.as_posix(), "depth": len(rel.parts)})
+                count += 1
+        except (OSError, ValueError):
+            continue
+    return items
 
 
 @router.post("/upload")
@@ -198,29 +239,24 @@ def download(
     return FileResponse(target, filename=target.name)
 
 
-@router.post("/delete")
-def delete_entry(
-    request: Request,
-    domain_id: int = Form(...),
-    path: str = Form(""),
-    target_rel: str = Form(...),
-    user: User = Depends(current_user),
-    db: Session = Depends(get_db),
-):
-    import shutil
+TRASH = ".trash"
 
-    domain = _owned_domain(db, user, domain_id)
-    target = _safe_join(Path(domain.docroot), target_rel)
-    root = Path(domain.docroot).resolve()
-    if target == root:
-        _flash(request, "❌ Cannot delete the site root.")
-    elif target.is_dir():
-        shutil.rmtree(target, ignore_errors=True)
-        _flash(request, f"🗑️ Deleted folder '{target.name}'.")
-    elif target.exists():
-        target.unlink()
-        _flash(request, f"🗑️ Deleted '{target.name}'.")
+
+def _redir(domain_id: int, path: str) -> RedirectResponse:
     return RedirectResponse(f"/files?domain_id={domain_id}&path={path}", status_code=303)
+
+
+def _resolve_targets(docroot: Path, rels: list[str]) -> list[Path]:
+    """Resolve a list of relative paths under docroot, dropping the root itself."""
+    root = docroot.resolve()
+    items = []
+    for rel in rels:
+        if not rel:
+            continue
+        t = _safe_join(docroot, rel)
+        if t != root:
+            items.append(t)
+    return items
 
 
 @router.post("/newfile")
@@ -236,7 +272,7 @@ def new_file(
     filename = Path(name).name
     if not filename:
         _flash(request, "❌ Enter a file name.")
-        return RedirectResponse(f"/files?domain_id={domain_id}&path={path}", status_code=303)
+        return _redir(domain_id, path)
     target = _safe_join(_safe_join(Path(domain.docroot), path), filename)
     if target.exists():
         _flash(request, f"❌ '{filename}' already exists.")
@@ -244,7 +280,93 @@ def new_file(
         target.touch()
         _own(domain, target)
         _flash(request, f"📄 File '{filename}' created.")
-    return RedirectResponse(f"/files?domain_id={domain_id}&path={path}", status_code=303)
+    return _redir(domain_id, path)
+
+
+@router.post("/trash")
+def trash(
+    request: Request,
+    domain_id: int = Form(...),
+    path: str = Form(""),
+    targets: list[str] = Form(default=[]),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    domain = _owned_domain(db, user, domain_id)
+    docroot = Path(domain.docroot)
+    trash_dir = _safe_join(docroot, TRASH)
+    trash_dir.mkdir(exist_ok=True)
+    n = 0
+    for t in _resolve_targets(docroot, targets):
+        if TRASH in t.relative_to(docroot.resolve()).parts:
+            continue
+        dest = trash_dir / t.name
+        i = 1
+        while dest.exists():
+            dest, i = trash_dir / f"{t.name}.{i}", i + 1
+        shutil.move(str(t), str(dest))
+        n += 1
+    _flash(request, f"🗑️ Moved {n} item(s) to Trash." if n else "❌ Nothing selected.")
+    return _redir(domain_id, path)
+
+
+@router.post("/restore")
+def restore(
+    request: Request,
+    domain_id: int = Form(...),
+    path: str = Form(""),
+    targets: list[str] = Form(default=[]),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    domain = _owned_domain(db, user, domain_id)
+    docroot = Path(domain.docroot)
+    n = 0
+    for t in _resolve_targets(docroot, targets):
+        dest = _safe_join(docroot, t.name)
+        if not dest.exists():
+            shutil.move(str(t), str(dest))
+            _own(domain, dest)
+            n += 1
+    _flash(request, f"♻️ Restored {n} item(s) from Trash.")
+    return _redir(domain_id, path)
+
+
+@router.post("/emptytrash")
+def empty_trash(
+    request: Request,
+    domain_id: int = Form(...),
+    path: str = Form(""),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    domain = _owned_domain(db, user, domain_id)
+    trash_dir = _safe_join(Path(domain.docroot), TRASH)
+    if trash_dir.is_dir():
+        shutil.rmtree(trash_dir, ignore_errors=True)
+    _flash(request, "🧹 Trash emptied.")
+    return _redir(domain_id, path)
+
+
+@router.post("/delete")
+def delete_permanent(
+    request: Request,
+    domain_id: int = Form(...),
+    path: str = Form(""),
+    targets: list[str] = Form(default=[]),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    domain = _owned_domain(db, user, domain_id)
+    n = 0
+    for t in _resolve_targets(Path(domain.docroot), targets):
+        if t.is_dir():
+            shutil.rmtree(t, ignore_errors=True)
+        elif t.exists():
+            t.unlink()
+        n += 1
+    _flash(request, f"❌ Permanently deleted {n} item(s).")
+    return _redir(domain_id, path)
 
 
 @router.post("/rename")
@@ -252,22 +374,24 @@ def rename_entry(
     request: Request,
     domain_id: int = Form(...),
     path: str = Form(""),
-    target_rel: str = Form(...),
+    targets: list[str] = Form(default=[]),
     new_name: str = Form(...),
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
     domain = _owned_domain(db, user, domain_id)
-    src = _safe_join(Path(domain.docroot), target_rel)
+    items = _resolve_targets(Path(domain.docroot), targets)
+    if len(items) != 1:
+        _flash(request, "❌ Select exactly one item to rename.")
+        return _redir(domain_id, path)
+    src = items[0]
     dest = _safe_join(src.parent, Path(new_name).name)
-    if not src.exists():
-        _flash(request, "❌ Item not found.")
-    elif dest.exists():
+    if dest.exists():
         _flash(request, f"❌ '{dest.name}' already exists.")
     else:
         src.rename(dest)
         _flash(request, f"✏️ Renamed to '{dest.name}'.")
-    return RedirectResponse(f"/files?domain_id={domain_id}&path={path}", status_code=303)
+    return _redir(domain_id, path)
 
 
 @router.post("/copy")
@@ -275,19 +399,19 @@ def copy_entry(
     request: Request,
     domain_id: int = Form(...),
     path: str = Form(""),
-    target_rel: str = Form(...),
+    targets: list[str] = Form(default=[]),
     new_name: str = Form(...),
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
-    import shutil
-
     domain = _owned_domain(db, user, domain_id)
-    src = _safe_join(Path(domain.docroot), target_rel)
+    items = _resolve_targets(Path(domain.docroot), targets)
+    if len(items) != 1:
+        _flash(request, "❌ Select exactly one item to copy.")
+        return _redir(domain_id, path)
+    src = items[0]
     dest = _safe_join(src.parent, Path(new_name).name)
-    if not src.exists():
-        _flash(request, "❌ Item not found.")
-    elif dest.exists():
+    if dest.exists():
         _flash(request, f"❌ '{dest.name}' already exists.")
     elif src.is_dir():
         shutil.copytree(src, dest)
@@ -297,7 +421,96 @@ def copy_entry(
         shutil.copy2(src, dest)
         _own(domain, dest)
         _flash(request, f"📋 Copied to '{dest.name}'.")
-    return RedirectResponse(f"/files?domain_id={domain_id}&path={path}", status_code=303)
+    return _redir(domain_id, path)
+
+
+@router.post("/move")
+def move_entries(
+    request: Request,
+    domain_id: int = Form(...),
+    path: str = Form(""),
+    targets: list[str] = Form(default=[]),
+    dest: str = Form(...),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    domain = _owned_domain(db, user, domain_id)
+    docroot = Path(domain.docroot)
+    dest_dir = _safe_join(docroot, dest.strip().lstrip("/"))
+    if not dest_dir.is_dir():
+        _flash(request, "❌ Destination folder not found.")
+        return _redir(domain_id, path)
+    n = 0
+    for t in _resolve_targets(docroot, targets):
+        target = dest_dir / t.name
+        if target != t and not target.exists():
+            shutil.move(str(t), str(target))
+            _own(domain, target)
+            n += 1
+    _flash(request, f"➡️ Moved {n} item(s) to '{dest}'.")
+    return _redir(domain_id, path)
+
+
+@router.post("/chmod")
+def chmod_entries(
+    request: Request,
+    domain_id: int = Form(...),
+    path: str = Form(""),
+    targets: list[str] = Form(default=[]),
+    perms: str = Form(...),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    domain = _owned_domain(db, user, domain_id)
+    perms = perms.strip()
+    if not (perms.isdigit() and len(perms) in (3, 4) and all(c in "01234567" for c in perms)):
+        _flash(request, "❌ Permissions must be octal, e.g. 755 or 0644.")
+        return _redir(domain_id, path)
+    mode = int(perms, 8)
+    n = 0
+    for t in _resolve_targets(Path(domain.docroot), targets):
+        try:
+            t.chmod(mode)
+            n += 1
+        except OSError:
+            pass
+    _flash(request, f"🔧 Set permissions {perms} on {n} item(s).")
+    return _redir(domain_id, path)
+
+
+@router.post("/compress")
+def compress_entries(
+    request: Request,
+    domain_id: int = Form(...),
+    path: str = Form(""),
+    targets: list[str] = Form(default=[]),
+    archive_name: str = Form("archive.zip"),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    import zipfile
+
+    domain = _owned_domain(db, user, domain_id)
+    docroot = Path(domain.docroot)
+    items = _resolve_targets(docroot, targets)
+    if not items:
+        _flash(request, "❌ Nothing selected to compress.")
+        return _redir(domain_id, path)
+    name = Path(archive_name).name or "archive.zip"
+    if not name.lower().endswith(".zip"):
+        name += ".zip"
+    dest = _safe_join(_safe_join(docroot, path), name)
+    with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as zf:
+        for t in items:
+            if t.is_dir():
+                for f in t.rglob("*"):
+                    if f.is_file():
+                        zf.write(f, f"{t.name}/{f.relative_to(t).as_posix()}")
+            elif t.is_file():
+                zf.write(t, t.name)
+    _own(domain, dest)
+    _flash(request, f"🗜️ Created '{name}' from {len(items)} item(s).")
+    return _redir(domain_id, path)
 
 
 @router.post("/extract")
@@ -305,7 +518,7 @@ def extract_archive(
     request: Request,
     domain_id: int = Form(...),
     path: str = Form(""),
-    target_rel: str = Form(...),
+    targets: list[str] = Form(default=[]),
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
@@ -313,12 +526,12 @@ def extract_archive(
     import zipfile
 
     domain = _owned_domain(db, user, domain_id)
-    archive = _safe_join(Path(domain.docroot), target_rel)
+    items = _resolve_targets(Path(domain.docroot), targets)
+    if len(items) != 1 or not items[0].is_file():
+        _flash(request, "❌ Select one archive file to extract.")
+        return _redir(domain_id, path)
+    archive = items[0]
     dest_dir = archive.parent
-    if not archive.is_file():
-        _flash(request, "❌ Archive not found.")
-        return RedirectResponse(f"/files?domain_id={domain_id}&path={path}", status_code=303)
-
     count = 0
     try:
         if archive.suffix.lower() == ".zip":
@@ -342,15 +555,14 @@ def extract_archive(
                         d.write(s.read())
                     count += 1
         else:
-            _flash(request, "❌ Only .zip, .tar, .tar.gz archives can be extracted.")
-            return RedirectResponse(f"/files?domain_id={domain_id}&path={path}", status_code=303)
+            _flash(request, "❌ Only .zip, .tar, .tar.gz can be extracted.")
+            return _redir(domain_id, path)
     except Exception as exc:  # noqa: BLE001
         _flash(request, f"❌ Extract failed: {exc}")
-        return RedirectResponse(f"/files?domain_id={domain_id}&path={path}", status_code=303)
-
+        return _redir(domain_id, path)
     _own(domain, dest_dir)
     _flash(request, f"📦 Extracted {count} file(s) from '{archive.name}'.")
-    return RedirectResponse(f"/files?domain_id={domain_id}&path={path}", status_code=303)
+    return _redir(domain_id, path)
 
 
 def _safe_extract(base: Path, member: str) -> Path | None:
