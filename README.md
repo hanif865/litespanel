@@ -22,6 +22,9 @@ curl -fsSL https://raw.githubusercontent.com/hanif865/litespanel/main/install.sh
 The installer sets up **nginx, MySQL, PHP-FPM, certbot, phpMyAdmin**, the panel
 itself, and a **systemd service** — then prints your panel URL and admin login.
 
+📖 **Full step-by-step guide** (fresh server → secured → domain → SSL → mail →
+updating): see **[DEPLOY.md](DEPLOY.md)**.
+
 ## Features
 
 - 🌐 **Domains / website hosting** — provisions an nginx vhost + document root
