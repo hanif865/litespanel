@@ -59,6 +59,9 @@ PANEL_HOST = _env("PANEL_HOST", "localhost")
 # used — which actually works in the demo without a MySQL server.
 PHPMYADMIN_URL = _env("PANEL_PHPMYADMIN_URL", "")
 
+# If set (e.g. /webmail), the panel shows a Webmail tool linking to Roundcube.
+WEBMAIL_URL = _env("PANEL_WEBMAIL_URL", "")
+
 # Public IP of this hosting node — used to seed default DNS A records.
 SERVER_IP = _env("PANEL_SERVER_IP", "203.0.113.10")
 

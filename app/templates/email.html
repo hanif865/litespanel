@@ -3,6 +3,7 @@
 {% block content %}
 <div class="breadcrumb"><a href="/">🏠 Home</a> / Email / Email Accounts</div>
 <h1>Email Accounts</h1>
+{% if WEBMAIL_URL %}<p><a href="{{ WEBMAIL_URL }}" target="_blank" rel="noopener" class="btn btn-sm">📬 Open Webmail (Roundcube)</a> — log in with a full email address below.</p>{% endif %}
 
 {% if not domains %}
 <div class="empty">Add a domain first to create email accounts.</div>

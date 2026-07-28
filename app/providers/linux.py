@@ -236,15 +236,25 @@ class LinuxProvider(Provider):
         _run(["rndc", "reload", domain])
 
     def create_mailbox(self, address: str, password: str, quota_mb: int) -> None:
-        # Typical Postfix/Dovecot virtual-mailbox setup: append to the virtual
-        # users DB and create the Maildir. Exact mechanism depends on your MTA.
+        # Postfix/Dovecot virtual-mailbox setup (see setup-mail.sh):
+        #   - Maildir under /var/mail/vhosts, owned by the vmail user
+        #   - a Dovecot passwd-file entry (SHA512-CRYPT hash)
+        #   - the domain registered as a Postfix virtual mailbox domain
         local, _, domain = address.partition("@")
-        maildir = Path(f"/var/mail/vhosts/{domain}/{local}")
-        maildir.mkdir(parents=True, exist_ok=True)
-        # doveadm computes the password hash for the Dovecot passdb.
+        maildir = Path(f"/var/mail/vhosts/{domain}/{local}/Maildir")
+        for sub in ("cur", "new", "tmp"):
+            (maildir / sub).mkdir(parents=True, exist_ok=True)
+        if subprocess.run(["id", "vmail"], capture_output=True).returncode == 0:
+            _run(["chown", "-R", "vmail:vmail", f"/var/mail/vhosts/{domain}"])
+
         hashed = _run(["doveadm", "pw", "-s", "SHA512-CRYPT", "-p", password]).strip()
-        with open("/etc/dovecot/users", "a") as f:
-            f.write(f"{address}:{hashed}::::::userdb_quota_rule=*:storage={quota_mb}M\n")
+        users = Path("/etc/dovecot/users")
+        lines = [l for l in (users.read_text().splitlines() if users.exists() else [])
+                 if not l.startswith(f"{address}:")]
+        lines.append(f"{address}:{hashed}::::::userdb_quota_rule=*:storage={quota_mb}M")
+        users.write_text("\n".join(lines) + "\n")
+
+        self._register_mail_domain(domain)
 
     def delete_mailbox(self, address: str) -> None:
         import shutil
@@ -255,6 +265,17 @@ class LinuxProvider(Provider):
         if users.exists():
             kept = [ln for ln in users.read_text().splitlines() if not ln.startswith(f"{address}:")]
             users.write_text("\n".join(kept) + "\n")
+
+    def _register_mail_domain(self, domain: str) -> None:
+        """Add the domain to Postfix's virtual-mailbox domain list and reload."""
+        vdomains = Path("/etc/postfix/vhost_domains")
+        if not vdomains.exists():
+            return  # mail stack not installed (setup-mail.sh); nothing to do
+        existing = vdomains.read_text().split()
+        if domain not in existing:
+            existing.append(domain)
+            vdomains.write_text("\n".join(existing) + "\n")
+            subprocess.run(["systemctl", "reload", "postfix"], capture_output=True)
 
     def sync_forwarders(self, domain: str, pairs: list[tuple[str, str]]) -> None:
         # Append/refresh this domain's block in Postfix's virtual alias map,

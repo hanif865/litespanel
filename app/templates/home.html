@@ -59,6 +59,15 @@
         <a class="tool" href="/email" data-tool="email accounts">
           <span class="t-ico">📧</span><span class="t-name">Email Accounts</span>
         </a>
+        {% if WEBMAIL_URL %}
+        <a class="tool" href="{{ WEBMAIL_URL }}" target="_blank" rel="noopener" data-tool="webmail roundcube">
+          <span class="t-ico">📬</span><span class="t-name">Webmail (Roundcube)</span>
+        </a>
+        {% else %}
+        <span class="tool disabled" data-tool="webmail roundcube">
+          <span class="t-ico">📬</span><span class="t-name">Webmail</span><span class="soon">setup</span>
+        </span>
+        {% endif %}
         <a class="tool" href="/forwarders" data-tool="forwarders">
           <span class="t-ico">📤</span><span class="t-name">Forwarders</span>
         </a>

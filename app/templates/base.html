@@ -60,6 +60,11 @@
       <a href="/autoresponders" class="jnav-item {{ 'is-active' if active == 'autoresponders' }}" data-tip="Autoresponders">
         <span class="jnav-ico">🤖</span><span class="jnav-label">Autoresponders</span>
       </a>
+      {% if WEBMAIL_URL %}
+      <a href="{{ WEBMAIL_URL }}" target="_blank" rel="noopener" class="jnav-item" data-tip="Webmail">
+        <span class="jnav-ico">📬</span><span class="jnav-label">Webmail</span>
+      </a>
+      {% endif %}
 
       <div class="jnav-section">Databases</div>
       <a href="/databases" class="jnav-item {{ 'is-active' if active == 'databases' }}" data-tip="Databases">

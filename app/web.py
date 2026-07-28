@@ -13,6 +13,7 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 # Make config available to every template (app name, provider badge, etc.).
 templates.env.globals["APP_NAME"] = config.APP_NAME
 templates.env.globals["PROVIDER"] = config.PROVIDER
+templates.env.globals["WEBMAIL_URL"] = config.WEBMAIL_URL
 
 
 def human_size(num: float) -> str:
