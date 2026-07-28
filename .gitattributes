@@ -1,0 +1,4 @@
+# Shell scripts must use LF line endings so they run on Linux servers.
+*.sh text eol=lf
+# Normalize text files; let Git decide binary.
+* text=auto
