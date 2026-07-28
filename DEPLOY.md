@@ -74,8 +74,11 @@ sudo sshd -t && sudo systemctl restart ssh
 যাচাই: `sudo sshd -T | grep -Ei 'passwordauthentication|permitrootlogin'` → দুটোই `no` হওয়া উচিত।
 
 ### ১.৬ ফায়ারওয়াল
+minimal ইমেজে `ufw` না-ও থাকতে পারে; ইনস্টল করে পোর্ট খুলে enable করো
+(nginx এখনো নেই, তাই `'Nginx Full'` প্রোফাইলের বদলে সরাসরি পোর্ট নম্বর):
 ```bash
-sudo ufw allow OpenSSH && sudo ufw allow 'Nginx Full'
+sudo apt install -y ufw
+sudo ufw allow 22/tcp && sudo ufw allow 80/tcp && sudo ufw allow 443/tcp
 sudo ufw --force enable
 ```
 
