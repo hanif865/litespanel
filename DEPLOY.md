@@ -134,9 +134,11 @@ Password:   ********      ← এটা সেভ করে রাখো
 ```bash
 dig +short panel.example.com
 ```
-IP ঠিকঠাক দেখালে (৫-৩০ মিনিট লাগতে পারে) → তারপর ধাপ ২-এর ডোমেইন-সহ কমান্ড চালিয়ে SSL নাও, অথবা:
+IP ঠিকঠাক দেখালে (৫-৩০ মিনিট লাগতে পারে) → **ইনস্টলারটা ডোমেইন সহ (আবার) চালাও** —
+এটা `server_name` সেট করে, SSL ইনস্টল করে, Secure কুকি অন করে (raw `certbot` চালালে
+`server_name _` catch-all-এর কারণে "matching server block" এরর দেয়):
 ```bash
-sudo certbot --nginx -d panel.example.com
+cd ~ && curl -fsSL https://raw.githubusercontent.com/hanif865/litespanel/main/install.sh | sudo bash -s -- panel.example.com
 ```
 
 > **নোট:** এখন DNS তোমার registrar/Cloudflare-এ ম্যানেজ হবে। প্যানেলের Zone Editor-টা ভবিষ্যতে নিজের নেমসার্ভার (BIND) দিয়ে DNS হোস্ট করার জন্য — সেটা এখনো সেটআপ করা নেই।
