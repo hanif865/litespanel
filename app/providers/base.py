@@ -47,10 +47,23 @@ class Provider(ABC):
 
     name: str = "base"
 
+    # --- Accounts (system-user isolation) ---------------------------------
+    @abstractmethod
+    def ensure_account(self, username: str) -> Path:
+        """Create the account's Linux user + PHP-FPM pool if missing.
+
+        Idempotent. Returns the account's home directory. Sites owned by this
+        account run PHP as this user, so accounts can't read each other's files.
+        """
+
+    @abstractmethod
+    def remove_account(self, username: str) -> None:
+        """Delete the account's system user, home directory and PHP-FPM pool."""
+
     # --- Web hosting (nginx vhosts) ---------------------------------------
     @abstractmethod
-    def create_site(self, domain: str, php_version: str) -> Path:
-        """Provision a vhost + docroot. Returns the document root path."""
+    def create_site(self, domain: str, docroot: Path, php_version: str, system_user: str) -> Path:
+        """Provision a vhost at docroot, running PHP as system_user. Returns docroot."""
 
     @abstractmethod
     def remove_site(self, domain: str) -> None:
@@ -61,17 +74,21 @@ class Provider(ABC):
         """Apply web-server config changes (nginx -s reload)."""
 
     @abstractmethod
-    def set_php_version(self, domain: str, docroot: str, php_version: str) -> None:
+    def set_php_version(self, domain: str, docroot: str, php_version: str, system_user: str) -> None:
         """Rewrite the vhost so the site runs on a different PHP-FPM version."""
 
     # --- Subdomains -------------------------------------------------------
     @abstractmethod
-    def create_subdomain(self, fqdn: str, docroot: Path, php_version: str) -> Path:
+    def create_subdomain(self, fqdn: str, docroot: Path, php_version: str, system_user: str) -> Path:
         """Provision a subdomain vhost pointing at docroot. Returns docroot."""
 
     @abstractmethod
     def remove_subdomain(self, fqdn: str) -> None:
         ...
+
+    @abstractmethod
+    def set_owner(self, path: Path, system_user: str) -> None:
+        """Give a path (recursively) to the account's system user."""
 
     # --- Cron -------------------------------------------------------------
     @abstractmethod

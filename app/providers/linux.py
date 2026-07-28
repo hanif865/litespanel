@@ -51,15 +51,69 @@ def _run(cmd: list[str]) -> str:
 class LinuxProvider(Provider):
     name = "linux"
 
-    def create_site(self, domain: str, php_version: str) -> Path:
-        docroot = WEB_ROOT / domain / "public_html"
-        docroot.mkdir(parents=True, exist_ok=True)
-        vhost = NGINX_SITES / f"{domain}.conf"
-        vhost.write_text(
-            f"server {{\n    listen 80;\n    server_name {domain} www.{domain};\n"
+    # --- Accounts (system-user isolation) ---------------------------------
+    def ensure_account(self, username: str) -> Path:
+        _ident(username, "account username")
+        home = Path("/home") / username
+        # Create the system user if it doesn't exist (no shell login).
+        if subprocess.run(["id", username], capture_output=True).returncode != 0:
+            _run(["useradd", "--create-home", "--home-dir", str(home),
+                  "--shell", "/usr/sbin/nologin", username])
+        # A dedicated PHP-FPM pool makes this account's PHP run AS this user,
+        # so its sites can't read another account's files.
+        self._write_php_pool(username)
+        # Let nginx (www-data) traverse into the account to reach public_html.
+        _run(["chmod", "751", str(home)])
+        return home
+
+    def remove_account(self, username: str) -> None:
+        _ident(username, "account username")
+        pool = Path(f"/etc/php/{config.PHP_FPM_VERSION}/fpm/pool.d/{username}.conf")
+        pool.unlink(missing_ok=True)
+        self._reload_php()
+        # Only delete real per-account homes, never a pre-existing system user.
+        if (Path("/home") / username).is_dir():
+            subprocess.run(["userdel", "--remove", username], capture_output=True)
+
+    def _php_sock(self, username: str) -> str:
+        return f"/run/php/{username}.sock"
+
+    def _write_php_pool(self, username: str) -> None:
+        pool = Path(f"/etc/php/{config.PHP_FPM_VERSION}/fpm/pool.d/{username}.conf")
+        pool.write_text(
+            f"[{username}]\n"
+            f"user = {username}\n"
+            f"group = {username}\n"
+            f"listen = {self._php_sock(username)}\n"
+            f"listen.owner = www-data\n"
+            f"listen.group = www-data\n"
+            f"pm = ondemand\n"
+            f"pm.max_children = 5\n"
+            f"pm.process_idle_timeout = 10s\n"
+            f"pm.max_requests = 500\n"
+            f"chdir = /\n"
+        )
+        self._reload_php()
+
+    def _reload_php(self) -> None:
+        _run(["systemctl", "reload", f"php{config.PHP_FPM_VERSION}-fpm"])
+
+    def _vhost(self, server_name: str, extra_names: str, docroot: Path, username: str) -> str:
+        return (
+            f"server {{\n    listen 80;\n    server_name {server_name}{extra_names};\n"
             f"    root {docroot};\n    index index.php index.html;\n"
-            f"    location ~ \\.php$ {{ fastcgi_pass unix:/run/php/php{php_version}-fpm.sock;"
-            f" include fastcgi_params; }}\n}}\n"
+            f"    location ~ \\.php$ {{ fastcgi_pass unix:{self._php_sock(username)};"
+            f" include fastcgi_params; fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name; }}\n}}\n"
+        )
+
+    # --- Web hosting ------------------------------------------------------
+    def create_site(self, domain: str, docroot: Path, php_version: str, system_user: str) -> Path:
+        _ident(system_user, "account username")
+        docroot.mkdir(parents=True, exist_ok=True)
+        # Hand ownership of the whole site tree to the account.
+        _run(["chown", "-R", f"{system_user}:{system_user}", str(Path(docroot).parent)])
+        (NGINX_SITES / f"{domain}.conf").write_text(
+            self._vhost(domain, f" www.{domain}", docroot, system_user)
         )
         self.reload_web()
         return docroot
@@ -72,30 +126,29 @@ class LinuxProvider(Provider):
         _run(["nginx", "-t"])          # validate before applying
         _run(["systemctl", "reload", "nginx"])
 
-    def set_php_version(self, domain: str, docroot: str, php_version: str) -> None:
-        vhost = NGINX_SITES / f"{domain}.conf"
-        text = vhost.read_text() if vhost.exists() else ""
-        import re
-
-        text = re.sub(r"php\d+\.\d+-fpm\.sock", f"php{php_version}-fpm.sock", text)
-        vhost.write_text(text)
+    def set_php_version(self, domain: str, docroot: str, php_version: str, system_user: str) -> None:
+        # The socket is per-account (not per-version); rewrite the whole vhost.
+        (NGINX_SITES / f"{domain}.conf").write_text(
+            self._vhost(domain, f" www.{domain}", Path(docroot), system_user)
+        )
         self.reload_web()
 
-    def create_subdomain(self, fqdn: str, docroot: Path, php_version: str) -> Path:
+    def create_subdomain(self, fqdn: str, docroot: Path, php_version: str, system_user: str) -> Path:
+        _ident(system_user, "account username")
         docroot.mkdir(parents=True, exist_ok=True)
-        vhost = NGINX_SITES / f"{fqdn}.conf"
-        vhost.write_text(
-            f"server {{\n    listen 80;\n    server_name {fqdn};\n    root {docroot};\n"
-            f"    index index.php index.html;\n"
-            f"    location ~ \\.php$ {{ fastcgi_pass unix:/run/php/php{php_version}-fpm.sock;"
-            f" include fastcgi_params; }}\n}}\n"
-        )
+        _run(["chown", "-R", f"{system_user}:{system_user}", str(docroot)])
+        (NGINX_SITES / f"{fqdn}.conf").write_text(self._vhost(fqdn, "", docroot, system_user))
         self.reload_web()
         return docroot
 
     def remove_subdomain(self, fqdn: str) -> None:
         (NGINX_SITES / f"{fqdn}.conf").unlink(missing_ok=True)
         self.reload_web()
+
+    def set_owner(self, path: Path, system_user: str) -> None:
+        _ident(system_user, "account username")
+        if Path(path).exists():
+            _run(["chown", "-R", f"{system_user}:{system_user}", str(path)])
 
     def sync_cron(self, lines: list[str]) -> None:
         # Pipe the full crontab to `crontab -` (replaces the user's crontab).

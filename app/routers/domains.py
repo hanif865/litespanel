@@ -3,12 +3,14 @@ from __future__ import annotations
 
 import re
 import shutil
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..accounts import account_home
 from ..db import get_db
 from ..models import Domain, User
 from ..limits import domain_limit_reached
@@ -56,7 +58,11 @@ def create_domain(
         _flash(request, f"❌ {name} already exists.")
         return RedirectResponse("/domains", status_code=303)
 
-    docroot = get_provider().create_site(name, php_version)
+    # Provision (or reuse) the owner's isolated system account, then place the
+    # site under its home so PHP runs as that account.
+    home = account_home(db, user)
+    docroot = home / name / "public_html"
+    get_provider().create_site(name, docroot, php_version, user.system_user)
     get_provider().reload_web()
     db.add(Domain(name=name, owner_id=user.id, docroot=str(docroot), php_version=php_version))
     db.commit()

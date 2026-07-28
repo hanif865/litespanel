@@ -99,15 +99,23 @@ def create_user(
         role = "user"
 
     pkg = _owned_package(db, manager, package_id)
-    db.add(User(
+    new_user = User(
         username=username, password_hash=hash_password(password),
         role=role, is_admin=(role == "admin"), created_by_id=manager.id,
         package_id=pkg.id if pkg else None,
         # Inline limits still stored as a fallback / for accounts with no package.
         max_domains=max(0, max_domains), max_databases=max(0, max_databases),
         max_email=max(0, max_email), disk_quota_mb=max(0, disk_quota_mb),
-    ))
+    )
+    db.add(new_user)
     db.commit()
+
+    # Hosting accounts get an isolated system user (their own /home + PHP pool).
+    if role == "user":
+        new_user.system_user = username
+        db.commit()
+        get_provider().ensure_account(username)
+
     plan = f" on package '{pkg.name}'" if pkg else ""
     _flash(request, f"✅ {role.capitalize()} '{username}' created{plan}.")
     return RedirectResponse("/users", status_code=303)
@@ -175,11 +183,16 @@ def delete_user(
         for sub in list(domain.subdomains):
             provider.remove_subdomain(sub.fqdn)
         provider.remove_site(domain.name)
-        shutil.rmtree(Path(domain.docroot).parent, ignore_errors=True)
     for database in list(target.databases):
         provider.drop_database(database.name, database.db_user)
     for backup in list(target.backups):
         (config.BACKUPS_DIR / backup.filename).unlink(missing_ok=True)
+    # Remove the whole isolated account (system user, /home, PHP-FPM pool).
+    if target.system_user:
+        provider.remove_account(target.system_user)
+    else:
+        for domain in list(target.domains):
+            shutil.rmtree(Path(domain.docroot).parent, ignore_errors=True)
 
     username = target.username
     db.delete(target)          # cascades domains/databases/cron/backups + nested rows

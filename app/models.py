@@ -30,6 +30,9 @@ class User(Base):
     # Which admin/reseller created this account (null for the root admin).
     created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     suspended: Mapped[bool] = mapped_column(default=False)
+    # Dedicated Linux system user for this hosting account (isolation). Sites
+    # owned by this account run PHP as this user and live under its home dir.
+    system_user: Mapped[str | None] = mapped_column(String(32), nullable=True)
     # Assigned hosting package (reusable plan). When set, its limits win over
     # the inline per-account limits below.
     package_id: Mapped[int | None] = mapped_column(ForeignKey("packages.id"), nullable=True)

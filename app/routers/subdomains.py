@@ -13,6 +13,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..accounts import account_home
 from ..db import get_db
 from ..models import Domain, Subdomain, User
 from ..providers import get_provider
@@ -66,8 +67,11 @@ def create_subdomain(
         _flash(request, f"❌ {fqdn} already exists.")
         return RedirectResponse("/subdomains", status_code=303)
 
+    # Subdomain files live inside the parent's docroot, i.e. under the same
+    # isolated account. Ensure that account exists and reuse its system_user.
+    account_home(db, user)
     docroot = Path(parent.docroot) / label
-    get_provider().create_subdomain(fqdn, docroot, parent.php_version)
+    get_provider().create_subdomain(fqdn, docroot, parent.php_version, user.system_user)
     get_provider().reload_web()
     db.add(Subdomain(
         label=label, fqdn=fqdn, parent_id=parent.id,

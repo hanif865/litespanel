@@ -55,10 +55,20 @@ def _cell(value):
 class DemoProvider(Provider):
     name = "demo"
 
+    # --- Accounts ---------------------------------------------------------
+    def ensure_account(self, username: str) -> Path:
+        # Simulate a system user by creating its home directory.
+        home = config.HOME_DIR / username
+        home.mkdir(parents=True, exist_ok=True)
+        return home
+
+    def remove_account(self, username: str) -> None:
+        import shutil
+
+        shutil.rmtree(config.HOME_DIR / username, ignore_errors=True)
+
     # --- Web hosting ------------------------------------------------------
-    def create_site(self, domain: str, php_version: str) -> Path:
-        site_dir = config.SITES_DIR / domain
-        docroot = site_dir / "public_html"
+    def create_site(self, domain: str, docroot: Path, php_version: str, system_user: str) -> Path:
         docroot.mkdir(parents=True, exist_ok=True)
 
         # A landing page so the site "works" immediately.
@@ -69,14 +79,17 @@ class DemoProvider(Provider):
             )
 
         # Write the vhost config as real text so users can inspect it.
-        vhost = config.NGINX_DIR / f"{domain}.conf"
-        vhost.write_text(
-            _NGINX_TEMPLATE.format(
-                app=config.APP_NAME, domain=domain, docroot=docroot.as_posix(), php=php_version
-            ),
-            encoding="utf-8",
-        )
+        self._write_vhost(domain, docroot, php_version, system_user)
         return docroot
+
+    def _write_vhost(self, domain: str, docroot: Path, php_version: str, system_user: str) -> None:
+        # In the demo the PHP socket name shows the per-user pool for clarity.
+        vhost = config.NGINX_DIR / f"{domain}.conf"
+        text = _NGINX_TEMPLATE.format(
+            app=config.APP_NAME, domain=domain, docroot=Path(docroot).as_posix(), php=php_version
+        )
+        text = f"# account: {system_user}\n" + text
+        vhost.write_text(text, encoding="utf-8")
 
     def remove_site(self, domain: str) -> None:
         vhost = config.NGINX_DIR / f"{domain}.conf"
@@ -87,35 +100,26 @@ class DemoProvider(Provider):
         # No-op in demo; on Linux this reloads nginx.
         return None
 
-    def set_php_version(self, domain: str, docroot: str, php_version: str) -> None:
-        # Rewrite the vhost with the new PHP-FPM socket version.
-        vhost = config.NGINX_DIR / f"{domain}.conf"
-        vhost.write_text(
-            _NGINX_TEMPLATE.format(
-                app=config.APP_NAME, domain=domain, docroot=docroot, php=php_version
-            ),
-            encoding="utf-8",
-        )
+    def set_php_version(self, domain: str, docroot: str, php_version: str, system_user: str) -> None:
+        self._write_vhost(domain, Path(docroot), php_version, system_user)
 
     # --- Subdomains -------------------------------------------------------
-    def create_subdomain(self, fqdn: str, docroot: Path, php_version: str) -> Path:
+    def create_subdomain(self, fqdn: str, docroot: Path, php_version: str, system_user: str) -> Path:
         docroot.mkdir(parents=True, exist_ok=True)
         index = docroot / "index.html"
         if not index.exists():
             index.write_text(
                 _WELCOME_HTML.format(domain=fqdn, app=config.APP_NAME), encoding="utf-8"
             )
-        vhost = config.NGINX_DIR / f"{fqdn}.conf"
-        vhost.write_text(
-            _NGINX_TEMPLATE.format(
-                app=config.APP_NAME, domain=fqdn, docroot=docroot.as_posix(), php=php_version
-            ),
-            encoding="utf-8",
-        )
+        self._write_vhost(fqdn, docroot, php_version, system_user)
         return docroot
 
     def remove_subdomain(self, fqdn: str) -> None:
         (config.NGINX_DIR / f"{fqdn}.conf").unlink(missing_ok=True)
+
+    def set_owner(self, path: Path, system_user: str) -> None:
+        # No POSIX ownership on the Windows demo box — nothing to do.
+        return None
 
     # --- Cron -------------------------------------------------------------
     def sync_cron(self, lines: list[str]) -> None:

@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..models import Domain, User
+from ..providers import get_provider
 from ..security import current_user
 from ..web import human_size, templates
 
@@ -36,6 +37,13 @@ def _owned_domain(db: Session, user: User, domain_id: int) -> Domain:
     if domain is None or domain.owner_id != user.id:
         raise HTTPException(status_code=404, detail="Domain not found")
     return domain
+
+
+def _own(domain: Domain, path: Path) -> None:
+    """Hand a newly created file/folder to the site's isolated account user."""
+    sysuser = domain.owner.system_user
+    if sysuser:
+        get_provider().set_owner(path, sysuser)
 
 
 def _safe_join(docroot: Path, rel: str) -> Path:
@@ -114,6 +122,7 @@ async def upload(
     with dest.open("wb") as out:
         while chunk := await file.read(1024 * 1024):
             out.write(chunk)
+    _own(domain, dest)
     _flash(request, f"⬆️ Uploaded {filename} ({human_size(dest.stat().st_size)}).")
     return RedirectResponse(f"/files?domain_id={domain_id}&path={path}", status_code=303)
 
@@ -131,6 +140,7 @@ def mkdir(
     folder = Path(name).name
     target = _safe_join(_safe_join(Path(domain.docroot), path), folder)
     target.mkdir(parents=True, exist_ok=True)
+    _own(domain, target)
     _flash(request, f"📁 Folder '{folder}' created.")
     return RedirectResponse(f"/files?domain_id={domain_id}&path={path}", status_code=303)
 

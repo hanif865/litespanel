@@ -70,16 +70,17 @@ Built-in protections:
 - **Path safety** — the file manager confines every path to the site root, and
   backup restore rejects Zip-Slip paths that escape the target directory.
 - **Passwords** — PBKDF2-HMAC-SHA256 (200k iterations), constant-time compare.
+- **Per-account system-user isolation** (shared hosting) — every hosting account
+  gets its own Linux user, a dedicated PHP-FPM pool, and a `/home/<user>` tree it
+  owns. A site's PHP runs **as that user**, so one account can't read or write
+  another's files. Files created via the File Manager are chowned to the account.
 
-Remaining hardening for **untrusted multi-tenant shared hosting** (not yet done):
+Remaining hardening:
 
-- Per-account **system-user isolation** — today hosted sites share one OS user.
-  Real shared hosting needs a separate user + permissions per account.
-- The panel runs as **root** (the linux provider expects it, like cPanel). A
-  more locked-down setup would drop to a service user with scoped `sudo` rules.
-
-For a **single operator / trusted team**, the current posture is production-ready
-behind HTTPS; the two items above matter when you sell hosting to strangers.
+- The panel process runs as **root** (the linux provider expects it, like cPanel/WHM).
+  A more locked-down setup would drop to a service user with scoped `sudo` rules.
+- Disk **quotas** per account are tracked in the DB but not yet enforced at the
+  filesystem level (would use `setquota`).
 
 ## Roles
 
