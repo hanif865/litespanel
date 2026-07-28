@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}User Manager{% endblock %}
+{% block content %}
+<div class="breadcrumb"><a href="/">🏠 Home</a> / Preferences / User Manager</div>
+<h1>User Manager</h1>
+<p class="muted">
+  {% if user.role == 'admin' %}Create resellers and user accounts, set their limits, suspend or remove them.
+  {% else %}Create and manage the user accounts under your reseller allocation.{% endif %}
+</p>
+
+<div class="card">
+  <h2 style="margin-top:0">➕ Create account</h2>
+  <form method="post" action="/users/create">
+    <div class="user-grid">
+      <div><span class="cron-lbl">Username</span><input type="text" name="username" placeholder="janedoe" required></div>
+      <div><span class="cron-lbl">Password</span><input type="password" name="password" placeholder="min 6 chars" required></div>
+      {% if user.role == 'admin' %}
+      <div><span class="cron-lbl">Role</span>
+        <select name="role">
+          <option value="user">User</option>
+          <option value="reseller">Reseller</option>
+        </select>
+      </div>
+      {% endif %}
+      <div><span class="cron-lbl">Package</span>
+        <select name="package_id">
+          <option value="0">— custom limits →</option>
+          {% for p in packages %}<option value="{{ p.id }}">{{ p.name }} ({{ p.max_domains or '∞' }}/{{ p.max_databases or '∞' }}/{{ p.max_email or '∞' }})</option>{% endfor %}
+        </select>
+      </div>
+      <div><span class="cron-lbl">Max Domains (0=∞)</span><input type="number" name="max_domains" value="5"></div>
+      <div><span class="cron-lbl">Max Databases</span><input type="number" name="max_databases" value="5"></div>
+      <div><span class="cron-lbl">Max Email</span><input type="number" name="max_email" value="10"></div>
+      <div><span class="cron-lbl">Disk Quota (MB)</span><input type="number" name="disk_quota_mb" value="1024"></div>
+    </div>
+    <p class="muted small" style="margin:.5rem 0 0">A package overrides the custom limits and can be changed later. <a href="/packages">Manage packages →</a></p>
+    <button type="submit" class="btn btn-primary" style="margin-top:1rem">Create account</button>
+  </form>
+</div>
+
+<table class="table">
+  <thead><tr><th>Username</th><th>Role</th><th>Status</th><th>Package / Limits (dom/db/mail)</th><th>Created</th><th>Actions</th></tr></thead>
+  <tbody>
+  {% for u in users %}
+    <tr>
+      <td><strong>{{ u.username }}</strong></td>
+      <td>
+        {% if u.role == 'admin' %}<span class="pill" style="background:#e7ecff;color:#3b5bdb">admin</span>
+        {% elif u.role == 'reseller' %}<span class="pill" style="background:#fff2eb;color:#e85b1b">reseller</span>
+        {% else %}<span class="pill">user</span>{% endif %}
+      </td>
+      <td>
+        {% if u.suspended %}<span class="pill" style="background:#fdecec;color:#e5484d">suspended</span>
+        {% else %}<span class="pill pill-ok">active</span>{% endif %}
+      </td>
+      <td>
+        {% if u.id != user.id and u.role != 'admin' %}
+        <form method="post" action="/users/{{ u.id }}/package" class="inline-form">
+          <select name="package_id" onchange="this.form.submit()" style="max-width:140px">
+            <option value="0" {{ 'selected' if not u.package_id }}>Custom</option>
+            {% for p in packages %}<option value="{{ p.id }}" {{ 'selected' if u.package_id == p.id }}>{{ p.name }}</option>{% endfor %}
+          </select>
+        </form>
+        {% elif u.package %}<span class="pill">{{ u.package.name }}</span>{% endif %}
+        <div class="muted small">{{ u.eff_domains or '∞' }} / {{ u.eff_databases or '∞' }} / {{ u.eff_email or '∞' }}</div>
+      </td>
+      <td class="muted">{{ u.created_at.strftime('%Y-%m-%d') }}</td>
+      <td class="actions">
+        {% if u.id == user.id %}
+          <span class="muted small">you</span>
+        {% elif u.role == 'admin' %}
+          <span class="muted small">—</span>
+        {% else %}
+          {% if u.suspended %}
+            <form method="post" action="/users/{{ u.id }}/unsuspend"><button class="btn btn-sm">Reactivate</button></form>
+          {% else %}
+            <form method="post" action="/users/{{ u.id }}/suspend"><button class="btn btn-sm">Suspend</button></form>
+          {% endif %}
+          <form method="post" action="/users/{{ u.id }}/delete"
+                onsubmit="return confirm('Delete {{ u.username }} and ALL their sites, databases and email? This cannot be undone.')">
+            <button class="btn btn-sm btn-danger">Delete</button>
+          </form>
+        {% endif %}
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<style>
+.user-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .8rem; }
+.user-grid input, .user-grid select { width: 100%; }
+.cron-lbl { display: block; font-size: .72rem; color: var(--muted); margin-bottom: .25rem; font-weight: 600; }
+</style>
+{% endblock %}

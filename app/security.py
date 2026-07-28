@@ -1,0 +1,61 @@
+"""Password hashing and auth dependencies.
+
+Uses the stdlib pbkdf2 (hashlib) rather than bcrypt so there's nothing to
+compile on a fresh Windows or minimal VPS install — one less thing to break.
+"""
+from __future__ import annotations
+
+import hashlib
+import hmac
+import secrets
+
+from fastapi import Depends, HTTPException, Request, status
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from .db import get_db
+from .models import User
+
+_ALGO = "sha256"
+_ITERATIONS = 200_000
+
+
+def hash_password(password: str) -> str:
+    salt = secrets.token_hex(16)
+    dk = hashlib.pbkdf2_hmac(_ALGO, password.encode(), bytes.fromhex(salt), _ITERATIONS)
+    return f"pbkdf2_{_ALGO}${_ITERATIONS}${salt}${dk.hex()}"
+
+
+def verify_password(password: str, stored: str) -> bool:
+    try:
+        _, iterations, salt, expected = stored.split("$")
+        dk = hashlib.pbkdf2_hmac(_ALGO, password.encode(), bytes.fromhex(salt), int(iterations))
+        return hmac.compare_digest(dk.hex(), expected)
+    except (ValueError, AttributeError):
+        return False
+
+
+def current_user(request: Request, db: Session = Depends(get_db)) -> User:
+    """Dependency: resolve the logged-in user from the session, or 401."""
+    user_id = request.session.get("user_id")
+    if user_id is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    user = db.get(User, user_id)
+    if user is None or user.suspended:
+        request.session.clear()
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    return user
+
+
+def require_manager(user: User = Depends(current_user)) -> User:
+    """Dependency: only admins and resellers may pass (for the User Manager)."""
+    if user.role not in ("admin", "reseller"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admins and resellers only.")
+    return user
+
+
+def authenticate(db: Session, username: str, password: str) -> User | None:
+    user = db.scalar(select(User).where(User.username == username))
+    if user and verify_password(password, user.password_hash):
+        return user
+    return None

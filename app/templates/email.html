@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Email Accounts{% endblock %}
+{% block content %}
+<div class="breadcrumb"><a href="/">🏠 Home</a> / Email / Email Accounts</div>
+<h1>Email Accounts</h1>
+
+{% if not domains %}
+<div class="empty">Add a domain first to create email accounts.</div>
+{% else %}
+
+<form method="get" action="/email" class="row-form" style="margin-bottom:1rem">
+  <select name="domain_id" onchange="this.form.submit()">
+    {% for d in domains %}
+      <option value="{{ d.id }}" {{ 'selected' if selected and d.id == selected.id }}>{{ d.name }}</option>
+    {% endfor %}
+  </select>
+  <span class="muted">Accounts on <strong>{{ selected.name }}</strong></span>
+</form>
+
+<div class="card">
+  <form method="post" action="/email/create" class="row-form">
+    <input type="hidden" name="domain_id" value="{{ selected.id }}">
+    <input type="text" name="local_part" placeholder="info" required style="max-width:160px">
+    <span class="muted">@{{ selected.name }}</span>
+    <input type="password" name="password" placeholder="password (min 6)" required style="max-width:190px">
+    <label class="chk" style="margin:0">Quota
+      <input type="number" name="quota_mb" value="250" style="max-width:90px"> MB
+    </label>
+    <button type="submit" class="btn btn-primary">+ Create Account</button>
+  </form>
+</div>
+
+{% if accounts %}
+<table class="table">
+  <thead><tr><th>Email Address</th><th>Quota</th><th>Created</th><th></th></tr></thead>
+  <tbody>
+  {% for a in accounts %}
+    <tr>
+      <td><strong>{{ a.local_part }}@{{ selected.name }}</strong></td>
+      <td class="muted">{{ a.quota_mb }} MB</td>
+      <td class="muted">{{ a.created_at.strftime('%Y-%m-%d') }}</td>
+      <td class="actions">
+        <form method="post" action="/email/{{ a.id }}/delete" onsubmit="return confirm('Delete {{ a.local_part }}@{{ selected.name }}?')">
+          <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="empty">No email accounts yet on {{ selected.name }}.</div>
+{% endif %}
+{% endif %}
+{% endblock %}

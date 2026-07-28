@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Login{% endblock %}
+{% block bare %}
+<div class="login-wrap">
+  <form class="login-card" method="post" action="/login">
+    <div class="login-brand"><span class="logo">◆</span> {{ APP_NAME }}</div>
+    <p class="login-sub">Hosting control panel</p>
+    {% if error %}<div class="alert-error">{{ error }}</div>{% endif %}
+    <label>Username
+      <input type="text" name="username" autofocus autocomplete="username" required>
+    </label>
+    <label>Password
+      <input type="password" name="password" autocomplete="current-password" required>
+    </label>
+    <button type="submit" class="btn btn-primary btn-block">Sign in</button>
+    {% if PROVIDER == 'demo' %}<p class="login-hint">Demo default: <code>admin</code> / <code>admin</code></p>{% endif %}
+  </form>
+</div>
+{% endblock %}

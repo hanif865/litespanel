@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Edit {{ path }}{% endblock %}
+{% block content %}
+<div class="breadcrumb"><a href="/">🏠 Home</a> / <a href="/files?domain_id={{ domain.id }}">File Manager</a> / Edit</div>
+<h1>Edit file</h1>
+<p class="muted">{{ domain.name }} / public_html / {{ path }}</p>
+
+<form method="post" action="/files/edit" class="editor-form">
+  <input type="hidden" name="domain_id" value="{{ domain.id }}">
+  <input type="hidden" name="path" value="{{ path }}">
+  <textarea name="content" class="code-editor" spellcheck="false">{{ content }}</textarea>
+  <div class="editor-actions">
+    <button type="submit" class="btn btn-primary">💾 Save</button>
+    <a href="/files?domain_id={{ domain.id }}" class="btn">Cancel</a>
+  </div>
+</form>
+{% endblock %}

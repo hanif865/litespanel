@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Backups{% endblock %}
+{% block content %}
+<div class="breadcrumb"><a href="/">🏠 Home</a> / Files / Backup</div>
+<h1>Backups</h1>
+<p class="muted">Create a full account backup (websites, databases, DNS zones, email). Download it or restore from a zip.</p>
+
+<div class="cards">
+  <div class="card">
+    <h2 style="margin-top:0">📦 Create backup</h2>
+    <form method="post" action="/backups/create" class="row-form">
+      <input type="text" name="note" placeholder="note (optional, e.g. before upgrade)" style="flex:1;min-width:180px">
+      <button type="submit" class="btn btn-primary">Generate backup</button>
+    </form>
+  </div>
+  <div class="card">
+    <h2 style="margin-top:0">♻️ Restore from backup</h2>
+    <form method="post" action="/backups/restore" enctype="multipart/form-data" class="row-form"
+          onsubmit="return confirm('Restore will overwrite existing files with the archive contents. Continue?')">
+      <input type="file" name="file" accept=".zip" required>
+      <button type="submit" class="btn">Upload &amp; restore</button>
+    </form>
+  </div>
+</div>
+
+{% if backups %}
+<table class="table">
+  <thead><tr><th>Backup File</th><th>Size</th><th>Note</th><th>Created</th><th>Actions</th></tr></thead>
+  <tbody>
+  {% for b in backups %}
+    <tr>
+      <td><strong>{{ b.filename }}</strong></td>
+      <td class="muted">{{ b.size_bytes | human_size }}</td>
+      <td class="muted">{{ b.note or '—' }}</td>
+      <td class="muted">{{ b.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+      <td class="actions">
+        <a href="/backups/{{ b.id }}/download" class="btn btn-sm btn-primary">Download</a>
+        <form method="post" action="/backups/{{ b.id }}/delete" onsubmit="return confirm('Delete this backup?')">
+          <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="empty">No backups yet. Generate one above.</div>
+{% endif %}
+{% endblock %}

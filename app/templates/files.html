@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}File Manager{% endblock %}
+{% block content %}
+<div class="breadcrumb"><a href="/">🏠 Home</a> / File Manager</div>
+<h1>File Manager</h1>
+
+{% if not domains %}
+<div class="empty">Add a domain first — the file manager works inside each site's <code>public_html</code>.</div>
+{% else %}
+
+<form method="get" action="/files" class="row-form">
+  <select name="domain_id" onchange="this.form.submit()">
+    {% for d in domains %}
+      <option value="{{ d.id }}" {{ 'selected' if selected and d.id == selected.id }}>{{ d.name }}</option>
+    {% endfor %}
+  </select>
+  <span class="muted">/ public_html / {{ path }}</span>
+</form>
+
+<div class="toolbar card">
+  <form method="post" action="/files/upload" enctype="multipart/form-data" class="inline-form">
+    <input type="hidden" name="domain_id" value="{{ selected.id }}">
+    <input type="hidden" name="path" value="{{ path }}">
+    <input type="file" name="file" required>
+    <button type="submit" class="btn btn-sm btn-primary">⬆️ Upload</button>
+  </form>
+  <form method="post" action="/files/mkdir" class="inline-form">
+    <input type="hidden" name="domain_id" value="{{ selected.id }}">
+    <input type="hidden" name="path" value="{{ path }}">
+    <input type="text" name="name" placeholder="new-folder" required>
+    <button type="submit" class="btn btn-sm">📁 New folder</button>
+  </form>
+</div>
+
+<table class="table">
+  <thead><tr><th>Name</th><th>Size</th><th>Actions</th></tr></thead>
+  <tbody>
+  {% if parent is not none %}
+    <tr><td colspan="3"><a href="/files?domain_id={{ selected.id }}&path={{ parent }}">⬆️ ..</a></td></tr>
+  {% endif %}
+  {% for e in entries %}
+    <tr>
+      <td>
+        {% if e.is_dir %}
+          📁 <a href="/files?domain_id={{ selected.id }}&path={{ e.rel }}"><strong>{{ e.name }}</strong></a>
+        {% else %}
+          📄 {{ e.name }}
+        {% endif %}
+      </td>
+      <td class="muted">{{ '' if e.is_dir else e.size | human_size }}</td>
+      <td class="actions">
+        {% if e.editable %}
+          <a href="/files/edit?domain_id={{ selected.id }}&path={{ e.rel }}" class="btn btn-sm">Edit</a>
+        {% endif %}
+        {% if not e.is_dir %}
+          <a href="/files/download?domain_id={{ selected.id }}&path={{ e.rel }}" class="btn btn-sm">Download</a>
+        {% endif %}
+        <form method="post" action="/files/delete" onsubmit="return confirm('Delete {{ e.name }}?')">
+          <input type="hidden" name="domain_id" value="{{ selected.id }}">
+          <input type="hidden" name="path" value="{{ path }}">
+          <input type="hidden" name="target_rel" value="{{ e.rel }}">
+          <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  {% if not entries %}
+    <tr><td colspan="3" class="muted">Empty folder.</td></tr>
+  {% endif %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

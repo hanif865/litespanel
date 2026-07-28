@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Database Wizard{% endblock %}
+{% block content %}
+<div class="breadcrumb"><a href="/">🏠 Home</a> / Databases / Database Wizard</div>
+<h1>MySQL® Database Wizard</h1>
+<p class="muted">Create a database and a dedicated user with full privileges in one guided step.</p>
+
+{% if result %}
+<div class="card cred-card">
+  <strong>✅ Save these credentials now — the password is shown only once:</strong>
+  <table class="cred-table">
+    <tr><td>Database</td><td><code>{{ result.name }}</code></td></tr>
+    <tr><td>User</td><td><code>{{ result.user }}</code></td></tr>
+    <tr><td>Password</td><td><code>{{ result.password }}</code></td></tr>
+    <tr><td>Host</td><td><code>{{ result.host }}:{{ result.port }}</code></td></tr>
+  </table>
+  <p style="margin:.75rem 0 0"><a href="/phpmyadmin?db_name={{ result.name }}" class="btn btn-sm">Open in Database Manager →</a></p>
+</div>
+{% endif %}
+
+<div class="card">
+  <form method="post" action="/database-wizard/create">
+    <div class="wiz-step"><span class="wiz-num">1</span>
+      <label style="flex:1">Database name
+        <input type="text" name="db_name" placeholder="myapp_db" required style="font-weight:400">
+      </label>
+    </div>
+    <div class="wiz-step"><span class="wiz-num">2</span>
+      <label style="flex:1">Database username
+        <input type="text" name="db_user" placeholder="myapp_user" required style="font-weight:400">
+      </label>
+    </div>
+    <div class="wiz-step"><span class="wiz-num">3</span>
+      <div style="flex:1;display:flex;gap:.6rem;flex-wrap:wrap">
+        <label style="flex:1">Password
+          <input type="password" name="password" placeholder="min 6 chars" required style="font-weight:400">
+        </label>
+        <label style="flex:1">Confirm password
+          <input type="password" name="password2" placeholder="repeat" required style="font-weight:400">
+        </label>
+      </div>
+    </div>
+    <button type="submit" class="btn btn-primary">Create Database &amp; User</button>
+  </form>
+</div>
+
+<style>
+.wiz-step { display: flex; align-items: flex-start; gap: .8rem; margin-bottom: 1rem; }
+.wiz-num { flex-shrink: 0; width: 26px; height: 26px; border-radius: 50%; background: var(--orange);
+  color: #fff; display: grid; place-items: center; font-weight: 700; font-size: .8rem; margin-top: 1.4rem; }
+</style>
+{% endblock %}

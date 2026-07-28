@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}Zone Editor{% endblock %}
+{% block content %}
+<div class="breadcrumb"><a href="/">🏠 Home</a> / Domains / Zone Editor (DNS)</div>
+<h1>DNS Zone Editor</h1>
+
+{% if not domains %}
+<div class="empty">Add a domain first to manage its DNS records.</div>
+{% else %}
+
+<form method="get" action="/dns" class="row-form" style="margin-bottom:1rem">
+  <select name="domain_id" onchange="this.form.submit()">
+    {% for d in domains %}
+      <option value="{{ d.id }}" {{ 'selected' if selected and d.id == selected.id }}>{{ d.name }}</option>
+    {% endfor %}
+  </select>
+  <span class="muted">Editing zone for <strong>{{ selected.name }}</strong></span>
+</form>
+
+<div class="card">
+  <form method="post" action="/dns/{{ selected.id }}/create" class="row-form" id="dnsform"
+        data-create="/dns/{{ selected.id }}/create">
+    <select name="rtype" id="rtype" onchange="toggleMx()">
+      {% for t in types %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
+    </select>
+    <input type="text" name="name" id="dns-name" placeholder="name (@ or www)" value="@" style="max-width:150px">
+    <input type="text" name="value" id="dns-value" placeholder="value (e.g. 203.0.113.10)" required style="flex:1;min-width:200px">
+    <input type="number" name="priority" id="mx-prio" value="10" title="MX priority" style="max-width:90px;display:none">
+    <input type="number" name="ttl" id="dns-ttl" value="14400" title="TTL" style="max-width:100px">
+    <button type="submit" class="btn btn-primary" id="dns-submit">+ Add Record</button>
+    <a href="#" id="dns-cancel" onclick="resetForm();return false;" style="display:none">Cancel</a>
+  </form>
+</div>
+
+<table class="table">
+  <thead><tr><th>Type</th><th>Name</th><th>Value</th><th>Priority</th><th>TTL</th><th></th></tr></thead>
+  <tbody>
+  {% for r in records %}
+    <tr>
+      <td><span class="pill pill-ok">{{ r.rtype }}</span></td>
+      <td><strong>{{ r.name }}</strong></td>
+      <td style="word-break:break-all">{{ r.value }}</td>
+      <td class="muted">{{ r.priority if r.rtype == 'MX' else '—' }}</td>
+      <td class="muted">{{ r.ttl }}</td>
+      <td class="actions">
+        <button type="button" class="btn btn-sm"
+                onclick="editRecord({{ r.id }}, '{{ r.rtype }}', {{ r.name|tojson }}, {{ r.value|tojson }}, {{ r.ttl }}, {{ r.priority or 10 }})">Edit</button>
+        <form method="post" action="/dns/records/{{ r.id }}/delete" onsubmit="return confirm('Delete this {{ r.rtype }} record?')">
+          <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  {% if not records %}<tr><td colspan="6" class="muted">No records.</td></tr>{% endif %}
+  </tbody>
+</table>
+
+<script>
+function toggleMx() {
+  var isMx = document.getElementById("rtype").value === "MX";
+  document.getElementById("mx-prio").style.display = isMx ? "" : "none";
+}
+function editRecord(id, rtype, name, value, ttl, priority) {
+  var f = document.getElementById("dnsform");
+  f.action = "/dns/records/" + id + "/update";
+  document.getElementById("rtype").value = rtype;
+  document.getElementById("dns-name").value = name;
+  document.getElementById("dns-value").value = value;
+  document.getElementById("dns-ttl").value = ttl;
+  document.getElementById("mx-prio").value = priority;
+  toggleMx();
+  document.getElementById("dns-submit").textContent = "✔ Update Record";
+  document.getElementById("dns-cancel").style.display = "";
+  f.scrollIntoView({behavior: "smooth", block: "center"});
+}
+function resetForm() {
+  var f = document.getElementById("dnsform");
+  f.action = f.getAttribute("data-create");
+  f.reset();
+  toggleMx();
+  document.getElementById("dns-submit").textContent = "+ Add Record";
+  document.getElementById("dns-cancel").style.display = "none";
+}
+</script>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Subdomains{% endblock %}
+{% block content %}
+<div class="breadcrumb"><a href="/">🏠 Home</a> / Domains / Subdomains</div>
+<h1>Subdomains</h1>
+<p class="muted">Create a subdomain like <code>blog.example.com</code>. Its files live inside the parent's <code>public_html</code>.</p>
+
+{% if domains %}
+<div class="card">
+  <form method="post" action="/subdomains/create" class="row-form">
+    <input type="text" name="label" placeholder="blog" required style="max-width:160px">
+    <span class="muted">.</span>
+    <select name="parent_id">
+      {% for d in domains %}<option value="{{ d.id }}">{{ d.name }}</option>{% endfor %}
+    </select>
+    <button type="submit" class="btn btn-primary">+ Create subdomain</button>
+  </form>
+</div>
+
+{% if subs %}
+<table class="table">
+  <thead><tr><th>Subdomain</th><th>Document Root</th><th>PHP</th><th>Created</th><th>Actions</th></tr></thead>
+  <tbody>
+  {% for s in subs %}
+    <tr>
+      <td><strong>{{ s.fqdn }}</strong></td>
+      <td class="muted small">{{ s.docroot }}</td>
+      <td>{{ s.php_version }}</td>
+      <td class="muted">{{ s.created_at.strftime('%Y-%m-%d') }}</td>
+      <td class="actions">
+        <a href="/files?domain_id={{ s.parent_id }}" class="btn btn-sm">Files</a>
+        <form method="post" action="/subdomains/{{ s.id }}/delete"
+              onsubmit="return confirm('Remove {{ s.fqdn }}?')">
+          <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="empty">No subdomains yet.</div>
+{% endif %}
+
+{% else %}
+<div class="empty">Add a domain first, then create subdomains under it.</div>
+{% endif %}
+{% endblock %}

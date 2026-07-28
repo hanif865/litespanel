@@ -1,0 +1,11 @@
+# Core web framework (lightweight, ~80-120MB idle with 1 worker).
+# Versions kept as floors so Python 3.14 prebuilt wheels are picked up
+# (pin exact versions once you settle on a target Python).
+fastapi>=0.115
+uvicorn>=0.34
+jinja2>=3.1
+python-multipart>=0.0.20
+itsdangerous>=2.2
+sqlalchemy>=2.0
+alembic>=1.13
+pydantic>=2.12

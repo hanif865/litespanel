@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Autoresponders{% endblock %}
+{% block content %}
+<div class="breadcrumb"><a href="/">🏠 Home</a> / Email / Autoresponders</div>
+<h1>Autoresponders</h1>
+<p class="muted">Send an automatic reply (e.g. out-of-office) for a mailbox.</p>
+
+{% if not domains %}
+<div class="empty">Add a domain first to set up autoresponders.</div>
+{% else %}
+
+<form method="get" action="/autoresponders" class="row-form" style="margin-bottom:1rem">
+  <select name="domain_id" onchange="this.form.submit()">
+    {% for d in domains %}<option value="{{ d.id }}" {{ 'selected' if selected and d.id == selected.id }}>{{ d.name }}</option>{% endfor %}
+  </select>
+  <span class="muted">Autoresponders on <strong>{{ selected.name }}</strong></span>
+</form>
+
+<div class="card">
+  <form method="post" action="/autoresponders/create">
+    <input type="hidden" name="domain_id" value="{{ selected.id }}">
+    <div class="row-form" style="margin-bottom:.75rem">
+      <input type="text" name="local_part" placeholder="info" required style="max-width:160px">
+      <span class="muted">@{{ selected.name }}</span>
+      <input type="text" name="subject" placeholder="Subject (e.g. Out of office)" required style="flex:1;min-width:200px">
+    </div>
+    <textarea name="body" placeholder="Automatic reply message..." required
+              style="width:100%;min-height:90px;margin-bottom:.75rem"></textarea>
+    <button type="submit" class="btn btn-primary">+ Create Autoresponder</button>
+  </form>
+</div>
+
+{% if responders %}
+<table class="table">
+  <thead><tr><th>Mailbox</th><th>Subject</th><th>Status</th><th>Actions</th></tr></thead>
+  <tbody>
+  {% for r in responders %}
+    <tr>
+      <td><strong>{{ r.local_part }}@{{ selected.name }}</strong></td>
+      <td class="muted">{{ r.subject }}</td>
+      <td>{% if r.enabled %}<span class="pill pill-ok">on</span>{% else %}<span class="pill">off</span>{% endif %}</td>
+      <td class="actions">
+        <form method="post" action="/autoresponders/{{ r.id }}/toggle">
+          <button type="submit" class="btn btn-sm">{{ 'Disable' if r.enabled else 'Enable' }}</button>
+        </form>
+        <form method="post" action="/autoresponders/{{ r.id }}/delete" onsubmit="return confirm('Delete this autoresponder?')">
+          <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="empty">No autoresponders yet on {{ selected.name }}.</div>
+{% endif %}
+{% endif %}
+{% endblock %}

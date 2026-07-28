@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Forwarders{% endblock %}
+{% block content %}
+<div class="breadcrumb"><a href="/">🏠 Home</a> / Email / Forwarders</div>
+<h1>Email Forwarders</h1>
+<p class="muted">Forward mail from an address to another. Use <code>*</code> as the source for a catch-all.</p>
+
+{% if not domains %}
+<div class="empty">Add a domain first to set up forwarders.</div>
+{% else %}
+
+<form method="get" action="/forwarders" class="row-form" style="margin-bottom:1rem">
+  <select name="domain_id" onchange="this.form.submit()">
+    {% for d in domains %}<option value="{{ d.id }}" {{ 'selected' if selected and d.id == selected.id }}>{{ d.name }}</option>{% endfor %}
+  </select>
+  <span class="muted">Forwarders on <strong>{{ selected.name }}</strong></span>
+</form>
+
+<div class="card">
+  <form method="post" action="/forwarders/create" class="row-form">
+    <input type="hidden" name="domain_id" value="{{ selected.id }}">
+    <input type="text" name="source" placeholder="info (or *)" required style="max-width:150px">
+    <span class="muted">@{{ selected.name }} →</span>
+    <input type="text" name="destination" placeholder="you@gmail.com" required style="flex:1;min-width:200px">
+    <button type="submit" class="btn btn-primary">+ Add Forwarder</button>
+  </form>
+</div>
+
+{% if forwarders %}
+<table class="table">
+  <thead><tr><th>Address</th><th>Forwards To</th><th></th></tr></thead>
+  <tbody>
+  {% for f in forwarders %}
+    <tr>
+      <td><strong>{{ f.source }}@{{ selected.name }}</strong></td>
+      <td>→ {{ f.destination }}</td>
+      <td class="actions">
+        <form method="post" action="/forwarders/{{ f.id }}/delete" onsubmit="return confirm('Delete this forwarder?')">
+          <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="empty">No forwarders yet on {{ selected.name }}.</div>
+{% endif %}
+{% endif %}
+{% endblock %}

@@ -1,0 +1,71 @@
+"""Central configuration.
+
+Everything a deploy might change lives here and can be overridden with
+environment variables, so the same code runs on a Windows dev box (demo
+provider) and a Linux VPS (linux provider) without edits.
+"""
+from __future__ import annotations
+
+import os
+import secrets
+from pathlib import Path
+
+
+def _env(name: str, default: str) -> str:
+    return os.environ.get(name, default)
+
+
+# --- Paths -----------------------------------------------------------------
+# Project root = the folder containing this "app" package.
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+# All mutable panel state (db, hosted sites, nginx configs, certs) lives under
+# DATA_DIR. On a real VPS you'd point this at /var/www + /etc, but keeping it
+# together makes the demo self-contained and easy to inspect.
+DATA_DIR = Path(_env("PANEL_DATA_DIR", str(BASE_DIR / "data")))
+SITES_DIR = DATA_DIR / "sites"          # per-domain webroots
+NGINX_DIR = DATA_DIR / "nginx"          # generated vhost configs
+CERTS_DIR = DATA_DIR / "certs"          # SSL certificates
+DB_SANDBOX_DIR = DATA_DIR / "databases"  # demo "MySQL" storage
+
+DB_URL = _env("PANEL_DB_URL", f"sqlite:///{(DATA_DIR / 'panel.db').as_posix()}")
+
+# --- Provider --------------------------------------------------------------
+# "demo"  -> simulate system operations on the local filesystem (Windows-safe)
+# "linux" -> run real nginx/certbot/mysql commands (VPS)
+PROVIDER = _env("PANEL_PROVIDER", "demo")
+
+# --- Security --------------------------------------------------------------
+# Session signing key. Generated per-process if unset — fine for dev, but set
+# PANEL_SECRET_KEY in production so sessions survive restarts.
+SECRET_KEY = _env("PANEL_SECRET_KEY", secrets.token_hex(32))
+SESSION_COOKIE = "panel_session"
+
+# Default admin bootstrapped on first run (change the password after login).
+DEFAULT_ADMIN_USER = _env("PANEL_ADMIN_USER", "admin")
+DEFAULT_ADMIN_PASSWORD = _env("PANEL_ADMIN_PASSWORD", "admin")
+
+# --- App -------------------------------------------------------------------
+APP_NAME = _env("PANEL_APP_NAME", "LitesPanel")
+# Base domain used to build demo URLs and default nginx server_name hints.
+PANEL_HOST = _env("PANEL_HOST", "localhost")
+
+# If set (e.g. https://server/phpmyadmin), the Database Manager embeds the real
+# phpMyAdmin in an iframe. If empty, the built-in SQLite-backed SQL console is
+# used — which actually works in the demo without a MySQL server.
+PHPMYADMIN_URL = _env("PANEL_PHPMYADMIN_URL", "")
+
+# Public IP of this hosting node — used to seed default DNS A records.
+SERVER_IP = _env("PANEL_SERVER_IP", "203.0.113.10")
+
+# Additional data directories.
+DNS_DIR = DATA_DIR / "dns"          # generated zone files
+MAIL_DIR = DATA_DIR / "mail"        # virtual mailbox store
+BACKUPS_DIR = DATA_DIR / "backups"  # account backup archives
+
+
+def ensure_dirs() -> None:
+    """Create the data directories on startup (idempotent)."""
+    for d in (DATA_DIR, SITES_DIR, NGINX_DIR, CERTS_DIR, DB_SANDBOX_DIR, DNS_DIR,
+              MAIL_DIR, BACKUPS_DIR):
+        d.mkdir(parents=True, exist_ok=True)

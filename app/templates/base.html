@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}{{ APP_NAME }}{% endblock %} · {{ APP_NAME }}</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script>
+    // Apply the saved theme before first paint to avoid a flash.
+    (function () {
+      try {
+        var t = localStorage.getItem("theme");
+        if (t) document.documentElement.setAttribute("data-theme", t);
+      } catch (e) {}
+    })();
+  </script>
+</head>
+<body>
+{% if user %}
+<div class="app" id="app">
+  <!-- ===== Jupiter left sidebar ===== -->
+  <aside class="jsidebar">
+    <div class="jbrand">
+      <a href="/" class="jbrand-link">
+        <span class="logo">◆</span>
+        <span class="jbrand-name">{{ APP_NAME }}</span>
+      </a>
+      <button class="jcollapse" onclick="toggleSidebar()" title="Collapse menu" aria-label="Collapse menu">‹</button>
+    </div>
+
+    <nav class="jnav">
+      <a href="/" class="jnav-item {{ 'is-active' if active == 'home' }}" data-tip="Tools">
+        <span class="jnav-ico">🏠</span><span class="jnav-label">Tools</span>
+      </a>
+
+      <div class="jnav-section">Management</div>
+      <a href="/domains" class="jnav-item {{ 'is-active' if active == 'domains' }}" data-tip="Domains">
+        <span class="jnav-ico">🌐</span><span class="jnav-label">Domains</span>
+      </a>
+      <a href="/subdomains" class="jnav-item {{ 'is-active' if active == 'subdomains' }}" data-tip="Subdomains">
+        <span class="jnav-ico">🔗</span><span class="jnav-label">Subdomains</span>
+      </a>
+      <a href="/dns" class="jnav-item {{ 'is-active' if active == 'dns' }}" data-tip="Zone Editor">
+        <span class="jnav-ico">🧭</span><span class="jnav-label">Zone Editor</span>
+      </a>
+      <a href="/files" class="jnav-item {{ 'is-active' if active == 'files' }}" data-tip="File Manager">
+        <span class="jnav-ico">📁</span><span class="jnav-label">File Manager</span>
+      </a>
+      <a href="/backups" class="jnav-item {{ 'is-active' if active == 'backups' }}" data-tip="Backups">
+        <span class="jnav-ico">💾</span><span class="jnav-label">Backups</span>
+      </a>
+
+      <div class="jnav-section">Email</div>
+      <a href="/email" class="jnav-item {{ 'is-active' if active == 'email' }}" data-tip="Email Accounts">
+        <span class="jnav-ico">📧</span><span class="jnav-label">Email Accounts</span>
+      </a>
+      <a href="/forwarders" class="jnav-item {{ 'is-active' if active == 'forwarders' }}" data-tip="Forwarders">
+        <span class="jnav-ico">📤</span><span class="jnav-label">Forwarders</span>
+      </a>
+      <a href="/autoresponders" class="jnav-item {{ 'is-active' if active == 'autoresponders' }}" data-tip="Autoresponders">
+        <span class="jnav-ico">🤖</span><span class="jnav-label">Autoresponders</span>
+      </a>
+
+      <div class="jnav-section">Databases</div>
+      <a href="/databases" class="jnav-item {{ 'is-active' if active == 'databases' }}" data-tip="Databases">
+        <span class="jnav-ico">🗄️</span><span class="jnav-label">MySQL® Databases</span>
+      </a>
+      <a href="/database-wizard" class="jnav-item {{ 'is-active' if active == 'dbwizard' }}" data-tip="Database Wizard">
+        <span class="jnav-ico">🧙</span><span class="jnav-label">Database Wizard</span>
+      </a>
+      <a href="/phpmyadmin" class="jnav-item {{ 'is-active' if active == 'phpmyadmin' }}" data-tip="phpMyAdmin">
+        <span class="jnav-ico">🐬</span><span class="jnav-label">phpMyAdmin</span>
+      </a>
+
+      <div class="jnav-section">Software</div>
+      <a href="/php" class="jnav-item {{ 'is-active' if active == 'php' }}" data-tip="PHP Version">
+        <span class="jnav-ico">🐘</span><span class="jnav-label">PHP Version</span>
+      </a>
+      <a href="/cron" class="jnav-item {{ 'is-active' if active == 'cron' }}" data-tip="Cron Jobs">
+        <span class="jnav-ico">⏰</span><span class="jnav-label">Cron Jobs</span>
+      </a>
+
+      <div class="jnav-section">Security</div>
+      <a href="/ssl" class="jnav-item {{ 'is-active' if active == 'ssl' }}" data-tip="SSL/TLS">
+        <span class="jnav-ico">🔒</span><span class="jnav-label">SSL / TLS</span>
+      </a>
+
+      {% if user.role in ('admin', 'reseller') %}
+      <div class="jnav-section">Preferences</div>
+      <a href="/users" class="jnav-item {{ 'is-active' if active == 'users' }}" data-tip="User Manager">
+        <span class="jnav-ico">👥</span><span class="jnav-label">User Manager</span>
+      </a>
+      <a href="/packages" class="jnav-item {{ 'is-active' if active == 'packages' }}" data-tip="Packages">
+        <span class="jnav-ico">📦</span><span class="jnav-label">Packages</span>
+      </a>
+      {% endif %}
+    </nav>
+
+    <div class="jsidebar-foot">
+      <span class="jnav-ico">👤</span>
+      <span class="jnav-label">{{ user.username }}</span>
+    </div>
+  </aside>
+
+  <!-- ===== Main column ===== -->
+  <div class="jmain">
+    <header class="jtopbar">
+      <button class="jhamburger" onclick="toggleSidebar()" aria-label="Toggle menu">☰</button>
+      <div class="jsearch">
+        <input type="text" placeholder="Search Tools ..." aria-label="Search tools"
+               oninput="filterTools(this.value)">
+      </div>
+      <div class="jtopnav">
+        <span class="badge badge-{{ PROVIDER }}">{{ PROVIDER }}</span>
+        <button class="jicon-btn" id="theme-btn" onclick="toggleTheme()" title="Toggle dark mode">🌙</button>
+        <button class="jicon-btn" title="Notifications">🔔</button>
+        <div class="juser">
+          <span class="juser-avatar">{{ user.username[0]|upper }}</span>
+          <span class="juser-name">{{ user.username }}</span>
+          <a href="/logout" class="juser-logout" title="Logout">⎋</a>
+        </div>
+      </div>
+    </header>
+
+    <div class="jcontent">
+      {% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
+      {% block content %}{% endblock %}
+    </div>
+  </div>
+</div>
+
+<script>
+function applyThemeIcon() {
+  var dark = document.documentElement.getAttribute("data-theme") === "dark";
+  var btn = document.getElementById("theme-btn");
+  if (btn) btn.textContent = dark ? "☀️" : "🌙";
+}
+function toggleTheme() {
+  var dark = document.documentElement.getAttribute("data-theme") === "dark";
+  var next = dark ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", next);
+  try { localStorage.setItem("theme", next); } catch (e) {}
+  applyThemeIcon();
+}
+applyThemeIcon();
+function toggleSidebar() {
+  var app = document.getElementById("app");
+  app.classList.toggle("collapsed");
+  try { localStorage.setItem("sbCollapsed", app.classList.contains("collapsed") ? "1" : "0"); } catch (e) {}
+}
+(function () {
+  try { if (localStorage.getItem("sbCollapsed") === "1") document.getElementById("app").classList.add("collapsed"); } catch (e) {}
+})();
+// cPanel-style live tool filter on the home page.
+function filterTools(q) {
+  q = (q || "").trim().toLowerCase();
+  document.querySelectorAll("[data-tool]").forEach(function (el) {
+    var name = el.getAttribute("data-tool");
+    el.style.display = !q || name.indexOf(q) !== -1 ? "" : "none";
+  });
+  document.querySelectorAll(".group").forEach(function (g) {
+    var any = g.querySelectorAll("[data-tool]:not([style*='display: none'])").length;
+    g.style.display = any ? "" : "none";
+  });
+}
+</script>
+{% else %}
+  {% block bare %}{% endblock %}
+{% endif %}
+</body>
+</html>

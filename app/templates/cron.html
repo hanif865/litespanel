@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Cron Jobs{% endblock %}
+{% block content %}
+<div class="breadcrumb"><a href="/">🏠 Home</a> / Software / Cron Jobs</div>
+<h1>Cron Jobs</h1>
+<p class="muted">Schedule commands to run automatically. Jobs are synced to the system crontab.</p>
+
+<div class="card">
+  <form method="post" action="/cron/create">
+    <label style="margin-bottom:.5rem">Common settings
+      <select onchange="applyPreset(this.value)" style="max-width:280px;font-weight:400">
+        <option value="">— pick a preset (optional) —</option>
+        <option value="* * * * *">Once per minute (* * * * *)</option>
+        <option value="*/5 * * * *">Every 5 minutes (*/5 * * * *)</option>
+        <option value="0 * * * *">Once an hour (0 * * * *)</option>
+        <option value="0 0 * * *">Once a day (0 0 * * *)</option>
+        <option value="0 0 * * 0">Once a week (0 0 * * 0)</option>
+        <option value="0 0 1 * *">Once a month (0 0 1 * *)</option>
+      </select>
+    </label>
+    <div class="cron-fields">
+      <div><span class="cron-lbl">Minute</span><input type="text" name="minute" id="c-minute" value="*"></div>
+      <div><span class="cron-lbl">Hour</span><input type="text" name="hour" id="c-hour" value="*"></div>
+      <div><span class="cron-lbl">Day</span><input type="text" name="day" id="c-day" value="*"></div>
+      <div><span class="cron-lbl">Month</span><input type="text" name="month" id="c-month" value="*"></div>
+      <div><span class="cron-lbl">Weekday</span><input type="text" name="weekday" id="c-weekday" value="*"></div>
+    </div>
+    <label style="margin-top:1rem">Command
+      <input type="text" name="command" placeholder="/usr/bin/php /home/user/script.php" required style="font-weight:400">
+    </label>
+    <button type="submit" class="btn btn-primary">+ Add cron job</button>
+  </form>
+</div>
+
+{% if jobs %}
+<table class="table">
+  <thead><tr><th>Schedule</th><th>Command</th><th>Added</th><th></th></tr></thead>
+  <tbody>
+  {% for j in jobs %}
+    <tr>
+      <td><code>{{ j.schedule }}</code></td>
+      <td>{{ j.command }}</td>
+      <td class="muted">{{ j.created_at.strftime('%Y-%m-%d') }}</td>
+      <td class="actions">
+        <form method="post" action="/cron/{{ j.id }}/delete" onsubmit="return confirm('Delete this cron job?')">
+          <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="empty">No cron jobs yet.</div>
+{% endif %}
+
+<style>
+.cron-fields { display: grid; grid-template-columns: repeat(5, 1fr); gap: .6rem; max-width: 640px; }
+.cron-fields input { width: 100%; text-align: center; }
+.cron-lbl { display: block; font-size: .72rem; color: var(--muted); margin-bottom: .25rem; font-weight: 600; }
+</style>
+<script>
+function applyPreset(v) {
+  if (!v) return;
+  var p = v.split(" ");
+  ["minute","hour","day","month","weekday"].forEach(function (f, i) {
+    document.getElementById("c-" + f).value = p[i];
+  });
+}
+</script>
+{% endblock %}

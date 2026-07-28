@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+{% block title %}Home{% endblock %}
+{% block content %}
+<div class="home-grid">
+  <div class="main-col">
+    <div class="groups">
+
+      <!-- FILES -->
+      <div class="group">
+        <div class="group-head"><span class="g-ico">📁</span> Files</div>
+        <a class="tool" href="/files" data-tool="file manager">
+          <span class="t-ico">🗂️</span><span class="t-name">File Manager</span>
+        </a>
+        <a class="tool" href="/" data-tool="disk usage">
+          <span class="t-ico">📊</span><span class="t-name">Disk Usage</span>
+        </a>
+        <span class="tool disabled" data-tool="ftp accounts">
+          <span class="t-ico">🔌</span><span class="t-name">FTP Accounts</span><span class="soon">soon</span>
+        </span>
+        <a class="tool" href="/backups" data-tool="backup">
+          <span class="t-ico">💾</span><span class="t-name">Backup</span>
+        </a>
+      </div>
+
+      <!-- DATABASES -->
+      <div class="group">
+        <div class="group-head"><span class="g-ico">🗄️</span> Databases</div>
+        <a class="tool" href="/databases" data-tool="mysql databases">
+          <span class="t-ico">🛢️</span><span class="t-name">MySQL® Databases</span>
+        </a>
+        <a class="tool" href="/phpmyadmin" data-tool="phpmyadmin">
+          <span class="t-ico">🐬</span><span class="t-name">phpMyAdmin</span>
+        </a>
+        <a class="tool" href="/database-wizard" data-tool="mysql database wizard">
+          <span class="t-ico">🧙</span><span class="t-name">Database Wizard</span>
+        </a>
+      </div>
+
+      <!-- DOMAINS -->
+      <div class="group">
+        <div class="group-head"><span class="g-ico">🌐</span> Domains</div>
+        <a class="tool" href="/domains" data-tool="domains">
+          <span class="t-ico">🌍</span><span class="t-name">Domains</span>
+        </a>
+        <a class="tool" href="/subdomains" data-tool="subdomains">
+          <span class="t-ico">🔗</span><span class="t-name">Subdomains</span>
+        </a>
+        <span class="tool disabled" data-tool="addon domains">
+          <span class="t-ico">➕</span><span class="t-name">Addon Domains</span><span class="soon">soon</span>
+        </span>
+        <a class="tool" href="/dns" data-tool="zone editor dns records">
+          <span class="t-ico">🧭</span><span class="t-name">Zone Editor (DNS)</span>
+        </a>
+      </div>
+
+      <!-- EMAIL -->
+      <div class="group">
+        <div class="group-head"><span class="g-ico">✉️</span> Email</div>
+        <a class="tool" href="/email" data-tool="email accounts">
+          <span class="t-ico">📧</span><span class="t-name">Email Accounts</span>
+        </a>
+        <a class="tool" href="/forwarders" data-tool="forwarders">
+          <span class="t-ico">📤</span><span class="t-name">Forwarders</span>
+        </a>
+        <a class="tool" href="/autoresponders" data-tool="autoresponders">
+          <span class="t-ico">🤖</span><span class="t-name">Autoresponders</span>
+        </a>
+      </div>
+
+      <!-- SECURITY -->
+      <div class="group">
+        <div class="group-head"><span class="g-ico">🔒</span> Security</div>
+        <a class="tool" href="/ssl" data-tool="ssl tls status">
+          <span class="t-ico">🔐</span><span class="t-name">SSL/TLS Status</span>
+        </a>
+        <a class="tool" href="/ssl" data-tool="lets encrypt ssl">
+          <span class="t-ico">📜</span><span class="t-name">Let's Encrypt™ SSL</span>
+        </a>
+        <span class="tool disabled" data-tool="ip blocker">
+          <span class="t-ico">🚫</span><span class="t-name">IP Blocker</span><span class="soon">soon</span>
+        </span>
+      </div>
+
+      <!-- METRICS -->
+      <div class="group">
+        <div class="group-head"><span class="g-ico">📈</span> Metrics</div>
+        <span class="tool disabled" data-tool="visitors">
+          <span class="t-ico">👥</span><span class="t-name">Visitors</span><span class="soon">soon</span>
+        </span>
+        <span class="tool disabled" data-tool="errors">
+          <span class="t-ico">⚠️</span><span class="t-name">Errors</span><span class="soon">soon</span>
+        </span>
+        <span class="tool disabled" data-tool="bandwidth">
+          <span class="t-ico">📶</span><span class="t-name">Bandwidth</span><span class="soon">soon</span>
+        </span>
+      </div>
+
+      {% if user.role in ('admin', 'reseller') %}
+      <!-- PREFERENCES / WHM -->
+      <div class="group">
+        <div class="group-head"><span class="g-ico">👥</span> Preferences</div>
+        <a class="tool" href="/users" data-tool="user manager accounts whm">
+          <span class="t-ico">👤</span><span class="t-name">User Manager</span>
+        </a>
+        <a class="tool" href="/packages" data-tool="packages plans hosting">
+          <span class="t-ico">📦</span><span class="t-name">Packages</span>
+        </a>
+      </div>
+      {% endif %}
+
+      <!-- SOFTWARE -->
+      <div class="group">
+        <div class="group-head"><span class="g-ico">⚙️</span> Software</div>
+        <a class="tool" href="/php" data-tool="select php version">
+          <span class="t-ico">🐘</span><span class="t-name">Select PHP Version</span>
+        </a>
+        <a class="tool" href="/cron" data-tool="cron jobs">
+          <span class="t-ico">⏰</span><span class="t-name">Cron Jobs</span>
+        </a>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- RIGHT SIDEBAR -->
+  <aside class="rail">
+    <div class="panel">
+      <div class="panel-head">General Information</div>
+      <div class="panel-body">
+        <div class="info-row"><span class="k">Current User</span><span class="v">{{ user.username }}</span></div>
+        <div class="info-row"><span class="k">Primary Domain</span><span class="v">{{ info.primary_domain }}</span></div>
+        <div class="info-row"><span class="k">Home Directory</span><span class="v">{{ info.home_dir }}</span></div>
+        <div class="info-row"><span class="k">Server / Provider</span><span class="v">{{ stats.provider }}</span></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">Statistics</div>
+      <div class="panel-body">
+        <div class="stat-item">
+          <div class="stat-top"><span class="s-label">Disk Usage</span>
+            <span class="s-val">{{ stats.disk.used_gb }} / {{ stats.disk.total_gb }} GB</span></div>
+          <div class="meter"><div class="meter-fill {{ 'hot' if stats.disk.percent > 85 }}" style="width: {{ stats.disk.percent }}%"></div></div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-top"><span class="s-label">CPU</span><span class="s-val">{{ stats.cpu_percent }}%</span></div>
+          <div class="meter"><div class="meter-fill {{ 'hot' if stats.cpu_percent > 85 }}" style="width: {{ stats.cpu_percent }}%"></div></div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-top"><span class="s-label">Memory</span><span class="s-val">{{ stats.mem_percent }}%</span></div>
+          <div class="meter"><div class="meter-fill {{ 'hot' if stats.mem_percent > 85 }}" style="width: {{ stats.mem_percent }}%"></div></div>
+        </div>
+        <div class="info-row"><span class="k">Domains</span><span class="v">{{ counts.domains }}</span></div>
+        <div class="info-row"><span class="k">Databases</span><span class="v">{{ counts.databases }}</span></div>
+        <div class="info-row"><span class="k">SSL Certificates</span><span class="v">{{ counts.certificates }}</span></div>
+      </div>
+    </div>
+  </aside>
+</div>
+{% endblock %}

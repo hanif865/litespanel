@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Packages{% endblock %}
+{% block content %}
+<div class="breadcrumb"><a href="/">🏠 Home</a> / Preferences / Packages</div>
+<h1>Packages</h1>
+<p class="muted">Reusable hosting plans. Assign a package to accounts in the User Manager — editing the package updates every account on it. (0 = unlimited)</p>
+
+<div class="card">
+  <h2 style="margin-top:0">➕ Create package</h2>
+  <form method="post" action="/packages/create">
+    <div class="user-grid">
+      <div><span class="cron-lbl">Name</span><input type="text" name="name" placeholder="Starter" required></div>
+      <div><span class="cron-lbl">Max Domains</span><input type="number" name="max_domains" value="1"></div>
+      <div><span class="cron-lbl">Max Databases</span><input type="number" name="max_databases" value="2"></div>
+      <div><span class="cron-lbl">Max Email</span><input type="number" name="max_email" value="5"></div>
+      <div><span class="cron-lbl">Disk Quota (MB)</span><input type="number" name="disk_quota_mb" value="1024"></div>
+    </div>
+    <button type="submit" class="btn btn-primary" style="margin-top:1rem">Create package</button>
+  </form>
+</div>
+
+{% if packages %}
+<table class="table">
+  <thead><tr><th>Package</th><th>Domains</th><th>Databases</th><th>Email</th><th>Disk (MB)</th><th>Accounts</th><th>Actions</th></tr></thead>
+  <tbody>
+  {% for p in packages %}
+    <tr>
+      <td><strong>{{ p.name }}</strong>
+        <form id="pkg{{ p.id }}" method="post" action="/packages/{{ p.id }}/update"></form>
+      </td>
+      <td><input form="pkg{{ p.id }}" type="number" name="max_domains" value="{{ p.max_domains }}" style="width:70px"></td>
+      <td><input form="pkg{{ p.id }}" type="number" name="max_databases" value="{{ p.max_databases }}" style="width:70px"></td>
+      <td><input form="pkg{{ p.id }}" type="number" name="max_email" value="{{ p.max_email }}" style="width:70px"></td>
+      <td><input form="pkg{{ p.id }}" type="number" name="disk_quota_mb" value="{{ p.disk_quota_mb }}" style="width:90px"></td>
+      <td class="muted">{{ p.users | length }}</td>
+      <td class="actions">
+        <button form="pkg{{ p.id }}" type="submit" class="btn btn-sm btn-primary">Save</button>
+        <form method="post" action="/packages/{{ p.id }}/delete" onsubmit="return confirm('Delete package {{ p.name }}?')">
+          <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="empty">No packages yet. Create one above.</div>
+{% endif %}
+
+<style>
+.user-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .8rem; }
+.user-grid input { width: 100%; }
+.cron-lbl { display: block; font-size: .72rem; color: var(--muted); margin-bottom: .25rem; font-weight: 600; }
+</style>
+{% endblock %}
