@@ -4,6 +4,24 @@ A cPanel alternative built on **FastAPI**, designed to stay small enough for a
 1 CPU / 4 GB VPS while still hosting real websites. The panel itself is just a
 manager — nginx, PHP-FPM and MySQL do the heavy lifting.
 
+## 🚀 One-command install
+
+On a **fresh Ubuntu 22.04 / 24.04** server, as root:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hanif865/litespanel/main/install.sh | sudo bash
+```
+
+…or with a domain, to also get a free Let's Encrypt certificate (point the
+domain's DNS at the server first):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hanif865/litespanel/main/install.sh | sudo bash -s -- panel.example.com
+```
+
+The installer sets up **nginx, MySQL, PHP-FPM, certbot, phpMyAdmin**, the panel
+itself, and a **systemd service** — then prints your panel URL and admin login.
+
 ## Features
 
 - 🌐 **Domains / website hosting** — provisions an nginx vhost + document root
