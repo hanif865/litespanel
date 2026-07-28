@@ -82,7 +82,14 @@ def create_email(
         return RedirectResponse(f"/email?domain_id={domain_id}", status_code=303)
 
     address = f"{local_part}@{domain.name}"
-    get_provider().create_mailbox(address, password, quota_mb)
+    try:
+        get_provider().create_mailbox(address, password, quota_mb)
+    except Exception as exc:  # noqa: BLE001 — surface a friendly reason, not a 500
+        msg = str(exc)
+        if "doveadm" in msg or "No such file" in msg:
+            msg = "Mail server not installed. Run setup-mail.sh on the server first."
+        _flash(request, f"❌ Could not create mailbox: {msg}")
+        return RedirectResponse(f"/email?domain_id={domain_id}", status_code=303)
     db.add(EmailAccount(domain_id=domain.id, local_part=local_part, quota_mb=quota_mb))
     db.commit()
     _flash(request, f"✅ Mailbox {address} created ({quota_mb} MB quota).")

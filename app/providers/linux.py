@@ -306,18 +306,18 @@ class LinuxProvider(Provider):
         local, _, domain = address.partition("@")
         Path(f"/var/mail/vhosts/{domain}/{local}/.dovecot.sieve").unlink(missing_ok=True)
 
-    def create_backup(self, dest_zip: Path, domains: list[str], databases: list[str]) -> dict:
+    def create_backup(self, dest_zip: Path, sites: list[tuple[str, str]], databases: list[str]) -> dict:
         import zipfile
 
         items = []
         with zipfile.ZipFile(dest_zip, "w", zipfile.ZIP_DEFLATED) as zf:
-            for d in domains:
-                site = WEB_ROOT / d
+            for name, site_dir in sites:
+                site = Path(site_dir)
                 if site.exists():
                     for f in site.rglob("*"):
                         if f.is_file():
-                            zf.write(f, f"homedir/{d}/{f.relative_to(site).as_posix()}")
-                    items.append(f"site:{d}")
+                            zf.write(f, f"homedir/{name}/{f.relative_to(site).as_posix()}")
+                    items.append(f"site:{name}")
             for name in databases:
                 # mysqldump each database into the archive.
                 dump = subprocess.run(["mysqldump", name], capture_output=True, text=True)

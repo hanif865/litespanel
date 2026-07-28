@@ -27,8 +27,14 @@
   <form method="post" action="/files/mkdir" class="inline-form">
     <input type="hidden" name="domain_id" value="{{ selected.id }}">
     <input type="hidden" name="path" value="{{ path }}">
-    <input type="text" name="name" placeholder="new-folder" required>
+    <input type="text" name="name" placeholder="new-folder" required style="max-width:130px">
     <button type="submit" class="btn btn-sm">📁 New folder</button>
+  </form>
+  <form method="post" action="/files/newfile" class="inline-form">
+    <input type="hidden" name="domain_id" value="{{ selected.id }}">
+    <input type="hidden" name="path" value="{{ path }}">
+    <input type="text" name="name" placeholder="index.php" required style="max-width:130px">
+    <button type="submit" class="btn btn-sm">📄 New file</button>
   </form>
 </div>
 
@@ -55,7 +61,17 @@
         {% if not e.is_dir %}
           <a href="/files/download?domain_id={{ selected.id }}&path={{ e.rel }}" class="btn btn-sm">Download</a>
         {% endif %}
-        <form method="post" action="/files/delete" onsubmit="return confirm('Delete {{ e.name }}?')">
+        {% if not e.is_dir and (e.name.endswith('.zip') or e.name.endswith('.tar') or e.name.endswith('.tar.gz') or e.name.endswith('.tgz')) %}
+        <form method="post" action="/files/extract" style="display:inline;margin:0">
+          <input type="hidden" name="domain_id" value="{{ selected.id }}">
+          <input type="hidden" name="path" value="{{ path }}">
+          <input type="hidden" name="target_rel" value="{{ e.rel }}">
+          <button type="submit" class="btn btn-sm">📦 Extract</button>
+        </form>
+        {% endif %}
+        <button type="button" class="btn btn-sm" onclick="doOp('rename', {{ e.rel|tojson }}, {{ e.name|tojson }})">Rename</button>
+        <button type="button" class="btn btn-sm" onclick="doOp('copy', {{ e.rel|tojson }}, {{ e.name|tojson }})">Copy</button>
+        <form method="post" action="/files/delete" onsubmit="return confirm('Delete {{ e.name }}?')" style="display:inline;margin:0">
           <input type="hidden" name="domain_id" value="{{ selected.id }}">
           <input type="hidden" name="path" value="{{ path }}">
           <input type="hidden" name="target_rel" value="{{ e.rel }}">
@@ -69,5 +85,25 @@
   {% endif %}
   </tbody>
 </table>
+
+<form id="opform" method="post" style="display:none">
+  <input type="hidden" name="domain_id" value="{{ selected.id }}">
+  <input type="hidden" name="path" value="{{ path }}">
+  <input type="hidden" name="target_rel" id="op-target">
+  <input type="hidden" name="new_name" id="op-newname">
+</form>
+<script>
+function doOp(kind, rel, cur) {
+  var label = kind === "rename" ? "Rename to:" : "Copy as:";
+  var suggested = kind === "rename" ? cur : "copy-of-" + cur;
+  var name = prompt(label, suggested);
+  if (!name) return;
+  var f = document.getElementById("opform");
+  f.action = "/files/" + kind;
+  document.getElementById("op-target").value = rel;
+  document.getElementById("op-newname").value = name;
+  f.submit();
+}
+</script>
 {% endif %}
 {% endblock %}

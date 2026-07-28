@@ -45,13 +45,18 @@ def create_backup(
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
-    domains = [d.name for d in db.scalars(select(Domain).where(Domain.owner_id == user.id))]
+    # Pass the real on-disk site directory for each domain (docroot's parent),
+    # so the backup archives the actual files wherever they live (/home/<user>).
+    sites = [
+        (d.name, str(Path(d.docroot).parent))
+        for d in db.scalars(select(Domain).where(Domain.owner_id == user.id))
+    ]
     databases = [d.name for d in db.scalars(select(Database).where(Database.owner_id == user.id))]
 
     ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     filename = f"backup-{user.username}-{ts}.zip"
     dest = config.BACKUPS_DIR / filename
-    summary = get_provider().create_backup(dest, domains, databases)
+    summary = get_provider().create_backup(dest, sites, databases)
 
     db.add(Backup(owner_id=user.id, filename=filename,
                   size_bytes=summary["size_bytes"], note=note.strip()[:255]))

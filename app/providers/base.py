@@ -152,10 +152,11 @@ class Provider(ABC):
 
     # --- Backups ----------------------------------------------------------
     @abstractmethod
-    def create_backup(self, dest_zip: Path, domains: list[str], databases: list[str]) -> dict:
+    def create_backup(self, dest_zip: Path, sites: list[tuple[str, str]], databases: list[str]) -> dict:
         """Archive the given sites + databases (+ their dns/mail) into dest_zip.
 
-        Returns {size_bytes, items}.
+        `sites` is a list of (domain_name, site_directory) so files are read
+        from wherever they actually live. Returns {size_bytes, items}.
         """
 
     @abstractmethod

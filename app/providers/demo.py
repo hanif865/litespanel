@@ -277,34 +277,33 @@ class DemoProvider(Provider):
         (config.MAIL_DIR / domain / "autoresponders" / f"{local}.txt").unlink(missing_ok=True)
 
     # --- Backups ----------------------------------------------------------
-    def create_backup(self, dest_zip: Path, domains: list[str], databases: list[str]) -> dict:
+    def create_backup(self, dest_zip: Path, sites: list[tuple[str, str]], databases: list[str]) -> dict:
         import json
         import zipfile
 
         items = []
         with zipfile.ZipFile(dest_zip, "w", zipfile.ZIP_DEFLATED) as zf:
-            # Manifest so a restore knows what's inside.
-            manifest = {"domains": domains, "databases": databases,
+            manifest = {"domains": [n for n, _ in sites], "databases": databases,
                         "created": datetime.now(timezone.utc).isoformat()}
             zf.writestr("manifest.json", json.dumps(manifest, indent=2))
 
-            for d in domains:
-                site = config.SITES_DIR / d
+            for name, site_dir in sites:
+                site = Path(site_dir)
                 if site.exists():
                     for f in site.rglob("*"):
                         if f.is_file():
-                            zf.write(f, f"homedir/{d}/{f.relative_to(site).as_posix()}")
-                    items.append(f"site:{d}")
-                zone = config.DNS_DIR / f"{d}.zone"
+                            zf.write(f, f"homedir/{name}/{f.relative_to(site).as_posix()}")
+                    items.append(f"site:{name}")
+                zone = config.DNS_DIR / f"{name}.zone"
                 if zone.exists():
-                    zf.write(zone, f"dns/{d}.zone")
-                    items.append(f"dns:{d}")
-                maild = config.MAIL_DIR / d
+                    zf.write(zone, f"dns/{name}.zone")
+                    items.append(f"dns:{name}")
+                maild = config.MAIL_DIR / name
                 if maild.exists():
                     for f in maild.rglob("*"):
                         if f.is_file():
-                            zf.write(f, f"mail/{d}/{f.relative_to(maild).as_posix()}")
-                    items.append(f"mail:{d}")
+                            zf.write(f, f"mail/{name}/{f.relative_to(maild).as_posix()}")
+                    items.append(f"mail:{name}")
 
             for name in databases:
                 dbf = self._db_path(name)

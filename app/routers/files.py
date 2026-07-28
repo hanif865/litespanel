@@ -221,3 +221,142 @@ def delete_entry(
         target.unlink()
         _flash(request, f"🗑️ Deleted '{target.name}'.")
     return RedirectResponse(f"/files?domain_id={domain_id}&path={path}", status_code=303)
+
+
+@router.post("/newfile")
+def new_file(
+    request: Request,
+    domain_id: int = Form(...),
+    path: str = Form(""),
+    name: str = Form(...),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    domain = _owned_domain(db, user, domain_id)
+    filename = Path(name).name
+    if not filename:
+        _flash(request, "❌ Enter a file name.")
+        return RedirectResponse(f"/files?domain_id={domain_id}&path={path}", status_code=303)
+    target = _safe_join(_safe_join(Path(domain.docroot), path), filename)
+    if target.exists():
+        _flash(request, f"❌ '{filename}' already exists.")
+    else:
+        target.touch()
+        _own(domain, target)
+        _flash(request, f"📄 File '{filename}' created.")
+    return RedirectResponse(f"/files?domain_id={domain_id}&path={path}", status_code=303)
+
+
+@router.post("/rename")
+def rename_entry(
+    request: Request,
+    domain_id: int = Form(...),
+    path: str = Form(""),
+    target_rel: str = Form(...),
+    new_name: str = Form(...),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    domain = _owned_domain(db, user, domain_id)
+    src = _safe_join(Path(domain.docroot), target_rel)
+    dest = _safe_join(src.parent, Path(new_name).name)
+    if not src.exists():
+        _flash(request, "❌ Item not found.")
+    elif dest.exists():
+        _flash(request, f"❌ '{dest.name}' already exists.")
+    else:
+        src.rename(dest)
+        _flash(request, f"✏️ Renamed to '{dest.name}'.")
+    return RedirectResponse(f"/files?domain_id={domain_id}&path={path}", status_code=303)
+
+
+@router.post("/copy")
+def copy_entry(
+    request: Request,
+    domain_id: int = Form(...),
+    path: str = Form(""),
+    target_rel: str = Form(...),
+    new_name: str = Form(...),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    import shutil
+
+    domain = _owned_domain(db, user, domain_id)
+    src = _safe_join(Path(domain.docroot), target_rel)
+    dest = _safe_join(src.parent, Path(new_name).name)
+    if not src.exists():
+        _flash(request, "❌ Item not found.")
+    elif dest.exists():
+        _flash(request, f"❌ '{dest.name}' already exists.")
+    elif src.is_dir():
+        shutil.copytree(src, dest)
+        _own(domain, dest)
+        _flash(request, f"📋 Copied folder to '{dest.name}'.")
+    else:
+        shutil.copy2(src, dest)
+        _own(domain, dest)
+        _flash(request, f"📋 Copied to '{dest.name}'.")
+    return RedirectResponse(f"/files?domain_id={domain_id}&path={path}", status_code=303)
+
+
+@router.post("/extract")
+def extract_archive(
+    request: Request,
+    domain_id: int = Form(...),
+    path: str = Form(""),
+    target_rel: str = Form(...),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    import tarfile
+    import zipfile
+
+    domain = _owned_domain(db, user, domain_id)
+    archive = _safe_join(Path(domain.docroot), target_rel)
+    dest_dir = archive.parent
+    if not archive.is_file():
+        _flash(request, "❌ Archive not found.")
+        return RedirectResponse(f"/files?domain_id={domain_id}&path={path}", status_code=303)
+
+    count = 0
+    try:
+        if archive.suffix.lower() == ".zip":
+            with zipfile.ZipFile(archive) as zf:
+                for member in zf.namelist():
+                    out = _safe_extract(dest_dir, member)
+                    if out is None or member.endswith("/"):
+                        continue
+                    out.parent.mkdir(parents=True, exist_ok=True)
+                    with zf.open(member) as s, open(out, "wb") as d:
+                        d.write(s.read())
+                    count += 1
+        elif archive.name.lower().endswith((".tar", ".tar.gz", ".tgz")):
+            with tarfile.open(archive) as tf:
+                for member in tf.getmembers():
+                    out = _safe_extract(dest_dir, member.name)
+                    if out is None or not member.isfile():
+                        continue
+                    out.parent.mkdir(parents=True, exist_ok=True)
+                    with tf.extractfile(member) as s, open(out, "wb") as d:
+                        d.write(s.read())
+                    count += 1
+        else:
+            _flash(request, "❌ Only .zip, .tar, .tar.gz archives can be extracted.")
+            return RedirectResponse(f"/files?domain_id={domain_id}&path={path}", status_code=303)
+    except Exception as exc:  # noqa: BLE001
+        _flash(request, f"❌ Extract failed: {exc}")
+        return RedirectResponse(f"/files?domain_id={domain_id}&path={path}", status_code=303)
+
+    _own(domain, dest_dir)
+    _flash(request, f"📦 Extracted {count} file(s) from '{archive.name}'.")
+    return RedirectResponse(f"/files?domain_id={domain_id}&path={path}", status_code=303)
+
+
+def _safe_extract(base: Path, member: str) -> Path | None:
+    """Resolve an archive member under base, refusing Zip-Slip escapes."""
+    root = base.resolve()
+    target = (root / member).resolve()
+    if target == root or root in target.parents:
+        return target
+    return None
