@@ -15,29 +15,28 @@
   </select>
 </form>
 
-<!-- ===== cPanel-style top toolbar ===== -->
+<!-- ===== top toolbar ===== -->
 <div class="fm-toolbar">
-  <button type="button" class="fm-btn" onclick="fmPrompt('newfile','name','New file name:','index.php')"><span>➕</span>File</button>
-  <button type="button" class="fm-btn" onclick="fmPrompt('mkdir','name','New folder name:','new-folder')"><span>📁</span>Folder</button>
-  <button type="button" class="fm-btn" onclick="fmPrompt('copy','new_name','Copy selected as:','copy')"><span>📋</span>Copy</button>
-  <button type="button" class="fm-btn" onclick="fmPrompt('move','dest','Move into folder (path):','')"><span>➡️</span>Move</button>
+  <button type="button" class="fm-btn" onclick="actNewFile()"><span>➕</span>File</button>
+  <button type="button" class="fm-btn" onclick="actNewFolder()"><span>📁</span>Folder</button>
+  <button type="button" class="fm-btn" onclick="actCopy()"><span>📋</span>Copy</button>
+  <button type="button" class="fm-btn" onclick="actMove()"><span>➡️</span>Move</button>
   <button type="button" class="fm-btn" onclick="document.getElementById('upfile').click()"><span>⬆️</span>Upload</button>
-  <button type="button" class="fm-btn" onclick="fmDownload()"><span>⬇️</span>Download</button>
+  <button type="button" class="fm-btn" onclick="actDownload()"><span>⬇️</span>Download</button>
   {% if in_trash %}
-  <button type="submit" class="fm-btn" form="fm" formaction="/files/restore"><span>♻️</span>Restore</button>
-  <button type="submit" class="fm-btn danger" form="fm" formaction="/files/delete"
-          onclick="return confirm('Permanently delete selected items?')"><span>❌</span>Delete</button>
+  <button type="button" class="fm-btn" onclick="fmSubmit('restore')"><span>♻️</span>Restore</button>
+  <button type="button" class="fm-btn danger" onclick="if(needSel()&&confirm('Permanently delete?'))fmSubmit('delete')"><span>❌</span>Delete</button>
   {% else %}
-  <button type="submit" class="fm-btn" form="fm" formaction="/files/trash"><span>🗑️</span>Delete</button>
+  <button type="button" class="fm-btn" onclick="actTrash()"><span>🗑️</span>Delete</button>
   {% endif %}
-  <button type="button" class="fm-btn" onclick="fmPrompt('rename','new_name','Rename to:','')"><span>✏️</span>Rename</button>
-  <button type="button" class="fm-btn" onclick="fmEdit()"><span>📝</span>Edit</button>
-  <button type="button" class="fm-btn" onclick="fmPrompt('chmod','perms','Permissions (octal, e.g. 755):','644')"><span>🔧</span>Permissions</button>
-  <button type="submit" class="fm-btn" form="fm" formaction="/files/extract"><span>📦</span>Extract</button>
-  <button type="button" class="fm-btn" onclick="fmPrompt('compress','archive_name','Archive name:','archive.zip')"><span>🗜️</span>Compress</button>
+  <button type="button" class="fm-btn" onclick="actRename()"><span>✏️</span>Rename</button>
+  <button type="button" class="fm-btn" onclick="actEdit()"><span>📝</span>Edit</button>
+  <button type="button" class="fm-btn" onclick="actChmod()"><span>🔧</span>Permissions</button>
+  <button type="button" class="fm-btn" onclick="actExtract()"><span>📦</span>Extract</button>
+  <button type="button" class="fm-btn" onclick="actCompress()"><span>🗜️</span>Compress</button>
 </div>
 
-<!-- ===== secondary nav bar ===== -->
+<!-- ===== secondary nav ===== -->
 <div class="fm-subbar">
   <a href="/files?domain_id={{ selected.id }}&path=">🏠 Home</a>
   {% if parent is not none %}<a href="/files?domain_id={{ selected.id }}&path={{ parent }}">⬆️ Up One Level</a>{% endif %}
@@ -46,11 +45,10 @@
   <a href="#" onclick="fmToggle(false);return false;">◻️ Unselect All</a>
   <span class="fm-spacer"></span>
   <a href="/files?domain_id={{ selected.id }}&path=.trash">🗑️ View Trash</a>
-  <a href="#" onclick="if(confirm('Empty the trash permanently?')){document.getElementById('emptytrash').submit()}return false;">🧹 Empty Trash</a>
+  <a href="#" onclick="if(confirm('Empty the trash permanently?'))document.getElementById('emptytrash').submit();return false;">🧹 Empty Trash</a>
 </div>
 
 <div class="fm-body">
-  <!-- left folder tree -->
   <aside class="fm-tree">
     <div class="fm-tree-head">📂 {{ selected.name }}</div>
     <a class="fm-tnode {{ 'active' if not path }}" href="/files?domain_id={{ selected.id }}&path=">🏠 public_html</a>
@@ -60,7 +58,6 @@
     {% endfor %}
   </aside>
 
-  <!-- main listing -->
   <section class="fm-main">
     <div class="fm-crumbs">
       <a href="/files?domain_id={{ selected.id }}&path=">public_html</a>
@@ -80,15 +77,17 @@
         <thead><tr>
           <th style="width:28px"><input type="checkbox" onclick="fmToggle(this.checked)"></th>
           <th>Name</th><th style="width:90px">Size</th><th style="width:150px">Last Modified</th>
-          <th style="width:110px">Type</th><th style="width:90px">Perms</th>
+          <th style="width:110px">Type</th><th style="width:80px">Perms</th>
         </tr></thead>
         <tbody>
         {% for e in entries %}
-          <tr>
-            <td><input type="checkbox" name="targets" value="{{ e.rel }}"></td>
-            <td>
-              {% if e.is_dir %}📁 <a href="/files?domain_id={{ selected.id }}&path={{ e.rel }}"><strong>{{ e.name }}</strong></a>
-              {% else %}📄 {{ e.name }}{% endif %}
+          <tr data-rel="{{ e.rel|e }}" data-name="{{ e.name|e }}" data-perms="{{ e.perms }}"
+              data-dir="{{ 1 if e.is_dir else 0 }}" data-archive="{{ 1 if e.is_archive else 0 }}"
+              data-editable="{{ 1 if e.editable else 0 }}">
+            <td><input type="checkbox" name="targets" value="{{ e.rel }}" onclick="event.stopPropagation();rowSync(this)"></td>
+            <td class="fm-name">
+              {% if e.is_dir %}<span class="fm-ico">📁</span><strong>{{ e.name }}</strong>
+              {% else %}<span class="fm-ico">📄</span>{{ e.name }}{% endif %}
             </td>
             <td class="muted">{{ '' if e.is_dir else e.size | human_size }}</td>
             <td class="muted small">{{ e.mtime }}</td>
@@ -103,61 +102,137 @@
   </section>
 </div>
 
-<!-- hidden helper forms -->
 <form id="upform" method="post" action="/files/upload" enctype="multipart/form-data" style="display:none">
   <input type="hidden" name="domain_id" value="{{ selected.id }}">
   <input type="hidden" name="path" value="{{ path }}">
   <input type="file" name="file" id="upfile" onchange="this.form.submit()">
 </form>
 <form id="emptytrash" method="post" action="/files/emptytrash" style="display:none">
-  <input type="hidden" name="domain_id" value="{{ selected.id }}">
-  <input type="hidden" name="path" value="{{ path }}">
+  <input type="hidden" name="domain_id" value="{{ selected.id }}"><input type="hidden" name="path" value="{{ path }}">
 </form>
+
+<!-- right-click context menu -->
+<div id="fm-ctx" class="fm-ctx">
+  <a onclick="actMove()">➡️ Move</a>
+  <a onclick="actCopy()">📋 Copy</a>
+  <a onclick="actRename()">✏️ Rename</a>
+  <a onclick="actChmod()">🔧 Change Permissions</a>
+  <a onclick="actEdit()" id="ctx-edit">📝 Edit</a>
+  <a onclick="actExtract()" id="ctx-extract">📦 Extract</a>
+  <a onclick="actCompress()">🗜️ Compress</a>
+  <a class="danger" onclick="actTrash()">🗑️ Delete</a>
+</div>
+
+<!-- custom modal -->
+<div id="fm-modal" class="fm-modal">
+  <div class="fm-modal-box">
+    <div class="fm-modal-title" id="fm-modal-title"></div>
+    <input type="text" id="fm-modal-input" onkeydown="if(event.key==='Enter'){event.preventDefault();fmModalOk()}if(event.key==='Escape')fmModalClose()">
+    <div class="fm-modal-actions">
+      <button type="button" class="btn btn-primary btn-sm" id="fm-modal-ok" onclick="fmModalOk()">OK</button>
+      <button type="button" class="btn btn-sm" onclick="fmModalClose()">Cancel</button>
+    </div>
+  </div>
+</div>
 
 <style>
 .fm-toolbar { display:flex; flex-wrap:wrap; gap:2px; background:var(--card); border:1px solid var(--border);
   border-radius:8px 8px 0 0; padding:6px; }
-.fm-btn { display:flex; flex-direction:column; align-items:center; gap:2px; min-width:64px; padding:6px 8px;
+.fm-btn { display:flex; flex-direction:column; align-items:center; gap:2px; min-width:62px; padding:6px 8px;
   background:transparent; border:1px solid transparent; border-radius:6px; cursor:pointer; font-size:.7rem;
   color:var(--text); font-weight:500; }
-.fm-btn span { font-size:1.1rem; }
+.fm-btn span { font-size:1.15rem; }
 .fm-btn:hover { background:var(--orange-soft); border-color:var(--border); }
 .fm-btn.danger:hover { background:#fdecec; }
 .fm-subbar { display:flex; flex-wrap:wrap; align-items:center; gap:.9rem; background:#f8fafc; border:1px solid var(--border);
   border-top:none; padding:.5rem .8rem; font-size:.8rem; }
 [data-theme="dark"] .fm-subbar { background:#141a21; }
-.fm-subbar a { color:var(--text); }
-.fm-subbar a:hover { color:var(--orange); }
+.fm-subbar a { color:var(--text); } .fm-subbar a:hover { color:var(--orange); }
 .fm-spacer { flex:1; }
-.fm-body { display:flex; gap:0; border:1px solid var(--border); border-top:none; border-radius:0 0 8px 8px; overflow:hidden; }
-.fm-tree { width:230px; flex-shrink:0; background:#f8fafc; border-right:1px solid var(--border); padding:.4rem 0;
-  max-height:65vh; overflow:auto; }
+.fm-body { display:flex; border:1px solid var(--border); border-top:none; border-radius:0 0 8px 8px; overflow:hidden; }
+.fm-tree { width:230px; flex-shrink:0; background:#f8fafc; border-right:1px solid var(--border); padding:.4rem 0; max-height:66vh; overflow:auto; }
 [data-theme="dark"] .fm-tree { background:#141a21; }
 .fm-tree-head { font-weight:700; font-size:.78rem; padding:.4rem .8rem; color:var(--ink); }
 .fm-tnode { display:block; padding:.3rem .8rem; font-size:.8rem; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .fm-tnode:hover { background:var(--orange-soft); text-decoration:none; }
 .fm-tnode.active { background:var(--orange-soft); color:var(--orange-dark); font-weight:600; }
-.fm-main { flex:1; min-width:0; padding:.6rem .8rem; overflow:auto; }
+.fm-main { flex:1; min-width:0; padding:.6rem .8rem; overflow:auto; max-height:66vh; }
 .fm-crumbs { font-size:.82rem; margin-bottom:.5rem; color:var(--muted); }
 .fm-table { box-shadow:none; }
-.fm-table th { position:sticky; top:0; }
+.fm-table tbody tr { cursor:default; }
+.fm-table tbody tr.sel { background:var(--orange-soft) !important; }
+.fm-table .fm-name { user-select:none; }
+.fm-ico { margin-right:.35rem; }
+/* context menu */
+.fm-ctx { display:none; position:absolute; z-index:100; background:var(--card); border:1px solid var(--border);
+  border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,.18); padding:4px; min-width:180px; }
+.fm-ctx a { display:block; padding:.45rem .7rem; font-size:.85rem; color:var(--text); border-radius:6px; cursor:pointer; }
+.fm-ctx a:hover { background:var(--orange-soft); text-decoration:none; }
+.fm-ctx a.danger { color:var(--danger); } .fm-ctx a.danger:hover { background:#fdecec; }
+/* modal */
+.fm-modal { display:none; position:fixed; inset:0; background:rgba(15,20,26,.5); z-index:200; align-items:center; justify-content:center; }
+.fm-modal-box { background:var(--card); border-radius:12px; padding:1.4rem; width:100%; max-width:400px; box-shadow:0 20px 50px rgba(0,0,0,.35); }
+.fm-modal-title { font-weight:600; color:var(--ink); margin-bottom:.8rem; }
+.fm-modal-box input { width:100%; margin-bottom:1rem; }
+.fm-modal-actions { display:flex; gap:.5rem; justify-content:flex-end; }
 @media (max-width:760px){ .fm-tree{display:none;} }
 </style>
 <script>
-function fmToggle(on){ document.querySelectorAll('#fm input[name=targets]').forEach(function(c){c.checked=on;}); }
+function $(id){ return document.getElementById(id); }
+function fmForm(){ return $('fm'); }
+function fmSubmit(a){ var f=fmForm(); f.action='/files/'+a; f.submit(); }
+function fmSetField(name,val){ $('fm-'+name).value=val; }
 function fmSelected(){ return Array.prototype.slice.call(document.querySelectorAll('#fm input[name=targets]:checked')); }
-function fmSingle(){ var s=fmSelected(); if(s.length!==1){alert('Select exactly one item.');return null;} return s[0].value; }
-function fmSubmit(action){ var f=document.getElementById('fm'); f.action='/files/'+action; f.submit(); }
-function fmPrompt(action, field, label, def){
-  // Actions that create things (file/folder/compress) don't need a selection.
-  var needsSel = ['copy','move','rename','chmod'].indexOf(action) !== -1;
-  if(needsSel && fmSelected().length===0){ alert('Select an item first.'); return; }
-  var v = prompt(label, def||''); if(v===null || v==='') return;
-  document.getElementById('fm-'+field).value = v;
-  fmSubmit(action);
+function needSel(){ if(fmSelected().length===0){ toast('Select an item first.'); return false; } return true; }
+function fmSingleRow(){ var s=fmSelected(); if(s.length!==1){ toast('Select exactly one item.'); return null; } return s[0].closest('tr'); }
+function fmToggle(on){ document.querySelectorAll('#fm input[name=targets]').forEach(function(c){ c.checked=on; rowSync(c); }); }
+function rowSync(cb){ cb.closest('tr').classList.toggle('sel', cb.checked); }
+function toast(m){ alert(m); }
+
+// ---- custom modal ----
+var _modalCb=null;
+function fmModal(title, def, cb){
+  $('fm-modal-title').textContent=title; var i=$('fm-modal-input'); i.value=def||'';
+  _modalCb=cb; $('fm-modal').style.display='flex'; setTimeout(function(){ i.focus(); i.select(); },40);
 }
-function fmEdit(){ var r=fmSingle(); if(r) location.href='/files/edit?domain_id={{ selected.id }}&path='+encodeURIComponent(r); }
-function fmDownload(){ var r=fmSingle(); if(r) location.href='/files/download?domain_id={{ selected.id }}&path='+encodeURIComponent(r); }
+function fmModalClose(){ $('fm-modal').style.display='none'; _modalCb=null; }
+function fmModalOk(){ var v=$('fm-modal-input').value.trim(); var cb=_modalCb; fmModalClose(); if(v&&cb) cb(v); }
+
+// ---- toolbar / context actions ----
+function actNewFile(){ fmModal('New file name', 'index.php', function(v){ fmSetField('name',v); fmSubmit('newfile'); }); }
+function actNewFolder(){ fmModal('New folder name', 'new-folder', function(v){ fmSetField('name',v); fmSubmit('mkdir'); }); }
+function actRename(){ var r=fmSingleRow(); if(!r)return; fmModal('Rename to', r.dataset.name, function(v){ fmSetField('new_name',v); fmSubmit('rename'); }); }
+function actCopy(){ var r=fmSingleRow(); if(!r)return; fmModal('Copy as', 'copy-of-'+r.dataset.name, function(v){ fmSetField('new_name',v); fmSubmit('copy'); }); }
+function actMove(){ if(!needSel())return; fmModal('Move into folder (path)', '', function(v){ fmSetField('dest',v); fmSubmit('move'); }); }
+function actChmod(){ var r=fmSingleRow(); if(!r)return; fmModal('Permissions (octal, e.g. 755)', r.dataset.perms, function(v){ fmSetField('perms',v); fmSubmit('chmod'); }); }
+function actCompress(){ if(!needSel())return; fmModal('Archive name', 'archive.zip', function(v){ fmSetField('archive_name',v); fmSubmit('compress'); }); }
+function actTrash(){ if(!needSel())return; fmSubmit('trash'); }
+function actExtract(){ if(!needSel())return; fmSubmit('extract'); }
+function actEdit(){ var r=fmSingleRow(); if(r) location.href='/files/edit?domain_id={{ selected.id }}&path='+encodeURIComponent(r.dataset.rel); }
+function actDownload(){ var r=fmSingleRow(); if(r) location.href='/files/download?domain_id={{ selected.id }}&path='+encodeURIComponent(r.dataset.rel); }
+
+// ---- row interactions ----
+document.querySelectorAll('#fm tbody tr[data-rel]').forEach(function(tr){
+  // click row → toggle selection
+  tr.addEventListener('click', function(e){
+    if(e.target.closest('a')||e.target.closest('input')) return;
+    var cb=tr.querySelector('input[name=targets]'); cb.checked=!cb.checked; rowSync(cb);
+  });
+  // double click → open folder / edit file
+  tr.addEventListener('dblclick', function(){
+    if(tr.dataset.dir==='1') location.href='/files?domain_id={{ selected.id }}&path='+encodeURIComponent(tr.dataset.rel);
+    else if(tr.dataset.editable==='1') location.href='/files/edit?domain_id={{ selected.id }}&path='+encodeURIComponent(tr.dataset.rel);
+  });
+  // right click → context menu
+  tr.addEventListener('contextmenu', function(e){
+    e.preventDefault();
+    fmToggle(false); var cb=tr.querySelector('input[name=targets]'); cb.checked=true; rowSync(cb);
+    $('ctx-extract').style.display = tr.dataset.archive==='1' ? '' : 'none';
+    $('ctx-edit').style.display = tr.dataset.editable==='1' ? '' : 'none';
+    var m=$('fm-ctx'); m.style.display='block'; m.style.left=e.pageX+'px'; m.style.top=e.pageY+'px';
+  });
+});
+document.addEventListener('click', function(){ $('fm-ctx').style.display='none'; });
 </script>
 {% endif %}
 {% endblock %}
