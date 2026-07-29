@@ -62,6 +62,7 @@ def browse(
     request: Request,
     domain_id: int | None = None,
     path: str = "",
+    hidden: int = 0,
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
@@ -89,6 +90,8 @@ def browse(
     for child in sorted(current.iterdir(), key=lambda p: (p.is_file(), p.name.lower())):
         if child.name == ".trash" and not path:
             continue  # hide the trash folder from the normal root view
+        if child.name.startswith(".") and not hidden:
+            continue  # dotfiles hidden unless "Show Hidden" is on
         stat = child.stat()
         rel = child.relative_to(docroot.resolve()).as_posix()
         is_dir = child.is_dir()
@@ -99,7 +102,9 @@ def browse(
             "size": stat.st_size,
             "mtime": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
             "perms": oct(stat.st_mode)[-4:],
+            "icon": _file_icon(child.name, is_dir),
             "kind": "Folder" if is_dir else _file_kind(child.name),
+            "is_html": (not is_dir) and child.suffix.lower() in (".html", ".htm"),
             "is_archive": (not is_dir) and child.name.lower().endswith((".zip", ".tar", ".tar.gz", ".tgz")),
             "editable": child.is_file()
             and stat.st_size <= MAX_EDIT_BYTES
@@ -120,6 +125,7 @@ def browse(
     ctx.update({
         "selected": domain, "entries": entries, "path": path, "parent": parent,
         "crumbs": crumbs, "tree": _folder_tree(docroot), "in_trash": in_trash,
+        "show_hidden": bool(hidden),
     })
     return templates.TemplateResponse(request, "files.html", ctx)
 
@@ -127,6 +133,25 @@ def browse(
 def _file_kind(name: str) -> str:
     suffix = Path(name).suffix.lower().lstrip(".")
     return f"{suffix.upper()} File" if suffix else "File"
+
+
+# Emoji icon per file extension (cPanel-style type icons).
+_FILE_ICONS = {
+    "html": "🌐", "htm": "🌐", "css": "🎨", "js": "📜", "php": "🐘", "py": "🐍",
+    "json": "🧩", "xml": "📋", "yml": "📋", "yaml": "📋", "md": "📝", "txt": "📄",
+    "env": "⚙️", "ini": "⚙️", "conf": "⚙️", "htaccess": "⚙️", "sh": "⚡", "log": "🧾",
+    "zip": "📦", "tar": "📦", "gz": "📦", "tgz": "📦", "rar": "📦", "7z": "📦",
+    "png": "🖼️", "jpg": "🖼️", "jpeg": "🖼️", "gif": "🖼️", "svg": "🖼️", "webp": "🖼️", "ico": "🖼️",
+    "pdf": "📕", "doc": "📘", "docx": "📘", "xls": "📗", "xlsx": "📗", "ppt": "📙", "pptx": "📙",
+    "mp4": "🎬", "mov": "🎬", "webm": "🎬", "avi": "🎬", "mp3": "🎵", "wav": "🎵",
+    "sql": "🗄️", "db": "🗄️", "sqlite": "🗄️",
+}
+
+
+def _file_icon(name: str, is_dir: bool) -> str:
+    if is_dir:
+        return "📁"
+    return _FILE_ICONS.get(Path(name).suffix.lower().lstrip("."), "📄")
 
 
 def _folder_tree(docroot: Path, max_entries: int = 300) -> list[dict]:
@@ -202,6 +227,26 @@ def edit_form(
     return templates.TemplateResponse(
         request,
         "edit.html",
+        {"user": user, "domain": domain, "path": path, "content": content, "active": "files"},
+    )
+
+
+@router.get("/htmledit")
+def html_editor(
+    request: Request,
+    domain_id: int,
+    path: str,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    domain = _owned_domain(db, user, domain_id)
+    target = _safe_join(Path(domain.docroot), path)
+    if not target.is_file() or target.stat().st_size > MAX_EDIT_BYTES:
+        raise HTTPException(status_code=400, detail="File is not editable.")
+    content = target.read_text(encoding="utf-8", errors="replace")
+    return templates.TemplateResponse(
+        request,
+        "htmledit.html",
         {"user": user, "domain": domain, "path": path, "content": content, "active": "files"},
     )
 
@@ -395,32 +440,33 @@ def rename_entry(
 
 
 @router.post("/copy")
-def copy_entry(
+def copy_entries(
     request: Request,
     domain_id: int = Form(...),
     path: str = Form(""),
     targets: list[str] = Form(default=[]),
-    new_name: str = Form(...),
+    dest: str = Form(...),
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
     domain = _owned_domain(db, user, domain_id)
-    items = _resolve_targets(Path(domain.docroot), targets)
-    if len(items) != 1:
-        _flash(request, "❌ Select exactly one item to copy.")
+    docroot = Path(domain.docroot)
+    dest_dir = _safe_join(docroot, dest.strip().lstrip("/"))
+    if not dest_dir.is_dir():
+        _flash(request, "❌ Destination folder not found.")
         return _redir(domain_id, path)
-    src = items[0]
-    dest = _safe_join(src.parent, Path(new_name).name)
-    if dest.exists():
-        _flash(request, f"❌ '{dest.name}' already exists.")
-    elif src.is_dir():
-        shutil.copytree(src, dest)
-        _own(domain, dest)
-        _flash(request, f"📋 Copied folder to '{dest.name}'.")
-    else:
-        shutil.copy2(src, dest)
-        _own(domain, dest)
-        _flash(request, f"📋 Copied to '{dest.name}'.")
+    n = 0
+    for src in _resolve_targets(docroot, targets):
+        out = dest_dir / src.name
+        if out == src or out.exists():
+            continue
+        if src.is_dir():
+            shutil.copytree(src, out)
+        else:
+            shutil.copy2(src, out)
+        _own(domain, out)
+        n += 1
+    _flash(request, f"📋 Copied {n} item(s) into '{dest or 'public_html'}'.")
     return _redir(domain_id, path)
 
 

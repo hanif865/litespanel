@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}HTML Editor{% endblock %}
+{% block content %}
+<div class="breadcrumb"><a href="/">🏠 Home</a> / <a href="/files?domain_id={{ domain.id }}">File Manager</a> / HTML Editor</div>
+<h1>HTML Editor</h1>
+<p class="muted">{{ domain.name }} / public_html / {{ path }} — edit the source on the left, see it live on the right.</p>
+
+<form method="post" action="/files/edit">
+  <input type="hidden" name="domain_id" value="{{ domain.id }}">
+  <input type="hidden" name="path" value="{{ path }}">
+  <div class="he-split">
+    <div class="he-pane">
+      <div class="he-label">Source</div>
+      <textarea name="content" id="he-src" class="code-editor" spellcheck="false"
+                oninput="hePreview()">{{ content }}</textarea>
+    </div>
+    <div class="he-pane">
+      <div class="he-label">Live Preview</div>
+      <iframe id="he-preview" class="he-frame" sandbox="allow-same-origin"></iframe>
+    </div>
+  </div>
+  <div class="editor-actions">
+    <button type="submit" class="btn btn-primary">💾 Save</button>
+    <a href="/files?domain_id={{ domain.id }}" class="btn">Back to File Manager</a>
+  </div>
+</form>
+
+<style>
+.he-split { display:flex; gap:1rem; }
+.he-pane { flex:1; min-width:0; display:flex; flex-direction:column; }
+.he-label { font-size:.75rem; font-weight:700; color:var(--muted); text-transform:uppercase; margin-bottom:.35rem; }
+.he-split .code-editor { min-height:60vh; }
+.he-frame { min-height:60vh; width:100%; background:#fff; border:1px solid var(--border); border-radius:var(--radius); }
+@media (max-width:820px){ .he-split { flex-direction:column; } }
+</style>
+<script>
+function hePreview(){
+  document.getElementById('he-preview').srcdoc = document.getElementById('he-src').value;
+}
+hePreview();
+</script>
+{% endblock %}
