@@ -10,7 +10,9 @@
 from __future__ import annotations
 
 import html
+import re
 import secrets
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -19,10 +21,43 @@ from sqlalchemy.orm import Session
 
 from .. import config, crypto
 from ..db import get_db
-from ..models import Database, User
+from ..models import Database, Domain, User, WordPressApp
 from ..providers import get_provider
 from ..security import current_user
 from ..web import templates
+
+_WP_DB_PASS_RE = re.compile(r"""define\(\s*['"]DB_PASSWORD['"]\s*,\s*['"]([^'"]*)['"]""")
+
+
+def _password_for(db: Session, user: User, row: Database) -> str | None:
+    """The MySQL password for a database's own user, for phpMyAdmin auto-login.
+
+    Prefer the encrypted copy stored in the panel DB. If that's missing or can't
+    be decrypted (e.g. a WordPress install from before we stored it), recover the
+    real password from that site's wp-config.php — no password reset, so the live
+    site keeps working — and cache it back encrypted for next time.
+    """
+    password = crypto.decrypt(row.db_password_enc)
+    if password is not None:
+        return password
+    apps = db.scalars(
+        select(WordPressApp).join(Domain).where(Domain.owner_id == user.id)
+    ).all()
+    for a in apps:
+        if a.db_name != row.name:
+            continue
+        idir = Path(a.domain.docroot) / a.path if a.path else Path(a.domain.docroot)
+        try:
+            text = (idir / "wp-config.php").read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        m = _WP_DB_PASS_RE.search(text)
+        if m:
+            password = m.group(1)
+            row.db_password_enc = crypto.encrypt(password)
+            db.commit()
+            return password
+    return None
 
 # NOTE: mounted at /database-manager, NOT /phpmyadmin — on the server nginx
 # serves the real phpMyAdmin at /phpmyadmin, so any panel route under that path
@@ -86,9 +121,10 @@ def signon(
     )
     if row is None:
         raise HTTPException(status_code=404, detail="Database not found.")
-    password = crypto.decrypt(row.db_password_enc)
+    password = _password_for(db, user, row)
     if password is None:
-        # No stored credential (older DB) — send them to the normal login form.
+        # No usable credential (older non-WordPress DB) — send them to the normal
+        # login form; the Database Manager offers "Enable auto-login" for these.
         return HTMLResponse(
             f'<meta http-equiv="refresh" content="0;url={html.escape(config.PHPMYADMIN_URL)}">'
         )
