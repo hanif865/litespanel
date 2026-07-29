@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import html
+import json
 import re
 import secrets
 from pathlib import Path
@@ -129,6 +130,12 @@ def signon(
             f'<meta http-equiv="refresh" content="0;url={html.escape(config.PHPMYADMIN_URL)}">'
         )
     action = f"{config.PHPMYADMIN_URL}/index.php"
+    # phpMyAdmin's cookie-auth login validates a CSRF token against the current
+    # session. A tokenless POST works ONLY when no session exists yet — so the
+    # FIRST database opens fine, but opening a SECOND one keeps the first user's
+    # session and silently ignores the new credentials ("No databases selected").
+    # Fix: fetch phpMyAdmin first (same-origin, sends its cookies), scrape a valid
+    # token, and submit the login with it so every open switches users correctly.
     page = f"""<!doctype html><html><head><meta charset="utf-8"><title>Signing in…</title></head>
 <body style="font-family:sans-serif;color:#666;padding:2rem">Opening phpMyAdmin…
 <form id="f" method="post" action="{html.escape(action, quote=True)}">
@@ -136,8 +143,23 @@ def signon(
   <input type="hidden" name="pma_password" value="{html.escape(password, quote=True)}">
   <input type="hidden" name="server" value="1">
   <input type="hidden" name="db" value="{html.escape(row.name, quote=True)}">
+  <input type="hidden" name="token" id="pma_token" value="">
 </form>
-<script>document.getElementById('f').submit();</script></body></html>"""
+<script>
+(async function () {{
+  var f = document.getElementById("f");
+  try {{
+    var resp = await fetch({json.dumps(action)}, {{credentials: "same-origin"}});
+    var text = await resp.text();
+    // phpMyAdmin renders the CSRF token as a hidden input; attribute order
+    // (name-before-value vs value-before-name) varies by version, so try both.
+    var m = text.match(/name=["']token["'][^>]*\\bvalue=["']([^"']+)["']/i)
+         || text.match(/\\bvalue=["']([^"']+)["'][^>]*name=["']token["']/i);
+    if (m) document.getElementById("pma_token").value = m[1].replace(/&amp;/g, "&");
+  }} catch (e) {{}}
+  f.submit();
+}})();
+</script></body></html>"""
     return HTMLResponse(page)
 
 
