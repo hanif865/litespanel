@@ -237,6 +237,9 @@ class WordPressApp(Base):
     admin_email: Mapped[str] = mapped_column(String(255))
     login_secret: Mapped[str] = mapped_column(String(64))  # HMAC key for auto-login
     db_name: Mapped[str | None] = mapped_column(String(64), nullable=True)  # for uninstall
+    # Subdirectory the install lives in ("" = domain root, "wp" = /wp). Lets one
+    # domain host several WordPress sites, Softaculous-style.
+    path: Mapped[str] = mapped_column(String(64), default="", server_default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     domain: Mapped["Domain"] = relationship()

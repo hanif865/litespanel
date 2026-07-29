@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session
 from .. import config, crypto
 from ..db import get_db
 from ..limits import database_limit_reached
-from ..models import Database, Domain, User, WordPressApp
+from ..models import Certificate, Database, Domain, User, WordPressApp
 from ..providers import get_provider
 from ..security import current_user
 from ..web import templates
@@ -54,27 +54,34 @@ def _wp_db_name(docroot: Path) -> str | None:
 
 
 def _list_installs(db: Session, user: User) -> list[dict]:
-    """Every WordPress install this account has — including ones set up outside
-    the panel — detected by a wp-config.php in the domain's document root."""
+    """Every WordPress install this account has — panel-managed ones (any
+    subdirectory) plus any set up outside the panel (a wp-config.php sitting in
+    a domain's document root)."""
     domains = db.scalars(
         select(Domain).where(Domain.owner_id == user.id).order_by(Domain.name)
     ).all()
-    apps = {a.domain_id: a for a in db.scalars(
+    apps = db.scalars(
         select(WordPressApp).join(Domain).where(Domain.owner_id == user.id)
-    ).all()}
+    ).all()
     installs = []
-    for d in domains:
-        app = apps.get(d.id)
-        has_config = (Path(d.docroot) / "wp-config.php").exists()
-        if not app and not has_config:
-            continue  # no WordPress here
+    seen = set()  # (domain_id, path) already represented by a managed record
+    for a in apps:
+        idir = Path(a.domain.docroot) / a.path if a.path else Path(a.domain.docroot)
         installs.append({
-            "domain": d,
-            "app": app,                       # None for un-managed (no auto-login)
-            "managed": app is not None,
-            "db_name": (app.db_name if app and app.db_name else _wp_db_name(Path(d.docroot))),
-            "on_disk": has_config,
+            "domain": a.domain, "app": a, "managed": True, "path": a.path or "",
+            "db_name": a.db_name or _wp_db_name(idir),
+            "on_disk": (idir / "wp-config.php").exists(),
         })
+        seen.add((a.domain_id, a.path or ""))
+    for d in domains:
+        if (d.id, "") in seen:
+            continue
+        if (Path(d.docroot) / "wp-config.php").exists():   # root install we didn't create
+            installs.append({
+                "domain": d, "app": None, "managed": False, "path": "",
+                "db_name": _wp_db_name(Path(d.docroot)), "on_disk": True,
+            })
+    installs.sort(key=lambda i: (i["domain"].name, i["path"]))
     return installs
 
 
@@ -84,12 +91,11 @@ def wp_page(request: Request, user: User = Depends(current_user), db: Session = 
         select(Domain).where(Domain.owner_id == user.id).order_by(Domain.name)
     ).all()
     installs = _list_installs(db, user)
-    installed_ids = {i["domain"].id for i in installs}
-    # Offer install only on domains that don't already have WordPress.
-    free_domains = [d for d in domains if d.id not in installed_ids]
+    # Any domain can host WordPress — at its root or in a subdirectory
+    # (Softaculous-style), so all domains are offered for install.
     return templates.TemplateResponse(
         request, "wordpress.html",
-        {"user": user, "domains": free_domains, "installs": installs, "active": "wordpress",
+        {"user": user, "domains": domains, "installs": installs, "active": "wordpress",
          "flash": request.session.pop("flash", None), "creds": request.session.pop("wp_creds", None)},
     )
 
@@ -114,9 +120,28 @@ define('DB_COLLATE', '');
 {salts}
 $table_prefix = 'wp_';
 define('WP_DEBUG', false);
+{extra}
 if (!defined('ABSPATH')) define('ABSPATH', __DIR__ . '/');
 require_once ABSPATH . 'wp-settings.php';
 """
+
+_DIR_RE = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
+_VER_RE = re.compile(r"^\d+\.\d+(\.\d+)?$")
+
+
+def _download_url(version: str) -> str:
+    """WordPress zip URL for a chosen version ("latest" or e.g. 6.5.2)."""
+    v = (version or "").strip().lower()
+    if _VER_RE.match(v):
+        return f"https://wordpress.org/wordpress-{v}.zip"
+    return config.WORDPRESS_URL  # latest.zip
+
+
+def _parse_protocol(protocol: str, domain_name: str) -> tuple[str, str]:
+    """Return (scheme, host) from a Softaculous-style protocol choice."""
+    scheme = "https" if protocol.startswith("https") else "http"
+    host = f"www.{domain_name}" if "www." in protocol else domain_name
+    return scheme, host
 
 _MU_PLUGIN = """<?php
 /* LitesPanel auto-login — verifies a short-lived signed token, then logs in. */
@@ -137,11 +162,39 @@ add_action('init', function () {{
 """
 
 
+def _ensure_ssl(db: Session, domain: Domain) -> bool:
+    """Best-effort: issue a Let's Encrypt cert for the domain so it can be
+    served over HTTPS (this also creates the domain's own :443 vhost, which
+    stops HTTPS requests from falling through to the panel). Returns True if the
+    domain has a usable cert afterwards. Only meaningful on the linux provider
+    and only when the domain's DNS already points at this server."""
+    if domain.certificate:
+        return True
+    if config.PROVIDER != "linux":
+        return False
+    try:
+        info = get_provider().issue_certificate(domain.name)
+    except Exception:  # noqa: BLE001 — DNS not pointed yet, rate limit, etc.
+        return False
+    db.add(Certificate(
+        domain_id=domain.id, issuer=info.issuer, issued_at=info.issued_at,
+        expires_at=info.expires_at, cert_path=info.cert_path,
+    ))
+    db.commit()
+    return True
+
+
 @router.post("/install")
 def wp_install(
     request: Request,
     domain_id: int = Form(...),
+    protocol: str = Form("http://"),
+    directory: str = Form(""),
+    version: str = Form("latest"),
     site_title: str = Form("My WordPress Site"),
+    site_description: str = Form(""),
+    multisite: str = Form(""),
+    disable_cron: str = Form(""),
     admin_user: str = Form(...),
     admin_password: str = Form(...),
     admin_email: str = Form(...),
@@ -159,10 +212,37 @@ def wp_install(
         _flash(request, "❌ Enter a valid admin username, a password (6+ chars) and email.")
         return RedirectResponse("/wordpress", status_code=303)
 
-    docroot = Path(domain.docroot)
-    if (docroot / "wp-config.php").exists():
-        _flash(request, "❌ WordPress is already installed in this domain.")
+    directory = directory.strip().strip("/")
+    if directory and not _DIR_RE.match(directory):
+        _flash(request, "❌ Directory may only contain letters, digits, dashes and underscores.")
         return RedirectResponse("/wordpress", status_code=303)
+
+    docroot = Path(domain.docroot)
+    install_dir = docroot / directory if directory else docroot
+    if (install_dir / "wp-config.php").exists():
+        where = f"{domain.name}/{directory}" if directory else domain.name
+        _flash(request, f"❌ WordPress is already installed at {where}.")
+        return RedirectResponse("/wordpress", status_code=303)
+
+    multisite_on = bool(multisite)
+    disable_cron_on = bool(disable_cron)
+    want_https = protocol.startswith("https")
+
+    # 0. If HTTPS was requested and there's no cert yet, try to obtain one now
+    #    (also creates the :443 vhost so HTTPS won't fall through to the panel).
+    ssl_note = ""
+    if want_https:
+        if _ensure_ssl(db, domain):
+            db.refresh(domain)
+        else:
+            want_https = False
+            ssl_note = (" (couldn't get an SSL certificate — installed over HTTP. "
+                        "Point the domain's DNS at this server, then issue SSL from the SSL page.)")
+    scheme, host = _parse_protocol("https://" if want_https else "http://", domain.name)
+    if "www." in protocol:
+        host = f"www.{domain.name}"
+    url_path = f"/{directory}" if directory else ""
+    site_url = f"{scheme}://{host}{url_path}"
 
     # 1. Database + user
     suffix = secrets.token_hex(3)
@@ -172,59 +252,70 @@ def wp_install(
                     db_password_enc=crypto.encrypt(dbpass), owner_id=user.id))
     db.commit()
 
-    # 2. WordPress files
+    # 2. WordPress files (chosen version) into the install directory
+    install_dir.mkdir(parents=True, exist_ok=True)
     try:
         if config.PROVIDER == "linux":
-            with urllib.request.urlopen(config.WORDPRESS_URL, timeout=60) as r:
+            with urllib.request.urlopen(_download_url(version), timeout=90) as r:
                 data = r.read()
             with zipfile.ZipFile(io.BytesIO(data)) as zf:
                 for member in zf.namelist():
                     if not member.startswith("wordpress/") or member.endswith("/"):
                         continue
-                    target = (docroot / member[len("wordpress/"):]).resolve()
-                    if docroot.resolve() not in target.parents:
+                    target = (install_dir / member[len("wordpress/"):]).resolve()
+                    if install_dir.resolve() not in target.parents:
                         continue
                     target.parent.mkdir(parents=True, exist_ok=True)
                     with zf.open(member) as s, open(target, "wb") as d:
                         d.write(s.read())
         else:
-            (docroot / "index.php").write_text(
+            (install_dir / "index.php").write_text(
                 "<?php echo '<h1>WordPress is configured 🎉 (demo)</h1>';", encoding="utf-8")
     except Exception as exc:  # noqa: BLE001
         _flash(request, f"❌ WordPress download failed: {exc}")
         return RedirectResponse("/wordpress", status_code=303)
 
-    # 3. wp-config.php
-    (docroot / "wp-config.php").write_text(
+    # 3. wp-config.php (with optional multisite / cron tweaks)
+    extra = []
+    if disable_cron_on:
+        extra.append("define('DISABLE_WP_CRON', true);")
+    if multisite_on:
+        extra.append("define('WP_ALLOW_MULTISITE', true);")
+    (install_dir / "wp-config.php").write_text(
         _WP_CONFIG.format(name=creds.name, user=creds.user, password=creds.password,
-                          host=creds.host, salts=_wp_salts()), encoding="utf-8")
+                          host=creds.host, salts=_wp_salts(), extra="\n".join(extra)),
+        encoding="utf-8")
 
     # 4. Full install via wp-cli (title + admin account, no browser wizard)
     sysuser = domain.owner.system_user or domain.owner.username
-    scheme = "https" if domain.certificate else "http"
-    ok, out = get_provider().run_wp_cli(docroot, sysuser, [
-        "core", "install", f"--url={scheme}://{domain.name}", f"--title={site_title}",
+    install_cmd = "multisite-install" if multisite_on else "install"
+    ok, out = get_provider().run_wp_cli(install_dir, sysuser, [
+        "core", install_cmd, f"--url={site_url}", f"--title={site_title}",
         f"--admin_user={admin_user.strip()}", f"--admin_password={admin_password}",
         f"--admin_email={admin_email.strip()}", "--skip-email",
     ])
+    if site_description.strip():
+        get_provider().run_wp_cli(install_dir, sysuser,
+                                  ["option", "update", "blogdescription", site_description.strip()])
 
     # 5. Auto-login mu-plugin + panel record
     login_secret = secrets.token_hex(24)
-    mu = docroot / "wp-content" / "mu-plugins"
+    mu = install_dir / "wp-content" / "mu-plugins"
     mu.mkdir(parents=True, exist_ok=True)
     (mu / "litespanel-autologin.php").write_text(_MU_PLUGIN.format(secret=login_secret), encoding="utf-8")
-    get_provider().set_owner(docroot, sysuser)
+    get_provider().set_owner(install_dir, sysuser)
 
-    db.query(WordPressApp).filter(WordPressApp.domain_id == domain.id).delete()
+    db.query(WordPressApp).filter(
+        WordPressApp.domain_id == domain.id, WordPressApp.path == directory).delete()
     db.add(WordPressApp(domain_id=domain.id, admin_user=admin_user.strip(),
                         admin_email=admin_email.strip(), login_secret=login_secret,
-                        db_name=dbname))
+                        db_name=dbname, path=directory))
     db.commit()
 
     if config.PROVIDER == "linux" and not ok:
         _flash(request, f"⚠️ Files installed but wp-cli setup reported: {out[:200]}")
     else:
-        _flash(request, f"✅ WordPress fully installed on {domain.name} — use “Login” to open wp-admin.")
+        _flash(request, f"✅ WordPress installed at {site_url} — use “Login” to open wp-admin.{ssl_note}")
     return RedirectResponse("/wordpress", status_code=303)
 
 
@@ -237,7 +328,8 @@ def wp_login(app_id: int, user: User = Depends(current_user), db: Session = Depe
     sig = hmac.new(app.login_secret.encode(), f"{app.admin_user}.{exp}".encode(), hashlib.sha256).hexdigest()
     token = f"{app.admin_user}.{exp}.{sig}"
     scheme = "https" if app.domain.certificate else "http"
-    return RedirectResponse(f"{scheme}://{app.domain.name}/?litespanel_login={token}", status_code=303)
+    base = f"{scheme}://{app.domain.name}" + (f"/{app.path}" if app.path else "")
+    return RedirectResponse(f"{base}/?litespanel_login={token}", status_code=303)
 
 
 @router.post("/{app_id}/forget")
@@ -275,20 +367,24 @@ def _wipe_docroot(docroot: Path) -> None:
 def wp_uninstall(
     request: Request,
     domain_id: int,
+    path: str = Form(""),
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
     """Softaculous-style Uninstall: remove the site's files AND drop its
-    database + DB user. Works for panel-managed installs and ones set up
-    outside the panel (DB name is read from wp-config.php)."""
+    database + DB user. Works for panel-managed installs (any subdirectory) and
+    ones set up outside the panel (DB name is read from wp-config.php)."""
     domain = db.get(Domain, domain_id)
     if domain is None or domain.owner_id != user.id:
         _flash(request, "❌ Site not found.")
         return RedirectResponse("/wordpress", status_code=303)
 
+    path = path.strip().strip("/")
     docroot = Path(domain.docroot)
-    app = db.scalar(select(WordPressApp).where(WordPressApp.domain_id == domain.id))
-    dbname = (app.db_name if app and app.db_name else None) or _wp_db_name(docroot)
+    install_dir = docroot / path if path else docroot
+    app = db.scalar(select(WordPressApp).where(
+        WordPressApp.domain_id == domain.id, WordPressApp.path == path))
+    dbname = (app.db_name if app and app.db_name else None) or _wp_db_name(install_dir)
 
     # 1. Drop the database + its scoped user (best effort).
     dropped = ""
@@ -304,9 +400,17 @@ def wp_uninstall(
         if row:
             db.delete(row)
 
-    # 2. Delete the WordPress files.
+    # 2. Delete the WordPress files. A subdirectory install is removed whole; a
+    #    root install has its contents emptied (the document root is kept).
     try:
-        _wipe_docroot(docroot)
+        if path:
+            import shutil
+            target = install_dir.resolve()
+            if not target.is_dir() or len(target.parts) < 4 or target == docroot.resolve():
+                raise ValueError(f"refusing to remove unsafe path: {target}")
+            shutil.rmtree(target, ignore_errors=True)
+        else:
+            _wipe_docroot(docroot)
     except Exception as exc:  # noqa: BLE001
         _flash(request, f"❌ Could not remove files: {exc}")
         return RedirectResponse("/wordpress", status_code=303)
@@ -316,5 +420,6 @@ def wp_uninstall(
         db.delete(app)
     db.commit()
 
-    _flash(request, f"🗑️ Uninstalled WordPress from {domain.name}{dropped}.")
+    where = f"{domain.name}/{path}" if path else domain.name
+    _flash(request, f"🗑️ Uninstalled WordPress from {where}{dropped}.")
     return RedirectResponse("/wordpress", status_code=303)

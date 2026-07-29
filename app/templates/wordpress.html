@@ -14,7 +14,7 @@
     {% for i in installs %}
       <tr>
         <td>
-          <strong>📝 {{ i.domain.name }}</strong>
+          <strong>📝 {{ i.domain.name }}{% if i.path %}/{{ i.path }}{% endif %}</strong>
           {% if not i.managed %}<span class="badge">detected</span>{% endif %}
           {% if not i.on_disk %}<span class="badge badge-warn">files missing</span>{% endif %}
         </td>
@@ -24,14 +24,15 @@
           {% if i.managed %}
             <a href="/wordpress/{{ i.app.id }}/login" target="_blank" class="btn btn-sm btn-primary">🔑 Login</a>
           {% endif %}
-          <a href="http://{{ i.domain.name }}" target="_blank" class="btn btn-sm">🌐 Visit</a>
+          <a href="http://{{ i.domain.name }}{% if i.path %}/{{ i.path }}{% endif %}" target="_blank" class="btn btn-sm">🌐 Visit</a>
           {% if i.managed %}
           <form method="post" action="/wordpress/{{ i.app.id }}/forget" onsubmit="return confirm('Remove from this list only? (site files and database are kept)')">
             <button type="submit" class="btn btn-sm">Forget</button>
           </form>
           {% endif %}
           <form method="post" action="/wordpress/{{ i.domain.id }}/uninstall"
-                onsubmit="return confirm('UNINSTALL WordPress from {{ i.domain.name }}?\n\nThis permanently deletes ALL site files{% if i.db_name %} and drops the database {{ i.db_name }}{% endif %}. This cannot be undone.')">
+                onsubmit="return confirm('UNINSTALL WordPress from {{ i.domain.name }}{% if i.path %}/{{ i.path }}{% endif %}?\n\nThis permanently deletes ALL site files{% if i.db_name %} and drops the database {{ i.db_name }}{% endif %}. This cannot be undone.')">
+            <input type="hidden" name="path" value="{{ i.path }}">
             <button type="submit" class="btn btn-sm btn-danger">🗑️ Uninstall</button>
           </form>
         </td>
@@ -45,35 +46,106 @@
 {% endif %}
 
 {% if domains %}
-<div class="card" style="max-width:640px">
-  <h2 style="margin-top:0">Install WordPress</h2>
-  <form method="post" action="/wordpress/install">
-    <div class="user-grid">
-      <div><span class="cron-lbl">Domain</span>
-        <select name="domain_id">{% for d in domains %}<option value="{{ d.id }}">{{ d.name }}</option>{% endfor %}</select>
+<form method="post" action="/wordpress/install" id="wpform">
+  <!-- Software Setup -->
+  <div class="card">
+    <div class="sec-head">Software Setup</div>
+    <div class="grid2">
+      <div>
+        <span class="cron-lbl">Choose Protocol</span>
+        <select name="protocol" id="wp_protocol" onchange="wpUrl()">
+          <option value="http://">http://</option>
+          <option value="https://">https://</option>
+          <option value="http://www.">http://www.</option>
+          <option value="https://www.">https://www.</option>
+        </select>
+        <p class="hint">Pick <code>https://</code> to auto-request a free SSL certificate (the domain's DNS must already point here).</p>
       </div>
-      <div><span class="cron-lbl">Site Title</span><input type="text" name="site_title" value="My WordPress Site"></div>
-      <div><span class="cron-lbl">Admin Username</span><input type="text" name="admin_user" value="admin" required></div>
-      <div><span class="cron-lbl">Admin Password</span><input type="text" name="admin_password" placeholder="6+ chars" required></div>
-      <div><span class="cron-lbl">Admin Email</span><input type="text" name="admin_email" placeholder="you@example.com" required></div>
+      <div>
+        <span class="cron-lbl">Choose Domain</span>
+        <select name="domain_id" id="wp_domain" onchange="wpUrl()">
+          {% for d in domains %}<option value="{{ d.id }}" data-name="{{ d.name }}">{{ d.name }}</option>{% endfor %}
+        </select>
+      </div>
+      <div>
+        <span class="cron-lbl">In Directory <span class="muted">(optional)</span></span>
+        <input type="text" name="directory" id="wp_dir" placeholder="e.g. wp — leave empty for root" oninput="wpUrl()">
+      </div>
+      <div>
+        <span class="cron-lbl">Version</span>
+        <select name="version">
+          <option value="latest">Latest</option>
+          <option value="6.6">6.6</option>
+          <option value="6.5.2">6.5.2</option>
+          <option value="6.4.3">6.4.3</option>
+        </select>
+      </div>
     </div>
-    <button type="submit" class="btn btn-primary" style="margin-top:1rem"
-            onclick="this.textContent='⏳ Installing WordPress…';this.form.submit()">🚀 Install WordPress</button>
-    <p class="muted small" style="margin-top:.6rem">Downloads WordPress, creates the database, and sets up your admin account automatically.</p>
-  </form>
-</div>
+    <p class="muted small" style="margin-top:.7rem">Your installation URL: <strong id="wp_url">http://…</strong></p>
+  </div>
+
+  <div class="grid2-cards">
+    <!-- Site Settings -->
+    <div class="card">
+      <div class="sec-head">Site Settings</div>
+      <div><span class="cron-lbl">Site Name</span><input type="text" name="site_title" value="My Blog"></div>
+      <div style="margin-top:.7rem"><span class="cron-lbl">Site Description</span><input type="text" name="site_description" value="My WordPress Blog"></div>
+      <label class="chk"><input type="checkbox" name="multisite" value="1"> Enable Multisite (WPMU)</label>
+      <label class="chk"><input type="checkbox" name="disable_cron" value="1"> Disable WordPress Cron</label>
+    </div>
+
+    <!-- Admin Account -->
+    <div class="card">
+      <div class="sec-head">Admin Account</div>
+      <div><span class="cron-lbl">Admin Username</span><input type="text" name="admin_user" value="admin" required></div>
+      <div style="margin-top:.7rem"><span class="cron-lbl">Admin Password</span>
+        <div class="pw-row">
+          <input type="text" name="admin_password" id="wp_pw" placeholder="6+ characters" required>
+          <button type="button" class="btn btn-sm" onclick="wpGenPw()" title="Generate a strong password">🔑</button>
+        </div>
+      </div>
+      <div style="margin-top:.7rem"><span class="cron-lbl">Admin Email</span><input type="text" name="admin_email" placeholder="you@example.com" required></div>
+    </div>
+  </div>
+
+  <button type="submit" class="btn btn-primary" style="margin-top:1rem"
+          onclick="this.textContent='⏳ Installing WordPress…';this.form.submit()">🚀 Install WordPress</button>
+</form>
 {% else %}
 <div class="empty">Add a domain first, then install WordPress on it.</div>
 {% endif %}
 
 <style>
-.user-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:.8rem; }
-.user-grid input, .user-grid select { width:100%; }
+.sec-head { font-weight:600; font-size:1.02rem; margin:0 0 .9rem; padding-bottom:.5rem; border-bottom:2px solid var(--orange,#e8892b); display:inline-block; }
+.grid2 { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:1rem; }
+.grid2-cards { display:grid; grid-template-columns:1fr 1fr; gap:1rem; margin-top:1rem; }
+@media (max-width:760px){ .grid2-cards { grid-template-columns:1fr; } }
 .cron-lbl { display:block; font-size:.72rem; color:var(--muted); margin-bottom:.25rem; font-weight:600; }
+#wpform input[type=text], #wpform select { width:100%; }
+.hint { font-size:.7rem; color:var(--muted); margin:.3rem 0 0; }
+.chk { display:flex; align-items:center; gap:.45rem; margin-top:.8rem; font-size:.9rem; }
+.chk input { width:auto; }
+.pw-row { display:flex; gap:.4rem; }
+.pw-row input { flex:1; }
 .actions { display:flex; gap:.4rem; align-items:center; flex-wrap:wrap; }
 .actions form { display:inline; margin:0; }
 .badge { display:inline-block; font-size:.66rem; font-weight:600; padding:.1rem .4rem; border-radius:6px;
          background:var(--orange-soft,#eef2f7); color:var(--muted); vertical-align:middle; margin-left:.3rem; }
 .badge-warn { background:#fdecea; color:#b3261e; }
 </style>
+<script>
+function wpUrl() {
+  const proto = document.getElementById('wp_protocol').value;
+  const dsel = document.getElementById('wp_domain');
+  const name = dsel.options[dsel.selectedIndex]?.dataset.name || 'example.com';
+  let dir = document.getElementById('wp_dir').value.trim().replace(/^\/+|\/+$/g,'');
+  document.getElementById('wp_url').textContent = proto + name + (dir ? '/' + dir : '');
+}
+function wpGenPw() {
+  const c = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%^&*';
+  let p = ''; for (let i=0;i<16;i++) p += c[Math.floor(Math.random()*c.length)];
+  document.getElementById('wp_pw').value = p;
+}
+wpUrl();
+</script>
 {% endblock %}
