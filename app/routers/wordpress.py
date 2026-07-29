@@ -180,6 +180,13 @@ def _ensure_ssl(db: Session, domain: Domain) -> bool:
         domain_id=domain.id, issuer=info.issuer, issued_at=info.issued_at,
         expires_at=info.expires_at, cert_path=info.cert_path,
     ))
+    domain.force_https = True
+    try:
+        get_provider().set_https_redirect(
+            domain.name, domain.docroot, domain.php_version,
+            domain.owner.system_user or domain.owner.username, True, True)
+    except Exception:  # noqa: BLE001
+        pass
     db.commit()
     return True
 

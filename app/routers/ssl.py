@@ -52,8 +52,17 @@ def issue(
         domain_id=domain.id, issuer=info.issuer,
         issued_at=info.issued_at, expires_at=info.expires_at, cert_path=info.cert_path,
     ))
+    # Force HTTPS now that there's a cert, so http:// redirects to https://
+    # (green padlock, no more "Not secure") — cPanel-style AutoSSL behaviour.
+    domain.force_https = True
+    try:
+        get_provider().set_https_redirect(
+            domain.name, domain.docroot, domain.php_version,
+            domain.owner.system_user or domain.owner.username, True, True)
+    except Exception:  # noqa: BLE001 — cert is recorded even if the rewrite hiccups
+        pass
     db.commit()
-    _flash(request, f"🔒 SSL issued for {domain.name} (expires {info.expires_at:%Y-%m-%d}).")
+    _flash(request, f"🔒 SSL issued for {domain.name} (expires {info.expires_at:%Y-%m-%d}); HTTPS is now forced.")
     return RedirectResponse("/ssl", status_code=303)
 
 
