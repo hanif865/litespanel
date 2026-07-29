@@ -22,7 +22,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .. import config
+from .. import config, crypto
 from ..db import get_db
 from ..limits import database_limit_reached
 from ..models import Database, Domain, User, WordPressApp
@@ -40,17 +40,56 @@ def _flash(request: Request, message: str) -> None:
     request.session["flash"] = message
 
 
+_DB_NAME_RE = re.compile(r"""define\(\s*['"]DB_NAME['"]\s*,\s*['"]([^'"]+)['"]""")
+
+
+def _wp_db_name(docroot: Path) -> str | None:
+    """Read DB_NAME out of an existing wp-config.php (installs we didn't create)."""
+    try:
+        text = (docroot / "wp-config.php").read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return None
+    m = _DB_NAME_RE.search(text)
+    return m.group(1) if m else None
+
+
+def _list_installs(db: Session, user: User) -> list[dict]:
+    """Every WordPress install this account has — including ones set up outside
+    the panel — detected by a wp-config.php in the domain's document root."""
+    domains = db.scalars(
+        select(Domain).where(Domain.owner_id == user.id).order_by(Domain.name)
+    ).all()
+    apps = {a.domain_id: a for a in db.scalars(
+        select(WordPressApp).join(Domain).where(Domain.owner_id == user.id)
+    ).all()}
+    installs = []
+    for d in domains:
+        app = apps.get(d.id)
+        has_config = (Path(d.docroot) / "wp-config.php").exists()
+        if not app and not has_config:
+            continue  # no WordPress here
+        installs.append({
+            "domain": d,
+            "app": app,                       # None for un-managed (no auto-login)
+            "managed": app is not None,
+            "db_name": (app.db_name if app and app.db_name else _wp_db_name(Path(d.docroot))),
+            "on_disk": has_config,
+        })
+    return installs
+
+
 @router.get("")
 def wp_page(request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
     domains = db.scalars(
         select(Domain).where(Domain.owner_id == user.id).order_by(Domain.name)
     ).all()
-    apps = db.scalars(
-        select(WordPressApp).join(Domain).where(Domain.owner_id == user.id)
-    ).all()
+    installs = _list_installs(db, user)
+    installed_ids = {i["domain"].id for i in installs}
+    # Offer install only on domains that don't already have WordPress.
+    free_domains = [d for d in domains if d.id not in installed_ids]
     return templates.TemplateResponse(
         request, "wordpress.html",
-        {"user": user, "domains": domains, "apps": apps, "active": "wordpress",
+        {"user": user, "domains": free_domains, "installs": installs, "active": "wordpress",
          "flash": request.session.pop("flash", None), "creds": request.session.pop("wp_creds", None)},
     )
 
@@ -129,7 +168,8 @@ def wp_install(
     suffix = secrets.token_hex(3)
     dbname, dbuser, dbpass = f"wp_{suffix}", f"wp_{suffix}_u"[:64], secrets.token_urlsafe(14)
     creds = get_provider().create_database(dbname, dbuser, dbpass)
-    db.add(Database(name=dbname, db_user=dbuser, owner_id=user.id))
+    db.add(Database(name=dbname, db_user=dbuser,
+                    db_password_enc=crypto.encrypt(dbpass), owner_id=user.id))
     db.commit()
 
     # 2. WordPress files
@@ -177,7 +217,8 @@ def wp_install(
 
     db.query(WordPressApp).filter(WordPressApp.domain_id == domain.id).delete()
     db.add(WordPressApp(domain_id=domain.id, admin_user=admin_user.strip(),
-                        admin_email=admin_email.strip(), login_secret=login_secret))
+                        admin_email=admin_email.strip(), login_secret=login_secret,
+                        db_name=dbname))
     db.commit()
 
     if config.PROVIDER == "linux" and not ok:
@@ -206,4 +247,74 @@ def wp_forget(request: Request, app_id: int, user: User = Depends(current_user),
         db.delete(app)
         db.commit()
         _flash(request, "Removed from the WordPress list (files kept).")
+    return RedirectResponse("/wordpress", status_code=303)
+
+
+def _wipe_docroot(docroot: Path) -> None:
+    """Delete everything inside a document root (keeping the folder itself).
+
+    Guarded so we can only ever empty a real, deep site directory — never a
+    filesystem root or a shallow path.
+    """
+    import shutil
+
+    root = docroot.resolve()
+    if not root.is_dir() or len(root.parts) < 3:
+        raise ValueError(f"refusing to wipe unsafe path: {root}")
+    for child in root.iterdir():
+        if child.is_dir() and not child.is_symlink():
+            shutil.rmtree(child, ignore_errors=True)
+        else:
+            try:
+                child.unlink()
+            except OSError:
+                pass
+
+
+@router.post("/{domain_id}/uninstall")
+def wp_uninstall(
+    request: Request,
+    domain_id: int,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """Softaculous-style Uninstall: remove the site's files AND drop its
+    database + DB user. Works for panel-managed installs and ones set up
+    outside the panel (DB name is read from wp-config.php)."""
+    domain = db.get(Domain, domain_id)
+    if domain is None or domain.owner_id != user.id:
+        _flash(request, "❌ Site not found.")
+        return RedirectResponse("/wordpress", status_code=303)
+
+    docroot = Path(domain.docroot)
+    app = db.scalar(select(WordPressApp).where(WordPressApp.domain_id == domain.id))
+    dbname = (app.db_name if app and app.db_name else None) or _wp_db_name(docroot)
+
+    # 1. Drop the database + its scoped user (best effort).
+    dropped = ""
+    if dbname:
+        row = db.scalar(select(Database).where(
+            Database.owner_id == user.id, Database.name == dbname))
+        db_user = row.db_user if row else f"{dbname}_u"[:64]
+        try:
+            get_provider().drop_database(dbname, db_user)
+            dropped = f" and dropped database {dbname}"
+        except Exception as exc:  # noqa: BLE001
+            dropped = f" (database {dbname} could not be dropped: {exc})"
+        if row:
+            db.delete(row)
+
+    # 2. Delete the WordPress files.
+    try:
+        _wipe_docroot(docroot)
+    except Exception as exc:  # noqa: BLE001
+        _flash(request, f"❌ Could not remove files: {exc}")
+        return RedirectResponse("/wordpress", status_code=303)
+
+    # 3. Forget the panel record.
+    if app:
+        db.delete(app)
+    db.commit()
+
+    _flash(request, f"🗑️ Uninstalled WordPress from {domain.name}{dropped}.")
     return RedirectResponse("/wordpress", status_code=303)

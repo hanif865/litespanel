@@ -9,6 +9,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from .. import crypto
 from ..db import get_db
 from ..models import Database, User
 from ..limits import database_limit_reached
@@ -61,7 +62,8 @@ def create_database(
     db_user = f"{name}_u"[:64]
     password = secrets.token_urlsafe(12)
     creds = get_provider().create_database(name, db_user, password)
-    db.add(Database(name=name, db_user=db_user, owner_id=user.id))
+    db.add(Database(name=name, db_user=db_user,
+                    db_password_enc=crypto.encrypt(password), owner_id=user.id))
     db.commit()
     # Stash the plaintext password to show once — we never store it.
     request.session["new_db_cred"] = {

@@ -5,29 +5,42 @@
 <h1>WordPress® — 1-Click Install</h1>
 <p class="muted">Fully installs WordPress (database, files, and admin account) — no browser setup wizard needed.</p>
 
-{% if flash %}{% endif %}
-
-{% if apps %}
+{% if installs %}
 <div class="card">
-  <h2 style="margin-top:0">Your WordPress Sites</h2>
+  <h2 style="margin-top:0">Installations <span class="muted small">({{ installs|length }})</span></h2>
   <table class="table">
-    <thead><tr><th>Site</th><th>Admin User</th><th>Actions</th></tr></thead>
+    <thead><tr><th>Site</th><th>Admin User</th><th>Database</th><th>Actions</th></tr></thead>
     <tbody>
-    {% for a in apps %}
+    {% for i in installs %}
       <tr>
-        <td><strong>📝 {{ a.domain.name }}</strong></td>
-        <td><code>{{ a.admin_user }}</code></td>
+        <td>
+          <strong>📝 {{ i.domain.name }}</strong>
+          {% if not i.managed %}<span class="badge">detected</span>{% endif %}
+          {% if not i.on_disk %}<span class="badge badge-warn">files missing</span>{% endif %}
+        </td>
+        <td>{% if i.app %}<code>{{ i.app.admin_user }}</code>{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td>{% if i.db_name %}<code>{{ i.db_name }}</code>{% else %}<span class="muted">unknown</span>{% endif %}</td>
         <td class="actions">
-          <a href="/wordpress/{{ a.id }}/login" target="_blank" class="btn btn-sm btn-primary">🔑 Login (no password)</a>
-          <a href="http://{{ a.domain.name }}" target="_blank" class="btn btn-sm">🌐 Visit</a>
-          <form method="post" action="/wordpress/{{ a.id }}/forget" onsubmit="return confirm('Remove from list? (site files kept)')">
-            <button type="submit" class="btn btn-sm btn-danger">Forget</button>
+          {% if i.managed %}
+            <a href="/wordpress/{{ i.app.id }}/login" target="_blank" class="btn btn-sm btn-primary">🔑 Login</a>
+          {% endif %}
+          <a href="http://{{ i.domain.name }}" target="_blank" class="btn btn-sm">🌐 Visit</a>
+          {% if i.managed %}
+          <form method="post" action="/wordpress/{{ i.app.id }}/forget" onsubmit="return confirm('Remove from this list only? (site files and database are kept)')">
+            <button type="submit" class="btn btn-sm">Forget</button>
+          </form>
+          {% endif %}
+          <form method="post" action="/wordpress/{{ i.domain.id }}/uninstall"
+                onsubmit="return confirm('UNINSTALL WordPress from {{ i.domain.name }}?\n\nThis permanently deletes ALL site files{% if i.db_name %} and drops the database {{ i.db_name }}{% endif %}. This cannot be undone.')">
+            <button type="submit" class="btn btn-sm btn-danger">🗑️ Uninstall</button>
           </form>
         </td>
       </tr>
     {% endfor %}
     </tbody>
   </table>
+  <p class="muted small" style="margin-top:.6rem"><strong>Uninstall</strong> deletes the site files and its database.
+    <strong>Forget</strong> only removes it from this list. Sites marked <span class="badge">detected</span> were set up outside the panel — auto-login isn't available for them, but they can still be uninstalled.</p>
 </div>
 {% endif %}
 
@@ -59,5 +72,8 @@
 .cron-lbl { display:block; font-size:.72rem; color:var(--muted); margin-bottom:.25rem; font-weight:600; }
 .actions { display:flex; gap:.4rem; align-items:center; flex-wrap:wrap; }
 .actions form { display:inline; margin:0; }
+.badge { display:inline-block; font-size:.66rem; font-weight:600; padding:.1rem .4rem; border-radius:6px;
+         background:var(--orange-soft,#eef2f7); color:var(--muted); vertical-align:middle; margin-left:.3rem; }
+.badge-warn { background:#fdecea; color:#b3261e; }
 </style>
 {% endblock %}

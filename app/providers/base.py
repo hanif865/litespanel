@@ -114,6 +114,10 @@ class Provider(ABC):
         ...
 
     @abstractmethod
+    def reset_db_password(self, name: str, user: str, password: str) -> None:
+        """Set the database user's password (used to enable phpMyAdmin auto-login)."""
+
+    @abstractmethod
     def db_tables(self, name: str) -> list[str]:
         """List table names in the database (for the DB manager)."""
 

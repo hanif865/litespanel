@@ -236,6 +236,7 @@ class WordPressApp(Base):
     admin_user: Mapped[str] = mapped_column(String(64))
     admin_email: Mapped[str] = mapped_column(String(255))
     login_secret: Mapped[str] = mapped_column(String(64))  # HMAC key for auto-login
+    db_name: Mapped[str | None] = mapped_column(String(64), nullable=True)  # for uninstall
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     domain: Mapped["Domain"] = relationship()
@@ -261,6 +262,10 @@ class Database(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(64), index=True)
     db_user: Mapped[str] = mapped_column(String(64))
+    # The MySQL user's password, encrypted at rest (see app/crypto.py). Stored
+    # only so the Database Manager can auto-login to phpMyAdmin as this scoped
+    # user; null for databases created before auto-login existed.
+    db_password_enc: Mapped[str | None] = mapped_column(String(255), nullable=True)
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 

@@ -237,6 +237,12 @@ class LinuxProvider(Provider):
         _ident(user, "database user")
         _run(["mysql", "-e", f"DROP DATABASE IF EXISTS `{name}`; DROP USER IF EXISTS '{user}'@'localhost';"])
 
+    def reset_db_password(self, name: str, user: str, password: str) -> None:
+        _ident(user, "database user")
+        pw = _mysql_str(password)
+        _run(["mysql", "-e",
+              f"ALTER USER '{user}'@'localhost' IDENTIFIED BY '{pw}'; FLUSH PRIVILEGES;"])
+
     def issue_certificate(self, domain: str) -> CertInfo:
         _run([
             "certbot", "--nginx", "-d", domain, "-d", f"www.{domain}",

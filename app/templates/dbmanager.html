@@ -5,8 +5,54 @@
 <h1>Database Manager</h1>
 
 {% if phpmyadmin_url %}
-  <p class="muted">Embedded phpMyAdmin.</p>
-  <iframe src="{{ phpmyadmin_url }}" style="width:100%;height:75vh;border:1px solid var(--border);border-radius:8px"></iframe>
+  {% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
+  {% if not databases %}
+    <div class="empty">No databases yet. <a href="/databases">Create one →</a> then open it here.</div>
+  {% else %}
+  <p class="muted">Pick a database to open it in phpMyAdmin — you're logged in automatically as that database's own user.</p>
+  <div class="pma">
+    <aside class="pma-side">
+      <div class="panel">
+        <div class="panel-head">Databases</div>
+        <div class="dbm-list">
+          {% for d in databases %}
+            <a href="/phpmyadmin?db_name={{ d.name }}"
+               class="dbm-db {{ 'is-active' if selected and d.name == selected.name }}">
+              🛢️ {{ d.name }}
+              {% if not d.db_password_enc %}<span class="pma-lock" title="Auto-login not set up">🔒</span>{% endif %}
+            </a>
+          {% endfor %}
+        </div>
+      </div>
+      {% if selected and not selected.db_password_enc %}
+      <form method="post" action="/phpmyadmin/enable-autologin" class="panel" style="padding:.8rem"
+            onsubmit="return confirm('This resets the MySQL password for {{ selected.name }}.\n\nIf an app (e.g. WordPress) already uses this database, it will stop connecting until you update its password to the new one shown afterward. Continue?')">
+        <input type="hidden" name="db_name" value="{{ selected.name }}">
+        <p class="muted small" style="margin:.2rem 0 .6rem">This database predates auto-login. Enable it to open phpMyAdmin without typing a password.</p>
+        <button type="submit" class="btn btn-sm btn-primary">🔓 Enable auto-login</button>
+      </form>
+      {% endif %}
+    </aside>
+    <section class="pma-main">
+      {% if selected %}
+        <iframe src="/phpmyadmin/signon?db_name={{ selected.name }}"
+                style="width:100%;height:78vh;border:1px solid var(--border);border-radius:8px"></iframe>
+      {% endif %}
+    </section>
+  </div>
+  <style>
+  .pma { display:grid; grid-template-columns:230px 1fr; gap:1rem; align-items:start; }
+  .pma-lock { float:right; font-size:.8rem; opacity:.6; }
+  .pma .panel { border:1px solid var(--border); border-radius:8px; overflow:hidden; margin-bottom:1rem; background:var(--card,#fff); }
+  .pma .panel-head { padding:.55rem 1rem; font-weight:600; border-bottom:1px solid var(--border); background:var(--orange-soft,#f6f8fb); }
+  .pma .dbm-list { display:flex; flex-direction:column; }
+  .pma .dbm-db { padding:.55rem 1rem; border-bottom:1px solid var(--border); color:var(--text); display:block; }
+  .pma .dbm-db:last-child { border-bottom:none; }
+  .pma .dbm-db:hover { background:var(--orange-soft,#f6f8fb); text-decoration:none; }
+  .pma .dbm-db.is-active { background:var(--orange-soft,#f6f8fb); color:var(--orange-dark,#c25e00); font-weight:600; }
+  @media (max-width:760px){ .pma { grid-template-columns:1fr; } }
+  </style>
+  {% endif %}
 
 {% elif not databases %}
   <div class="empty">No databases yet. <a href="/databases">Create one →</a> then manage it here.</div>

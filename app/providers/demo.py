@@ -160,6 +160,10 @@ class DemoProvider(Provider):
     def drop_database(self, name: str, user: str) -> None:
         self._db_path(name).unlink(missing_ok=True)
 
+    def reset_db_password(self, name: str, user: str, password: str) -> None:
+        # Demo databases are SQLite files with no user auth — nothing to change.
+        return None
+
     def db_tables(self, name: str) -> list[str]:
         import sqlite3
 
