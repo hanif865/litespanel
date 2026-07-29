@@ -244,10 +244,13 @@ class LinuxProvider(Provider):
               f"ALTER USER '{user}'@'localhost' IDENTIFIED BY '{pw}'; FLUSH PRIVILEGES;"])
 
     def issue_certificate(self, domain: str) -> CertInfo:
-        _run([
-            "certbot", "--nginx", "-d", domain, "-d", f"www.{domain}",
-            "--non-interactive", "--agree-tos", "-m", f"admin@{domain}",
-        ])
+        base = ["certbot", "--nginx", "--non-interactive", "--agree-tos",
+                "--redirect", "-m", f"admin@{domain}"]
+        try:
+            # Prefer covering both the apex and the www host.
+            _run(base + ["-d", domain, "-d", f"www.{domain}"])
+        except Exception:  # noqa: BLE001 — www may not resolve; retry apex only.
+            _run(base + ["-d", domain])
         now = datetime.now(timezone.utc)
         from datetime import timedelta
 

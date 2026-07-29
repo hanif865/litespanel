@@ -205,6 +205,28 @@ server {
 EOF
 ln -sf /etc/nginx/sites-available/litespanel /etc/nginx/sites-enabled/litespanel
 rm -f /etc/nginx/sites-enabled/default
+
+# HTTPS catch-all: reject HTTPS to any domain that has no certificate yet, so
+# such requests are closed (444) instead of falling through to the panel (they
+# would otherwise hit the only :443 server and show the control panel). Each
+# hosted site gets its own :443 block once SSL is issued for it.
+if [ ! -f /etc/nginx/litespanel-selfsigned.crt ]; then
+    openssl req -x509 -nodes -newkey rsa:2048 -days 3650 \
+        -keyout /etc/nginx/litespanel-selfsigned.key \
+        -out /etc/nginx/litespanel-selfsigned.crt \
+        -subj "/CN=litespanel-default" >/dev/null 2>&1 || true
+fi
+cat > /etc/nginx/conf.d/00-litespanel-https-default.conf <<'EOF'
+server {
+    listen 443 ssl default_server;
+    server_name _;
+    ssl_certificate     /etc/nginx/litespanel-selfsigned.crt;
+    ssl_certificate_key /etc/nginx/litespanel-selfsigned.key;
+    ssl_reject_handshake off;
+    return 444;
+}
+EOF
+
 nginx -t >/dev/null 2>&1 || die "nginx config test failed — check /etc/nginx/sites-available/litespanel"
 systemctl reload nginx
 ok "nginx serving the panel"
