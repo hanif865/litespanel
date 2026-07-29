@@ -171,24 +171,53 @@ def _folder_tree(docroot: Path, max_entries: int = 300) -> list[dict]:
     return items
 
 
+@router.get("/upload")
+def upload_page(
+    request: Request,
+    domain_id: int,
+    path: str = "",
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    domain = _owned_domain(db, user, domain_id)
+    return templates.TemplateResponse(
+        request, "upload.html",
+        {"user": user, "domain": domain, "path": path, "active": "files"},
+    )
+
+
 @router.post("/upload")
 async def upload(
     request: Request,
     domain_id: int = Form(...),
     path: str = Form(""),
     file: UploadFile = File(...),
+    overwrite: str = Form("0"),
+    ajax: str = Form("0"),
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
+    from fastapi.responses import JSONResponse
+
     domain = _owned_domain(db, user, domain_id)
     dest_dir = _safe_join(Path(domain.docroot), path)
     dest_dir.mkdir(parents=True, exist_ok=True)
     filename = Path(file.filename or "upload.bin").name  # strip any path parts
     dest = _safe_join(dest_dir, filename)
+
+    if dest.exists() and overwrite != "1":
+        msg = f"'{filename}' already exists — enable Overwrite to replace it."
+        if ajax == "1":
+            return JSONResponse({"ok": False, "name": filename, "error": msg}, status_code=409)
+        _flash(request, f"❌ {msg}")
+        return RedirectResponse(f"/files?domain_id={domain_id}&path={path}", status_code=303)
+
     with dest.open("wb") as out:
         while chunk := await file.read(1024 * 1024):
             out.write(chunk)
     _own(domain, dest)
+    if ajax == "1":
+        return JSONResponse({"ok": True, "name": filename, "size": dest.stat().st_size})
     _flash(request, f"⬆️ Uploaded {filename} ({human_size(dest.stat().st_size)}).")
     return RedirectResponse(f"/files?domain_id={domain_id}&path={path}", status_code=303)
 

@@ -39,6 +39,41 @@ def list_domains(request: Request, user: User = Depends(current_user), db: Sessi
     )
 
 
+@router.get("/new")
+def new_domain(request: Request, user: User = Depends(current_user)):
+    flash = request.session.pop("flash", None)
+    return templates.TemplateResponse(
+        request, "domains_new.html", {"user": user, "active": "domains", "flash": flash}
+    )
+
+
+@router.post("/{domain_id}/https")
+def toggle_https(
+    request: Request,
+    domain_id: int,
+    enabled: str = Form("0"),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    domain = db.get(Domain, domain_id)
+    if domain is None or domain.owner_id != user.id:
+        _flash(request, "❌ Domain not found.")
+        return RedirectResponse("/domains", status_code=303)
+    want = enabled == "1"
+    if want and domain.certificate is None:
+        _flash(request, f"❌ Issue an SSL certificate for {domain.name} first.")
+        return RedirectResponse("/domains", status_code=303)
+    domain.force_https = want
+    get_provider().set_https_redirect(
+        domain.name, domain.docroot, domain.php_version,
+        domain.owner.system_user or domain.owner.username, want, domain.certificate is not None,
+    )
+    get_provider().reload_web()
+    db.commit()
+    _flash(request, f"{'🔒 Forcing HTTPS on' if want else '🔓 HTTPS redirect off for'} {domain.name}.")
+    return RedirectResponse("/domains", status_code=303)
+
+
 @router.post("/create")
 def create_domain(
     request: Request,

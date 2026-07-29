@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Create a New Domain{% endblock %}
+{% block content %}
+<div class="breadcrumb"><a href="/">🏠 Home</a> / <a href="/domains">Domains</a> / Create</div>
+<h1>Create a New Domain</h1>
+<p class="muted">Add a website — this provisions an nginx vhost and a document root under the account's home.</p>
+
+<div class="card" style="max-width:640px">
+  <form method="post" action="/domains/create">
+    <label>Domain
+      <input type="text" name="name" placeholder="my.example.com" required style="font-weight:400">
+    </label>
+    <label style="margin-top:1rem">PHP Version
+      <select name="php_version" style="font-weight:400">
+        <option value="8.3">PHP 8.3</option>
+        <option value="8.2">PHP 8.2</option>
+        <option value="8.1">PHP 8.1</option>
+        <option value="8.0">PHP 8.0</option>
+        <option value="7.4">PHP 7.4</option>
+      </select>
+    </label>
+    <p class="muted small" style="margin:1rem 0">
+      Document root: <code>/home/&lt;account&gt;/&lt;domain&gt;/public_html</code> (created automatically).
+    </p>
+    <div style="display:flex; gap:.6rem; align-items:center">
+      <button type="submit" class="btn btn-primary">Submit</button>
+      <a href="/domains" class="btn">↩ Return To Domains</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

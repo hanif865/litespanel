@@ -133,6 +133,31 @@ class LinuxProvider(Provider):
         )
         self.reload_web()
 
+    def set_https_redirect(self, domain: str, docroot: str, php_version: str,
+                           system_user: str, enabled: bool, has_ssl: bool) -> None:
+        _ident(system_user, "account username")
+        docroot = Path(docroot)
+        names = f"{domain} www.{domain}"
+        php = (f"location ~ \\.php$ {{ fastcgi_pass unix:{self._php_sock(system_user)};"
+               f" include fastcgi_params; fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name; }}")
+        blocks = []
+        if has_ssl:
+            cert = f"/etc/letsencrypt/live/{domain}"
+            if enabled:
+                blocks.append(f"server {{ listen 80; server_name {names};"
+                              f" return 301 https://$host$request_uri; }}")
+            else:
+                blocks.append(f"server {{ listen 80; server_name {names}; root {docroot};"
+                              f" index index.php index.html; {php} }}")
+            blocks.append(f"server {{ listen 443 ssl; server_name {names};"
+                          f" ssl_certificate {cert}/fullchain.pem; ssl_certificate_key {cert}/privkey.pem;"
+                          f" root {docroot}; index index.php index.html; {php} }}")
+        else:
+            blocks.append(f"server {{ listen 80; server_name {names}; root {docroot};"
+                          f" index index.php index.html; {php} }}")
+        (NGINX_SITES / f"{domain}.conf").write_text("\n".join(blocks) + "\n")
+        self.reload_web()
+
     def create_subdomain(self, fqdn: str, docroot: Path, php_version: str, system_user: str) -> Path:
         _ident(system_user, "account username")
         docroot.mkdir(parents=True, exist_ok=True)

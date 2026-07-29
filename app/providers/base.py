@@ -77,6 +77,11 @@ class Provider(ABC):
     def set_php_version(self, domain: str, docroot: str, php_version: str, system_user: str) -> None:
         """Rewrite the vhost so the site runs on a different PHP-FPM version."""
 
+    @abstractmethod
+    def set_https_redirect(self, domain: str, docroot: str, php_version: str,
+                           system_user: str, enabled: bool, has_ssl: bool) -> None:
+        """Rewrite the vhost to force (or stop forcing) an HTTP→HTTPS redirect."""
+
     # --- Subdomains -------------------------------------------------------
     @abstractmethod
     def create_subdomain(self, fqdn: str, docroot: Path, php_version: str, system_user: str) -> Path:

@@ -103,6 +103,18 @@ class DemoProvider(Provider):
     def set_php_version(self, domain: str, docroot: str, php_version: str, system_user: str) -> None:
         self._write_vhost(domain, Path(docroot), php_version, system_user)
 
+    def set_https_redirect(self, domain: str, docroot: str, php_version: str,
+                           system_user: str, enabled: bool, has_ssl: bool) -> None:
+        vhost = config.NGINX_DIR / f"{domain}.conf"
+        body = _NGINX_TEMPLATE.format(
+            app=config.APP_NAME, domain=domain, docroot=Path(docroot).as_posix(), php=php_version
+        )
+        header = f"# account: {system_user}\n"
+        if enabled:
+            header += (f"server {{ listen 80; server_name {domain} www.{domain}; "
+                       f"return 301 https://$host$request_uri; }}\n")
+        vhost.write_text(header + body, encoding="utf-8")
+
     # --- Subdomains -------------------------------------------------------
     def create_subdomain(self, fqdn: str, docroot: Path, php_version: str, system_user: str) -> Path:
         docroot.mkdir(parents=True, exist_ok=True)

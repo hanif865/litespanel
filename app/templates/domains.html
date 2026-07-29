@@ -3,37 +3,44 @@
 {% block content %}
 <div class="breadcrumb"><a href="/">🏠 Home</a> / Domains</div>
 <h1>Domains</h1>
-<p class="muted">Add a website — this provisions an nginx vhost and a document root.</p>
+<p class="muted">Manage your domains — document roots, HTTPS redirect, email and more.</p>
 
-<div class="card">
-  <form method="post" action="/domains/create" class="row-form">
-    <input type="text" name="name" placeholder="example.com" required>
-    <select name="php_version">
-      <option value="8.3">PHP 8.3</option>
-      <option value="8.2">PHP 8.2</option>
-      <option value="8.1">PHP 8.1</option>
-      <option value="7.4">PHP 7.4</option>
-    </select>
-    <button type="submit" class="btn btn-primary">+ Add domain</button>
-  </form>
+<div class="dm-bar">
+  <input type="text" id="dm-search" placeholder="🔍 Search domains…" oninput="dmFilter(this.value)">
+  <a href="/domains/new" class="btn btn-primary">➕ Create A New Domain</a>
 </div>
 
 {% if domains %}
 <table class="table">
-  <thead><tr><th>Domain</th><th>PHP</th><th>SSL</th><th>Created</th><th>Actions</th></tr></thead>
+  <thead><tr>
+    <th>Domain</th><th>Document Root</th><th>Force HTTPS</th><th>Actions</th>
+  </tr></thead>
   <tbody>
   {% for d in domains %}
-    <tr>
-      <td><strong>{{ d.name }}</strong><div class="muted small">{{ d.docroot }}</div></td>
-      <td>{{ d.php_version }}</td>
-      <td>{% if d.certificate %}<span class="pill pill-ok">🔒 Secured</span>{% else %}<span class="pill">—</span>{% endif %}</td>
-      <td class="muted">{{ d.created_at.strftime('%Y-%m-%d') }}</td>
+    <tr data-name="{{ d.name }}">
+      <td>
+        <strong>🌐 {{ d.name }}</strong>
+        {% if d.certificate %}<span class="pill pill-ok" style="margin-left:.4rem">🔒 SSL</span>{% endif %}
+        <div class="muted small">PHP {{ d.php_version }}</div>
+      </td>
+      <td class="muted small">🏠 {{ d.docroot }}</td>
+      <td>
+        <form method="post" action="/domains/{{ d.id }}/https" class="inline-form">
+          <input type="hidden" name="enabled" value="{{ 0 if d.force_https else 1 }}">
+          <button type="submit" class="dm-toggle {{ 'on' if d.force_https }}"
+                  title="{{ 'Disable' if d.force_https else 'Enable' }} HTTPS redirect">
+            <span class="dm-knob"></span>
+          </button>
+        </form>
+        <span class="muted small">{{ 'On' if d.force_https else 'Off' }}</span>
+      </td>
       <td class="actions">
-        <a href="/files?domain_id={{ d.id }}" class="btn btn-sm">Files</a>
-        <a href="/ssl" class="btn btn-sm">SSL</a>
+        <a href="/files?domain_id={{ d.id }}" class="btn btn-sm">🗂️ Manage</a>
+        <a href="/ssl" class="btn btn-sm">🔒 SSL</a>
+        <a href="/email?domain_id={{ d.id }}" class="btn btn-sm">✉️ Create Email</a>
         <form method="post" action="/domains/{{ d.id }}/delete"
               onsubmit="return confirm('Remove {{ d.name }}? This deletes its nginx config.')">
-          <label class="chk"><input type="checkbox" name="remove_files"> also delete files</label>
+          <label class="chk"><input type="checkbox" name="remove_files"> +files</label>
           <button type="submit" class="btn btn-sm btn-danger">Delete</button>
         </form>
       </td>
@@ -41,7 +48,27 @@
   {% endfor %}
   </tbody>
 </table>
+<p class="muted small" id="dm-count"></p>
 {% else %}
-<div class="empty">No domains yet. Add one above to get started.</div>
+<div class="empty">No domains yet. <a href="/domains/new">Create your first domain →</a></div>
 {% endif %}
+
+<style>
+.dm-bar { display:flex; gap:.6rem; align-items:center; margin-bottom:1rem; flex-wrap:wrap; }
+.dm-bar input { flex:1; min-width:200px; }
+.dm-toggle { width:42px; height:22px; border-radius:99px; border:none; background:#cbd5e1; position:relative; cursor:pointer; padding:0; vertical-align:middle; }
+.dm-toggle.on { background:var(--ok); }
+.dm-knob { position:absolute; top:2px; left:2px; width:18px; height:18px; border-radius:50%; background:#fff; transition:.15s; }
+.dm-toggle.on .dm-knob { left:22px; }
+.actions form { display:inline-flex; align-items:center; gap:.3rem; }
+</style>
+<script>
+function dmFilter(q){
+  q=(q||'').toLowerCase(); var shown=0;
+  document.querySelectorAll('tr[data-name]').forEach(function(tr){
+    var m = tr.dataset.name.indexOf(q)!==-1; tr.style.display=m?'':'none'; if(m)shown++;
+  });
+  var c=document.getElementById('dm-count'); if(c) c.textContent=shown+' domain(s)';
+}
+</script>
 {% endblock %}

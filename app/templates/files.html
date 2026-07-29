@@ -20,7 +20,7 @@
   <button type="button" class="fm-btn" onclick="actNewFolder()"><span>📁</span>Folder</button>
   <button type="button" class="fm-btn" onclick="actCopy()"><span>📋</span>Copy</button>
   <button type="button" class="fm-btn" onclick="actMove()"><span>➡️</span>Move</button>
-  <button type="button" class="fm-btn" onclick="document.getElementById('upfile').click()"><span>⬆️</span>Upload</button>
+  <button type="button" class="fm-btn" onclick="location.href='/files/upload?domain_id={{ selected.id }}&path={{ path }}'"><span>⬆️</span>Upload</button>
   <button type="button" class="fm-btn" onclick="actDownload()"><span>⬇️</span>Download</button>
   {% if in_trash %}
   <button type="button" class="fm-btn" onclick="fmSubmit('restore')"><span>♻️</span>Restore</button>

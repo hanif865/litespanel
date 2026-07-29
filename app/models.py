@@ -103,6 +103,7 @@ class Domain(Base):
     docroot: Mapped[str] = mapped_column(String(500))
     php_version: Mapped[str] = mapped_column(String(16), default="8.3")
     active: Mapped[bool] = mapped_column(default=True)
+    force_https: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     owner: Mapped["User"] = relationship(back_populates="domains")
