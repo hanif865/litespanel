@@ -175,6 +175,17 @@ class LinuxProvider(Provider):
         if Path(path).exists():
             _run(["chown", "-R", f"{system_user}:{system_user}", str(path)])
 
+    def run_wp_cli(self, docroot: Path, system_user: str, args: list[str]) -> tuple[bool, str]:
+        _ident(system_user, "account username")
+        wp = Path("/usr/local/bin/wp")
+        if not wp.exists():
+            subprocess.run(["curl", "-fsSL", config.WP_CLI_URL, "-o", str(wp)], capture_output=True)
+            wp.chmod(0o755)
+        # Run as the account user so files stay owned by them.
+        cmd = ["runuser", "-u", system_user, "--", str(wp), f"--path={docroot}"] + args
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        return result.returncode == 0, (result.stdout + result.stderr).strip()
+
     def sync_cron(self, lines: list[str]) -> None:
         # Pipe the full crontab to `crontab -` (replaces the user's crontab).
         text = "# Managed by panel\n" + "\n".join(lines) + "\n"

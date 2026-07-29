@@ -95,6 +95,10 @@ class Provider(ABC):
     def set_owner(self, path: Path, system_user: str) -> None:
         """Give a path (recursively) to the account's system user."""
 
+    @abstractmethod
+    def run_wp_cli(self, docroot: Path, system_user: str, args: list[str]) -> tuple[bool, str]:
+        """Run wp-cli in docroot as the account user. Returns (ok, output)."""
+
     # --- Cron -------------------------------------------------------------
     @abstractmethod
     def sync_cron(self, lines: list[str]) -> None:

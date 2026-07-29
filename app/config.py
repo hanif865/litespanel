@@ -62,8 +62,10 @@ PHPMYADMIN_URL = _env("PANEL_PHPMYADMIN_URL", "")
 # If set (e.g. /webmail), the panel shows a Webmail tool linking to Roundcube.
 WEBMAIL_URL = _env("PANEL_WEBMAIL_URL", "")
 
-# WordPress 1-click installer source.
+# WordPress 1-click installer sources.
 WORDPRESS_URL = _env("PANEL_WORDPRESS_URL", "https://wordpress.org/latest.zip")
+WP_CLI_URL = _env("PANEL_WP_CLI_URL",
+                  "https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar")
 
 # Public IP of this hosting node — used to seed default DNS A records.
 SERVER_IP = _env("PANEL_SERVER_IP", "203.0.113.10")

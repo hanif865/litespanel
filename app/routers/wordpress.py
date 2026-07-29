@@ -1,15 +1,18 @@
-"""1-click WordPress installer.
+"""1-click WordPress installer (Softaculous-style) + password-less auto-login.
 
-Creates a database + user, downloads WordPress into the domain's document
-root, and writes a ready-to-run wp-config.php. On the demo provider (no MySQL)
-it lays down a small stub so the flow is visible; on a real server it installs
-WordPress for real.
+Install: creates a database + user, downloads WordPress, writes wp-config.php,
+then runs `wp core install` (wp-cli) to fully set up the site — title and admin
+account included, no browser wizard needed. A drop-in mu-plugin enables the
+panel's one-click "Login" to wp-admin via a short-lived signed token.
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 import io
 import re
 import secrets
+import time
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -22,12 +25,15 @@ from sqlalchemy.orm import Session
 from .. import config
 from ..db import get_db
 from ..limits import database_limit_reached
-from ..models import Database, Domain, User
+from ..models import Database, Domain, User, WordPressApp
 from ..providers import get_provider
 from ..security import current_user
 from ..web import templates
 
 router = APIRouter(prefix="/wordpress", tags=["wordpress"])
+
+_USER_RE = re.compile(r"^[A-Za-z0-9_.@ -]{1,60}$")
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 def _flash(request: Request, message: str) -> None:
@@ -39,11 +45,13 @@ def wp_page(request: Request, user: User = Depends(current_user), db: Session = 
     domains = db.scalars(
         select(Domain).where(Domain.owner_id == user.id).order_by(Domain.name)
     ).all()
-    flash = request.session.pop("flash", None)
-    creds = request.session.pop("wp_creds", None)
+    apps = db.scalars(
+        select(WordPressApp).join(Domain).where(Domain.owner_id == user.id)
+    ).all()
     return templates.TemplateResponse(
         request, "wordpress.html",
-        {"user": user, "domains": domains, "active": "wordpress", "flash": flash, "creds": creds},
+        {"user": user, "domains": domains, "apps": apps, "active": "wordpress",
+         "flash": request.session.pop("flash", None), "creds": request.session.pop("wp_creds", None)},
     )
 
 
@@ -51,7 +59,7 @@ def _wp_salts() -> str:
     try:
         with urllib.request.urlopen("https://api.wordpress.org/secret-key/1.1/salt/", timeout=10) as r:
             return r.read().decode()
-    except Exception:  # noqa: BLE001 — fall back to locally generated keys
+    except Exception:  # noqa: BLE001
         keys = ["AUTH_KEY", "SECURE_AUTH_KEY", "LOGGED_IN_KEY", "NONCE_KEY",
                 "AUTH_SALT", "SECURE_AUTH_SALT", "LOGGED_IN_SALT", "NONCE_SALT"]
         return "\n".join(f"define('{k}', '{secrets.token_urlsafe(48)}');" for k in keys)
@@ -71,11 +79,33 @@ if (!defined('ABSPATH')) define('ABSPATH', __DIR__ . '/');
 require_once ABSPATH . 'wp-settings.php';
 """
 
+_MU_PLUGIN = """<?php
+/* LitesPanel auto-login — verifies a short-lived signed token, then logs in. */
+add_action('init', function () {{
+    if (empty($_GET['litespanel_login'])) return;
+    $parts = explode('.', $_GET['litespanel_login']);
+    if (count($parts) !== 3) return;
+    list($user, $exp, $sig) = $parts;
+    if (time() > intval($exp)) return;
+    $expected = hash_hmac('sha256', $user . '.' . $exp, '{secret}');
+    if (!hash_equals($expected, $sig)) return;
+    $u = get_user_by('login', $user);
+    if (!$u) return;
+    wp_set_auth_cookie($u->ID, true);
+    wp_safe_redirect(admin_url());
+    exit;
+}});
+"""
+
 
 @router.post("/install")
 def wp_install(
     request: Request,
     domain_id: int = Form(...),
+    site_title: str = Form("My WordPress Site"),
+    admin_user: str = Form(...),
+    admin_password: str = Form(...),
+    admin_email: str = Form(...),
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
@@ -86,17 +116,18 @@ def wp_install(
     if database_limit_reached(db, user):
         _flash(request, f"❌ Database limit reached ({user.eff_databases}).")
         return RedirectResponse("/wordpress", status_code=303)
-
-    docroot = Path(domain.docroot)
-    if any(docroot.glob("wp-*.php")) or (docroot / "wp-config.php").exists():
-        _flash(request, "❌ WordPress (or another app) is already installed in this domain.")
+    if not _USER_RE.match(admin_user.strip()) or len(admin_password) < 6 or not _EMAIL_RE.match(admin_email.strip()):
+        _flash(request, "❌ Enter a valid admin username, a password (6+ chars) and email.")
         return RedirectResponse("/wordpress", status_code=303)
 
-    # 1. Database + dedicated user
+    docroot = Path(domain.docroot)
+    if (docroot / "wp-config.php").exists():
+        _flash(request, "❌ WordPress is already installed in this domain.")
+        return RedirectResponse("/wordpress", status_code=303)
+
+    # 1. Database + user
     suffix = secrets.token_hex(3)
-    dbname = f"wp_{suffix}"
-    dbuser = f"wp_{suffix}_u"[:64]
-    dbpass = secrets.token_urlsafe(14)
+    dbname, dbuser, dbpass = f"wp_{suffix}", f"wp_{suffix}_u"[:64], secrets.token_urlsafe(14)
     creds = get_provider().create_database(dbname, dbuser, dbpass)
     db.add(Database(name=dbname, db_user=dbuser, owner_id=user.id))
     db.commit()
@@ -110,33 +141,69 @@ def wp_install(
                 for member in zf.namelist():
                     if not member.startswith("wordpress/") or member.endswith("/"):
                         continue
-                    rel = member[len("wordpress/"):]
-                    target = (docroot / rel).resolve()
+                    target = (docroot / member[len("wordpress/"):]).resolve()
                     if docroot.resolve() not in target.parents:
                         continue
                     target.parent.mkdir(parents=True, exist_ok=True)
                     with zf.open(member) as s, open(target, "wb") as d:
                         d.write(s.read())
         else:
-            # Demo: a small stub so the install is visible without MySQL/WP.
             (docroot / "index.php").write_text(
-                "<?php /* WordPress (demo stub) — real install happens on a Linux server. */ "
-                "echo '<h1>WordPress is configured 🎉</h1>';", encoding="utf-8"
-            )
+                "<?php echo '<h1>WordPress is configured 🎉 (demo)</h1>';", encoding="utf-8")
     except Exception as exc:  # noqa: BLE001
-        _flash(request, f"❌ WordPress download/extract failed: {exc}")
+        _flash(request, f"❌ WordPress download failed: {exc}")
         return RedirectResponse("/wordpress", status_code=303)
 
     # 3. wp-config.php
     (docroot / "wp-config.php").write_text(
         _WP_CONFIG.format(name=creds.name, user=creds.user, password=creds.password,
-                          host=creds.host, salts=_wp_salts()),
-        encoding="utf-8",
-    )
-    get_provider().set_owner(docroot, domain.owner.system_user or domain.owner.username)
+                          host=creds.host, salts=_wp_salts()), encoding="utf-8")
 
-    request.session["wp_creds"] = {
-        "domain": domain.name, "db": creds.name, "db_user": creds.user, "db_password": creds.password,
-    }
-    _flash(request, f"✅ WordPress installed on {domain.name}! Visit the site to finish setup.")
+    # 4. Full install via wp-cli (title + admin account, no browser wizard)
+    sysuser = domain.owner.system_user or domain.owner.username
+    scheme = "https" if domain.certificate else "http"
+    ok, out = get_provider().run_wp_cli(docroot, sysuser, [
+        "core", "install", f"--url={scheme}://{domain.name}", f"--title={site_title}",
+        f"--admin_user={admin_user.strip()}", f"--admin_password={admin_password}",
+        f"--admin_email={admin_email.strip()}", "--skip-email",
+    ])
+
+    # 5. Auto-login mu-plugin + panel record
+    login_secret = secrets.token_hex(24)
+    mu = docroot / "wp-content" / "mu-plugins"
+    mu.mkdir(parents=True, exist_ok=True)
+    (mu / "litespanel-autologin.php").write_text(_MU_PLUGIN.format(secret=login_secret), encoding="utf-8")
+    get_provider().set_owner(docroot, sysuser)
+
+    db.query(WordPressApp).filter(WordPressApp.domain_id == domain.id).delete()
+    db.add(WordPressApp(domain_id=domain.id, admin_user=admin_user.strip(),
+                        admin_email=admin_email.strip(), login_secret=login_secret))
+    db.commit()
+
+    if config.PROVIDER == "linux" and not ok:
+        _flash(request, f"⚠️ Files installed but wp-cli setup reported: {out[:200]}")
+    else:
+        _flash(request, f"✅ WordPress fully installed on {domain.name} — use “Login” to open wp-admin.")
+    return RedirectResponse("/wordpress", status_code=303)
+
+
+@router.get("/{app_id}/login")
+def wp_login(app_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    app = db.get(WordPressApp, app_id)
+    if app is None or app.domain.owner_id != user.id:
+        return RedirectResponse("/wordpress", status_code=303)
+    exp = int(time.time()) + 300
+    sig = hmac.new(app.login_secret.encode(), f"{app.admin_user}.{exp}".encode(), hashlib.sha256).hexdigest()
+    token = f"{app.admin_user}.{exp}.{sig}"
+    scheme = "https" if app.domain.certificate else "http"
+    return RedirectResponse(f"{scheme}://{app.domain.name}/?litespanel_login={token}", status_code=303)
+
+
+@router.post("/{app_id}/forget")
+def wp_forget(request: Request, app_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    app = db.get(WordPressApp, app_id)
+    if app and app.domain.owner_id == user.id:
+        db.delete(app)
+        db.commit()
+        _flash(request, "Removed from the WordPress list (files kept).")
     return RedirectResponse("/wordpress", status_code=303)

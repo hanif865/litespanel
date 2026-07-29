@@ -133,6 +133,10 @@ class DemoProvider(Provider):
         # No POSIX ownership on the Windows demo box — nothing to do.
         return None
 
+    def run_wp_cli(self, docroot: Path, system_user: str, args: list[str]) -> tuple[bool, str]:
+        # No PHP/WordPress runtime in the demo — pretend it worked.
+        return True, "demo: wp-cli not run"
+
     # --- Cron -------------------------------------------------------------
     def sync_cron(self, lines: list[str]) -> None:
         crontab = config.DATA_DIR / "cron" / "crontab"

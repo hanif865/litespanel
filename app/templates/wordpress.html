@@ -3,39 +3,61 @@
 {% block content %}
 <div class="breadcrumb"><a href="/">🏠 Home</a> / Software / WordPress</div>
 <h1>WordPress® — 1-Click Install</h1>
-<p class="muted">Install WordPress on a domain. This creates a database, downloads WordPress, and configures it automatically.</p>
+<p class="muted">Fully installs WordPress (database, files, and admin account) — no browser setup wizard needed.</p>
 
-{% if creds %}
-<div class="card cred-card">
-  <strong>✅ WordPress installed on {{ creds.domain }}!</strong>
-  <p style="margin:.5rem 0">Finish setup in your browser: <a href="http://{{ creds.domain }}" target="_blank">http://{{ creds.domain }} →</a></p>
-  <table class="cred-table">
-    <tr><td>Database</td><td><code>{{ creds.db }}</code></td></tr>
-    <tr><td>DB User</td><td><code>{{ creds.db_user }}</code></td></tr>
-    <tr><td>DB Password</td><td><code>{{ creds.db_password }}</code></td></tr>
+{% if flash %}{% endif %}
+
+{% if apps %}
+<div class="card">
+  <h2 style="margin-top:0">Your WordPress Sites</h2>
+  <table class="table">
+    <thead><tr><th>Site</th><th>Admin User</th><th>Actions</th></tr></thead>
+    <tbody>
+    {% for a in apps %}
+      <tr>
+        <td><strong>📝 {{ a.domain.name }}</strong></td>
+        <td><code>{{ a.admin_user }}</code></td>
+        <td class="actions">
+          <a href="/wordpress/{{ a.id }}/login" target="_blank" class="btn btn-sm btn-primary">🔑 Login (no password)</a>
+          <a href="http://{{ a.domain.name }}" target="_blank" class="btn btn-sm">🌐 Visit</a>
+          <form method="post" action="/wordpress/{{ a.id }}/forget" onsubmit="return confirm('Remove from list? (site files kept)')">
+            <button type="submit" class="btn btn-sm btn-danger">Forget</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
   </table>
-  <p class="muted small" style="margin-top:.5rem">These are already written into wp-config.php — save them for reference.</p>
 </div>
 {% endif %}
 
 {% if domains %}
 <div class="card" style="max-width:640px">
+  <h2 style="margin-top:0">Install WordPress</h2>
   <form method="post" action="/wordpress/install">
-    <label>Install on domain
-      <select name="domain_id" style="font-weight:400">
-        {% for d in domains %}<option value="{{ d.id }}">{{ d.name }}</option>{% endfor %}
-      </select>
-    </label>
-    <p class="muted small" style="margin:.75rem 0">
-      Installs into the domain's <code>public_html</code>. After install, visit the site to
-      choose your language and create the admin account.
-    </p>
-    <button type="submit" class="btn btn-primary" onclick="this.disabled=false;this.form.submit&&(this.textContent='⏳ Installing…')">
-      🚀 Install WordPress
-    </button>
+    <div class="user-grid">
+      <div><span class="cron-lbl">Domain</span>
+        <select name="domain_id">{% for d in domains %}<option value="{{ d.id }}">{{ d.name }}</option>{% endfor %}</select>
+      </div>
+      <div><span class="cron-lbl">Site Title</span><input type="text" name="site_title" value="My WordPress Site"></div>
+      <div><span class="cron-lbl">Admin Username</span><input type="text" name="admin_user" value="admin" required></div>
+      <div><span class="cron-lbl">Admin Password</span><input type="text" name="admin_password" placeholder="6+ chars" required></div>
+      <div><span class="cron-lbl">Admin Email</span><input type="text" name="admin_email" placeholder="you@example.com" required></div>
+    </div>
+    <button type="submit" class="btn btn-primary" style="margin-top:1rem"
+            onclick="this.textContent='⏳ Installing WordPress…';this.form.submit()">🚀 Install WordPress</button>
+    <p class="muted small" style="margin-top:.6rem">Downloads WordPress, creates the database, and sets up your admin account automatically.</p>
   </form>
 </div>
 {% else %}
 <div class="empty">Add a domain first, then install WordPress on it.</div>
 {% endif %}
+
+<style>
+.user-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:.8rem; }
+.user-grid input, .user-grid select { width:100%; }
+.cron-lbl { display:block; font-size:.72rem; color:var(--muted); margin-bottom:.25rem; font-weight:600; }
+.actions { display:flex; gap:.4rem; align-items:center; flex-wrap:wrap; }
+.actions form { display:inline; margin:0; }
+</style>
 {% endblock %}

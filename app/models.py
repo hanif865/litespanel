@@ -226,6 +226,21 @@ class Autoresponder(Base):
         return f"{self.local_part}@{self.domain.name}"
 
 
+class WordPressApp(Base):
+    """A WordPress install the panel manages (for auto-login + listing)."""
+
+    __tablename__ = "wordpress_apps"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    domain_id: Mapped[int] = mapped_column(ForeignKey("domains.id", ondelete="CASCADE"))
+    admin_user: Mapped[str] = mapped_column(String(64))
+    admin_email: Mapped[str] = mapped_column(String(255))
+    login_secret: Mapped[str] = mapped_column(String(64))  # HMAC key for auto-login
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    domain: Mapped["Domain"] = relationship()
+
+
 class Backup(Base):
     __tablename__ = "backups"
 
