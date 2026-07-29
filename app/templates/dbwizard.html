@@ -14,7 +14,7 @@
     <tr><td>Password</td><td><code>{{ result.password }}</code></td></tr>
     <tr><td>Host</td><td><code>{{ result.host }}:{{ result.port }}</code></td></tr>
   </table>
-  <p style="margin:.75rem 0 0"><a href="/phpmyadmin?db_name={{ result.name }}" class="btn btn-sm">Open in Database Manager →</a></p>
+  <p style="margin:.75rem 0 0"><a href="/database-manager?db_name={{ result.name }}" class="btn btn-sm">Open in Database Manager →</a></p>
 </div>
 {% endif %}
 

@@ -16,7 +16,7 @@
         <div class="panel-head">Databases</div>
         <div class="dbm-list">
           {% for d in databases %}
-            <a href="/phpmyadmin?db_name={{ d.name }}"
+            <a href="/database-manager?db_name={{ d.name }}"
                class="dbm-db {{ 'is-active' if selected and d.name == selected.name }}">
               🛢️ {{ d.name }}
               {% if not d.db_password_enc %}<span class="pma-lock" title="Auto-login not set up">🔒</span>{% endif %}
@@ -25,7 +25,7 @@
         </div>
       </div>
       {% if selected and not selected.db_password_enc %}
-      <form method="post" action="/phpmyadmin/enable-autologin" class="panel" style="padding:.8rem"
+      <form method="post" action="/database-manager/enable-autologin" class="panel" style="padding:.8rem"
             onsubmit="return confirm('This resets the MySQL password for {{ selected.name }}.\n\nIf an app (e.g. WordPress) already uses this database, it will stop connecting until you update its password to the new one shown afterward. Continue?')">
         <input type="hidden" name="db_name" value="{{ selected.name }}">
         <p class="muted small" style="margin:.2rem 0 .6rem">This database predates auto-login. Enable it to open phpMyAdmin without typing a password.</p>
@@ -35,7 +35,7 @@
     </aside>
     <section class="pma-main">
       {% if selected %}
-        <iframe src="/phpmyadmin/signon?db_name={{ selected.name }}"
+        <iframe src="/database-manager/signon?db_name={{ selected.name }}"
                 style="width:100%;height:78vh;border:1px solid var(--border);border-radius:8px"></iframe>
       {% endif %}
     </section>
@@ -67,7 +67,7 @@
         <div class="panel-head">Databases</div>
         <div class="dbm-list">
           {% for d in databases %}
-            <a href="/phpmyadmin?db_name={{ d.name }}"
+            <a href="/database-manager?db_name={{ d.name }}"
                class="dbm-db {{ 'is-active' if selected and d.name == selected.name }}">🛢️ {{ d.name }}</a>
           {% endfor %}
         </div>
@@ -92,7 +92,7 @@
     <!-- Right: SQL console + results -->
     <section class="dbm-main">
       {% if selected %}
-      <form method="post" action="/phpmyadmin/query" class="card">
+      <form method="post" action="/database-manager/query" class="card">
         <input type="hidden" name="db_name" value="{{ selected.name }}">
         <label>SQL query on <code>{{ selected.name }}</code>
           <textarea name="sql" id="sqlbox" class="code-editor" style="min-height:130px"

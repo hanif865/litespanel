@@ -24,7 +24,11 @@ from ..providers import get_provider
 from ..security import current_user
 from ..web import templates
 
-router = APIRouter(prefix="/phpmyadmin", tags=["dbmanager"])
+# NOTE: mounted at /database-manager, NOT /phpmyadmin — on the server nginx
+# serves the real phpMyAdmin at /phpmyadmin, so any panel route under that path
+# would be shadowed (never reach the app). The signon form still posts to the
+# real phpMyAdmin via config.PHPMYADMIN_URL.
+router = APIRouter(prefix="/database-manager", tags=["dbmanager"])
 
 
 def _render(request, user, db, selected=None, result=None, sql=""):
@@ -119,19 +123,19 @@ def enable_autologin(
     )
     if row is None:
         request.session["flash"] = "❌ Database not found."
-        return RedirectResponse("/phpmyadmin", status_code=303)
+        return RedirectResponse("/database-manager", status_code=303)
     new_password = secrets.token_urlsafe(12)
     try:
         get_provider().reset_db_password(row.name, row.db_user, new_password)
     except Exception as exc:  # noqa: BLE001
         request.session["flash"] = f"❌ Could not reset the database password: {exc}"
-        return RedirectResponse(f"/phpmyadmin?db_name={row.name}", status_code=303)
+        return RedirectResponse(f"/database-manager?db_name={row.name}", status_code=303)
     row.db_password_enc = crypto.encrypt(new_password)
     db.commit()
     request.session["flash"] = (
         f"✅ Auto-login enabled for {row.name}. If an app used this database's "
         f"old password, update it to: {new_password}")
-    return RedirectResponse(f"/phpmyadmin?db_name={row.name}", status_code=303)
+    return RedirectResponse(f"/database-manager?db_name={row.name}", status_code=303)
 
 
 @router.post("/query")
@@ -152,6 +156,6 @@ def run_query(
     )
     if selected is None:
         request.session["flash"] = "❌ Database not found."
-        return RedirectResponse("/phpmyadmin", status_code=303)
+        return RedirectResponse("/database-manager", status_code=303)
     result = get_provider().db_execute(selected.name, sql)
     return _render(request, user, db, selected=selected, result=result, sql=sql)
