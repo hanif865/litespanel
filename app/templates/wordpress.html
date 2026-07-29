@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}WordPress{% endblock %}
+{% block content %}
+<div class="breadcrumb"><a href="/">🏠 Home</a> / Software / WordPress</div>
+<h1>WordPress® — 1-Click Install</h1>
+<p class="muted">Install WordPress on a domain. This creates a database, downloads WordPress, and configures it automatically.</p>
+
+{% if creds %}
+<div class="card cred-card">
+  <strong>✅ WordPress installed on {{ creds.domain }}!</strong>
+  <p style="margin:.5rem 0">Finish setup in your browser: <a href="http://{{ creds.domain }}" target="_blank">http://{{ creds.domain }} →</a></p>
+  <table class="cred-table">
+    <tr><td>Database</td><td><code>{{ creds.db }}</code></td></tr>
+    <tr><td>DB User</td><td><code>{{ creds.db_user }}</code></td></tr>
+    <tr><td>DB Password</td><td><code>{{ creds.db_password }}</code></td></tr>
+  </table>
+  <p class="muted small" style="margin-top:.5rem">These are already written into wp-config.php — save them for reference.</p>
+</div>
+{% endif %}
+
+{% if domains %}
+<div class="card" style="max-width:640px">
+  <form method="post" action="/wordpress/install">
+    <label>Install on domain
+      <select name="domain_id" style="font-weight:400">
+        {% for d in domains %}<option value="{{ d.id }}">{{ d.name }}</option>{% endfor %}
+      </select>
+    </label>
+    <p class="muted small" style="margin:.75rem 0">
+      Installs into the domain's <code>public_html</code>. After install, visit the site to
+      choose your language and create the admin account.
+    </p>
+    <button type="submit" class="btn btn-primary" onclick="this.disabled=false;this.form.submit&&(this.textContent='⏳ Installing…')">
+      🚀 Install WordPress
+    </button>
+  </form>
+</div>
+{% else %}
+<div class="empty">Add a domain first, then install WordPress on it.</div>
+{% endif %}
+{% endblock %}

@@ -120,6 +120,9 @@
       <!-- SOFTWARE -->
       <div class="group">
         <div class="group-head"><span class="g-ico">⚙️</span> Software</div>
+        <a class="tool" href="/wordpress" data-tool="wordpress 1-click installer">
+          <span class="t-ico">📝</span><span class="t-name">WordPress</span>
+        </a>
         <a class="tool" href="/php" data-tool="select php version">
           <span class="t-ico">🐘</span><span class="t-name">Select PHP Version</span>
         </a>
@@ -137,31 +140,47 @@
       <div class="panel-head">General Information</div>
       <div class="panel-body">
         <div class="info-row"><span class="k">Current User</span><span class="v">{{ user.username }}</span></div>
+        <div class="info-row"><span class="k">Account Type</span><span class="v">{{ user.role|capitalize }}{{ ' (unlimited)' if user.unlimited }}</span></div>
         <div class="info-row"><span class="k">Primary Domain</span><span class="v">{{ info.primary_domain }}</span></div>
         <div class="info-row"><span class="k">Home Directory</span><span class="v">{{ info.home_dir }}</span></div>
-        <div class="info-row"><span class="k">Server / Provider</span><span class="v">{{ stats.provider }}</span></div>
+        <div class="info-row"><span class="k">Provider</span><span class="v">{{ server.provider }}</span></div>
       </div>
     </div>
 
     <div class="panel">
-      <div class="panel-head">Statistics</div>
+      <div class="panel-head">Your Resource Usage</div>
       <div class="panel-body">
         <div class="stat-item">
-          <div class="stat-top"><span class="s-label">Disk Usage</span>
-            <span class="s-val">{{ stats.disk.used_gb }} / {{ stats.disk.total_gb }} GB</span></div>
-          <div class="meter"><div class="meter-fill {{ 'hot' if stats.disk.percent > 85 }}" style="width: {{ stats.disk.percent }}%"></div></div>
+          <div class="stat-top"><span class="s-label">Disk Usage</span><span class="s-val">{{ usage.disk.display }}</span></div>
+          <div class="meter"><div class="meter-fill {{ 'hot' if usage.disk.percent > 85 }}" style="width: {{ usage.disk.percent }}%"></div></div>
         </div>
         <div class="stat-item">
-          <div class="stat-top"><span class="s-label">CPU</span><span class="s-val">{{ stats.cpu_percent }}%</span></div>
-          <div class="meter"><div class="meter-fill {{ 'hot' if stats.cpu_percent > 85 }}" style="width: {{ stats.cpu_percent }}%"></div></div>
+          <div class="stat-top"><span class="s-label">Domains</span><span class="s-val">{{ usage.domains.display }}</span></div>
+          <div class="meter"><div class="meter-fill {{ 'hot' if usage.domains.percent > 85 }}" style="width: {{ usage.domains.percent }}%"></div></div>
         </div>
         <div class="stat-item">
-          <div class="stat-top"><span class="s-label">Memory</span><span class="s-val">{{ stats.mem_percent }}%</span></div>
-          <div class="meter"><div class="meter-fill {{ 'hot' if stats.mem_percent > 85 }}" style="width: {{ stats.mem_percent }}%"></div></div>
+          <div class="stat-top"><span class="s-label">Databases</span><span class="s-val">{{ usage.databases.display }}</span></div>
+          <div class="meter"><div class="meter-fill {{ 'hot' if usage.databases.percent > 85 }}" style="width: {{ usage.databases.percent }}%"></div></div>
         </div>
-        <div class="info-row"><span class="k">Domains</span><span class="v">{{ counts.domains }}</span></div>
-        <div class="info-row"><span class="k">Databases</span><span class="v">{{ counts.databases }}</span></div>
-        <div class="info-row"><span class="k">SSL Certificates</span><span class="v">{{ counts.certificates }}</span></div>
+        <div class="stat-item">
+          <div class="stat-top"><span class="s-label">Email Accounts</span><span class="s-val">{{ usage.email.display }}</span></div>
+          <div class="meter"><div class="meter-fill {{ 'hot' if usage.email.percent > 85 }}" style="width: {{ usage.email.percent }}%"></div></div>
+        </div>
+        <div class="info-row"><span class="k">SSL Certificates</span><span class="v">{{ usage.certificates }}</span></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">Server Load</div>
+      <div class="panel-body">
+        <div class="stat-item">
+          <div class="stat-top"><span class="s-label">CPU</span><span class="s-val">{{ server.cpu_percent }}%</span></div>
+          <div class="meter"><div class="meter-fill {{ 'hot' if server.cpu_percent > 85 }}" style="width: {{ server.cpu_percent }}%"></div></div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-top"><span class="s-label">Memory</span><span class="s-val">{{ server.mem_percent }}%</span></div>
+          <div class="meter"><div class="meter-fill {{ 'hot' if server.mem_percent > 85 }}" style="width: {{ server.mem_percent }}%"></div></div>
+        </div>
       </div>
     </div>
   </aside>

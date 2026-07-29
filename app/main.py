@@ -20,6 +20,7 @@ from .web import TEMPLATES_DIR, templates
 from .routers import (
     auth, autoresponders, backups, cron, dashboard, databases, dbconsole, dbwizard,
     dns, domains, email, files, forwarders, packages, php, ssl, subdomains, users,
+    wordpress,
 )
 
 app = FastAPI(title=config.APP_NAME, docs_url=None, redoc_url=None)
@@ -57,6 +58,7 @@ app.include_router(dbwizard.router)
 app.include_router(dbconsole.router)
 app.include_router(php.router)
 app.include_router(cron.router)
+app.include_router(wordpress.router)
 app.include_router(ssl.router)
 app.include_router(backups.router)
 app.include_router(packages.router)
