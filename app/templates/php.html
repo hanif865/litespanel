@@ -1,33 +1,96 @@
 {% extends "base.html" %}
-{% block title %}Select PHP Version{% endblock %}
+{% block title %}PHP Selector{% endblock %}
 {% block content %}
-<div class="breadcrumb"><a href="/">🏠 Home</a> / Software / Select PHP Version</div>
-<h1>Select PHP Version</h1>
-<p class="muted">Choose the PHP-FPM version each site runs on. The vhost is rewritten on change.</p>
+<div class="breadcrumb"><a href="/">🏠 Home</a> / Software / PHP Selector</div>
+<h1>PHP Selector</h1>
+<p class="muted">
+  Choose the PHP version, toggle extensions and edit php.ini options.
+  Settings apply to the whole account, or to a single domain when you pick one.
+</p>
 
-{% if domains %}
-<table class="table">
-  <thead><tr><th>Domain</th><th>Current</th><th>Change to</th></tr></thead>
-  <tbody>
-  {% for d in domains %}
-    <tr>
-      <td><strong>{{ d.name }}</strong></td>
-      <td><span class="pill pill-ok">PHP {{ d.php_version }}</span></td>
-      <td>
-        <form method="post" action="/php/{{ d.id }}/set" class="inline-form">
-          <select name="php_version">
-            {% for v in versions %}
-              <option value="{{ v }}" {{ 'selected' if v == d.php_version }}>PHP {{ v }}</option>
-            {% endfor %}
-          </select>
-          <button type="submit" class="btn btn-sm btn-primary">Apply</button>
-        </form>
-      </td>
-    </tr>
-  {% endfor %}
-  </tbody>
-</table>
-{% else %}
-<div class="empty">Add a domain first to manage its PHP version.</div>
-{% endif %}
+{% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
+
+<!-- Scope selector: account global vs per domain -->
+<form method="get" action="/php" class="card">
+  <label for="scope"><strong>Configuration scope</strong></label>
+  <div class="inline-form">
+    <select name="domain_id" id="scope" onchange="this.form.submit()">
+      <option value="">Account Global Settings</option>
+      {% for d in domains %}
+        <option value="{{ d.id }}" {{ 'selected' if scope_domain and d.id == scope_domain.id }}>
+          Per Domain — {{ d.name }}
+        </option>
+      {% endfor %}
+    </select>
+    <noscript><button type="submit" class="btn btn-sm">Switch</button></noscript>
+  </div>
+  <p class="muted">
+    {% if scope_domain %}
+      Editing overrides for <strong>{{ scope_domain.name }}</strong>.
+    {% else %}
+      Editing the <strong>account default</strong> used by every domain without its own override.
+    {% endif %}
+  </p>
+</form>
+
+<!-- PHP version -->
+<div class="card">
+  <h2>PHP Version</h2>
+  <form method="post" action="/php/version" class="inline-form">
+    <input type="hidden" name="domain_id" value="{{ scope_domain.id if scope_domain else '' }}">
+    <span class="pill pill-ok">Current: PHP {{ current_version }}</span>
+    <select name="php_version">
+      {% for v in versions %}
+        <option value="{{ v }}" {{ 'selected' if v == current_version }}>PHP {{ v }}</option>
+      {% endfor %}
+    </select>
+    <button type="submit" class="btn btn-sm btn-primary">Apply</button>
+  </form>
+</div>
+
+<!-- Extensions -->
+<div class="card">
+  <h2>PHP Extensions</h2>
+  <p class="muted">Enable or disable extensions for this scope.</p>
+  <form method="post" action="/php/extensions">
+    <input type="hidden" name="domain_id" value="{{ scope_domain.id if scope_domain else '' }}">
+    <div class="ext-grid">
+      {% for ext in extensions %}
+        <label class="ext-item">
+          <input type="checkbox" name="ext" value="{{ ext }}" {{ 'checked' if ext_state[ext] }}>
+          {{ ext }}
+        </label>
+      {% endfor %}
+    </div>
+    <div class="inline-form" style="margin-top:1rem;">
+      <button type="submit" class="btn btn-sm btn-primary">Save Extensions</button>
+    </div>
+  </form>
+  <form method="post" action="/php/reset-extensions"
+        onsubmit="return confirm('Reset PHP extensions to default for this scope?');">
+    <input type="hidden" name="domain_id" value="{{ scope_domain.id if scope_domain else '' }}">
+    <button type="submit" class="btn btn-sm btn-secondary">Reset PHP Extensions to default</button>
+  </form>
+</div>
+
+<!-- php.ini options -->
+<div class="card">
+  <h2>Options (php.ini)</h2>
+  <p class="muted">Edit php.ini directives directly. Leave a field blank to use the default.</p>
+  <form method="post" action="/php/directives">
+    <input type="hidden" name="domain_id" value="{{ scope_domain.id if scope_domain else '' }}">
+    <table class="table">
+      <thead><tr><th>Directive</th><th>Value</th></tr></thead>
+      <tbody>
+        {% for key in directive_order %}
+          <tr>
+            <td><code>{{ key }}</code></td>
+            <td><input type="text" name="dir_{{ key }}" value="{{ dir_state[key] }}"></td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <button type="submit" class="btn btn-sm btn-primary">Save Options</button>
+  </form>
+</div>
 {% endblock %}

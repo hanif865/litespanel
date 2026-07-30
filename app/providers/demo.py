@@ -103,6 +103,27 @@ class DemoProvider(Provider):
     def set_php_version(self, domain: str, docroot: str, php_version: str, system_user: str) -> None:
         self._write_vhost(domain, Path(docroot), php_version, system_user)
 
+    def apply_php_config(self, system_user: str, php_version: str,
+                         extensions: dict[str, bool], directives: dict[str, str],
+                         domain: str | None = None) -> None:
+        # Write a real, inspectable php.ini so the effect is visible in the demo.
+        scope = domain or system_user
+        target = config.PHP_DIR / f"{scope}.ini"
+        lines = [
+            f"; PHP {php_version} config for {scope}",
+            f"; scope: {'domain ' + domain if domain else 'account global (' + system_user + ')'}",
+            "",
+            "[PHP]",
+        ]
+        for key in sorted(directives):
+            lines.append(f"{key} = {directives[key]}")
+        lines.append("")
+        lines.append("; extensions")
+        for name in sorted(extensions):
+            prefix = "" if extensions[name] else ";"
+            lines.append(f"{prefix}extension={name}")
+        target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
     def set_https_redirect(self, domain: str, docroot: str, php_version: str,
                            system_user: str, enabled: bool, has_ssl: bool) -> None:
         vhost = config.NGINX_DIR / f"{domain}.conf"

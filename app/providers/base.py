@@ -78,6 +78,18 @@ class Provider(ABC):
         """Rewrite the vhost so the site runs on a different PHP-FPM version."""
 
     @abstractmethod
+    def apply_php_config(self, system_user: str, php_version: str,
+                         extensions: dict[str, bool], directives: dict[str, str],
+                         domain: str | None = None) -> None:
+        """Materialize an account's PHP settings to disk.
+
+        The panel DB (PhpConfig rows) is the source of truth; this writes the
+        chosen extensions and php.ini directives into the account's PHP-FPM
+        pool config and reloads PHP. `domain` is None for the account-global
+        profile, or a domain name when a per-domain override is applied.
+        """
+
+    @abstractmethod
     def set_https_redirect(self, domain: str, docroot: str, php_version: str,
                            system_user: str, enabled: bool, has_ssl: bool) -> None:
         """Rewrite the vhost to force (or stop forcing) an HTTP→HTTPS redirect."""

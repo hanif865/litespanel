@@ -74,6 +74,7 @@ SERVER_IP = _env("PANEL_SERVER_IP", "203.0.113.10")
 DNS_DIR = DATA_DIR / "dns"          # generated zone files
 MAIL_DIR = DATA_DIR / "mail"        # virtual mailbox store
 BACKUPS_DIR = DATA_DIR / "backups"  # account backup archives
+PHP_DIR = DATA_DIR / "php"          # generated php.ini / pool overrides
 # Per-account home directories (system-user isolation). The demo provider
 # simulates these under DATA_DIR; the linux provider uses real /home.
 HOME_DIR = DATA_DIR / "home"
@@ -85,5 +86,5 @@ PHP_FPM_VERSION = _env("PANEL_PHP_FPM_VERSION", "8.3")
 def ensure_dirs() -> None:
     """Create the data directories on startup (idempotent)."""
     for d in (DATA_DIR, SITES_DIR, NGINX_DIR, CERTS_DIR, DB_SANDBOX_DIR, DNS_DIR,
-              MAIL_DIR, BACKUPS_DIR, HOME_DIR):
+              MAIL_DIR, BACKUPS_DIR, HOME_DIR, PHP_DIR):
         d.mkdir(parents=True, exist_ok=True)

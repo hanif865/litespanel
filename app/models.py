@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, ForeignKey, String, UniqueConstraint
+from sqlalchemy import DateTime, ForeignKey, JSON, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -140,6 +140,40 @@ class Subdomain(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     parent: Mapped["Domain"] = relationship(back_populates="subdomains")
+
+
+class PhpConfig(Base):
+    """A PHP configuration profile: enabled extensions + php.ini directives.
+
+    Two scopes, mirroring cPanel's PHP Selector:
+      * Account global  — owner_id set, domain_id NULL. The account default.
+      * Per domain      — domain_id set (owner_id still set for cheap lookups).
+
+    `extensions` is {ext_name: bool} and `directives` is {ini_key: str}. Both
+    are stored as JSON so the schema doesn't churn as PHP's option set changes;
+    an empty dict means "inherit the provider default".
+    """
+    __tablename__ = "php_configs"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "domain_id", name="uq_phpconfig_scope"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    # NULL => this row is the account-global profile.
+    domain_id: Mapped[int | None] = mapped_column(
+        ForeignKey("domains.id"), nullable=True, index=True
+    )
+    php_version: Mapped[str] = mapped_column(String(16), default="8.3")
+    extensions: Mapped[dict] = mapped_column(JSON, default=dict)
+    directives: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
+
+    owner: Mapped["User"] = relationship()
+    domain: Mapped["Domain | None"] = relationship()
 
 
 class CronJob(Base):

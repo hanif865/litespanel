@@ -133,6 +133,31 @@ class LinuxProvider(Provider):
         )
         self.reload_web()
 
+    def apply_php_config(self, system_user: str, php_version: str,
+                         extensions: dict[str, bool], directives: dict[str, str],
+                         domain: str | None = None) -> None:
+        _ident(system_user, "account username")
+        # php.ini directives and extension toggles are applied through the
+        # account's PHP-FPM pool as an override file that the pool includes.
+        # This keeps them scoped to the account without touching the global ini.
+        conf_dir = Path(f"/etc/php/{config.PHP_FPM_VERSION}/fpm/conf.d")
+        conf_dir.mkdir(parents=True, exist_ok=True)
+        override = conf_dir / f"zz-panel-{system_user}.ini"
+
+        lines = [f"; managed by {config.APP_NAME} — account {system_user}"]
+        for key in sorted(directives):
+            value = directives[key]
+            # Boolean-style directives use flag form; the rest use value form.
+            if value in ("On", "Off", "on", "off", "1", "0"):
+                lines.append(f"php_admin_flag[{key}] = {value}")
+            else:
+                lines.append(f"php_admin_value[{key}] = {value}")
+        for name in sorted(extensions):
+            if extensions[name]:
+                lines.append(f"php_admin_value[extension] = {name}.so")
+        override.write_text("\n".join(lines) + "\n")
+        self._reload_php()
+
     def set_https_redirect(self, domain: str, docroot: str, php_version: str,
                            system_user: str, enabled: bool, has_ssl: bool) -> None:
         _ident(system_user, "account username")

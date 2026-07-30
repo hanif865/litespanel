@@ -13,9 +13,10 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from .. import config
 from ..accounts import account_home
 from ..db import get_db
-from ..models import Domain, Subdomain, User
+from ..models import DnsRecord, Domain, Subdomain, User
 from ..providers import get_provider
 from ..security import current_user
 from ..web import templates
@@ -27,6 +28,15 @@ _LABEL_RE = re.compile(r"^(?!-)[a-z0-9-]{1,63}(?<!-)$")
 
 def _flash(request: Request, message: str) -> None:
     request.session["flash"] = message
+
+
+def _zone_payload(domain: Domain) -> list[dict]:
+    """Serialize a domain's DNS records into the shape sync_zone expects."""
+    return [
+        {"type": r.rtype, "name": r.name, "value": r.value,
+         "ttl": r.ttl, "priority": r.priority}
+        for r in domain.dns_records
+    ]
 
 
 @router.get("")
@@ -77,8 +87,29 @@ def create_subdomain(
         label=label, fqdn=fqdn, parent_id=parent.id,
         docroot=str(docroot), php_version=parent.php_version,
     ))
+
+    # Publish DNS so the subdomain actually resolves. Without an A record the
+    # zone never learns about the label and clients get NXDOMAIN. The panel DB
+    # is the source of truth, so add the record then re-sync the whole zone.
+    if not db.scalar(
+        select(DnsRecord).where(
+            DnsRecord.domain_id == parent.id,
+            DnsRecord.rtype == "A",
+            DnsRecord.name == label,
+        )
+    ):
+        db.add(DnsRecord(
+            domain_id=parent.id, rtype="A", name=label,
+            value=config.SERVER_IP, ttl=14400,
+        ))
+    db.flush()
+    get_provider().sync_zone(parent.name, _zone_payload(parent))
     db.commit()
-    _flash(request, f"✅ {fqdn} created and is now live.")
+    _flash(
+        request,
+        f"✅ {fqdn} created. DNS A record → {config.SERVER_IP} added; public "
+        "resolution requires this domain's nameservers to point here.",
+    )
     return RedirectResponse("/subdomains", status_code=303)
 
 
@@ -96,7 +127,22 @@ def delete_subdomain(
     get_provider().remove_subdomain(sub.fqdn)
     get_provider().reload_web()
     fqdn = sub.fqdn
+    parent = sub.parent
+    label = sub.label
+
+    # Retract the published A record so the zone stops advertising the label.
+    record = db.scalar(
+        select(DnsRecord).where(
+            DnsRecord.domain_id == parent.id,
+            DnsRecord.rtype == "A",
+            DnsRecord.name == label,
+        )
+    )
+    if record is not None:
+        db.delete(record)
     db.delete(sub)
+    db.flush()
+    get_provider().sync_zone(parent.name, _zone_payload(parent))
     db.commit()
     _flash(request, f"🗑️ {fqdn} removed.")
     return RedirectResponse("/subdomains", status_code=303)
