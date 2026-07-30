@@ -290,9 +290,16 @@ class LinuxProvider(Provider):
         _run(["certbot", "revoke", "--cert-name", domain, "--non-interactive"])
 
     def sync_zone(self, domain: str, records: list[dict]) -> None:
-        # Write a BIND zone file, then reload. Path/reload command vary by distro
-        # and DNS server (BIND vs PowerDNS) — adjust for your setup.
-        zone_path = Path(f"/etc/bind/zones/db.{domain}")
+        # DNS is only served locally when BIND is installed on this host. Many
+        # setups use the registrar's or an external nameserver and have no local
+        # BIND — there the panel DB stays the source of truth and we skip writing
+        # a zone file rather than failing the operation that triggered the sync.
+        bind_dir = Path("/etc/bind")
+        if not bind_dir.is_dir():
+            return
+        zones_dir = bind_dir / "zones"
+        zones_dir.mkdir(parents=True, exist_ok=True)
+        zone_path = zones_dir / f"db.{domain}"
         lines = [f"$TTL 14400", f"@ IN SOA ns1.{domain}. admin.{domain}. (1 3600 900 604800 86400)"]
         for r in records:
             name = r.get("name") or "@"
@@ -303,7 +310,12 @@ class LinuxProvider(Provider):
             else:
                 lines.append(f"{name} IN {r['type']} {r['value']}")
         zone_path.write_text("\n".join(lines) + "\n")
-        _run(["rndc", "reload", domain])
+        # Best-effort reload: a missing rndc or a zone not yet declared in
+        # named.conf must not break the panel action that triggered this sync.
+        try:
+            _run(["rndc", "reload", domain])
+        except (RuntimeError, FileNotFoundError, OSError):
+            pass
 
     def create_mailbox(self, address: str, password: str, quota_mb: int) -> None:
         # Postfix/Dovecot virtual-mailbox setup (see setup-mail.sh):

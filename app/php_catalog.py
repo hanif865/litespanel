@@ -13,10 +13,10 @@ PHP_VERSIONS = ["8.3", "8.2", "8.1", "8.0", "7.4"]
 
 DEFAULT_PHP_VERSION = PHP_VERSIONS[0]
 
-# Extensions shown in the selector. `default` = enabled on a fresh account,
-# matching a typical cPanel PHP install.
+# Extensions shown in the selector. `default` = enabled on a fresh account.
+# All ship enabled so a new account has the full stack available out of the box.
 _EXTENSIONS: list[tuple[str, bool]] = [
-    ("amqp", False),
+    ("amqp", True),
     ("apcu", True),
     ("bcmath", True),
     ("bz2", True),
@@ -24,19 +24,19 @@ _EXTENSIONS: list[tuple[str, bool]] = [
     ("curl", True),
     ("exif", True),
     ("gd", True),
-    ("gmp", False),
+    ("gmp", True),
     ("imagick", True),
-    ("imap", False),
+    ("imap", True),
     ("intl", True),
-    ("ioncube_loader", False),
-    ("ldap", False),
+    ("ioncube_loader", True),
+    ("ldap", True),
     ("mbstring", True),
     ("mysqli", True),
     ("opcache", True),
     ("pdo_mysql", True),
     ("pdo_sqlite", True),
-    ("redis", False),
-    ("soap", False),
+    ("redis", True),
+    ("soap", True),
     ("sodium", True),
     ("sqlite3", True),
     ("xml", True),

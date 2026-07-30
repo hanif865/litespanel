@@ -210,10 +210,36 @@ label input { display: block; width: 100%; margin-top: .3rem; font-weight: 400; 
 .btn-secondary:hover { background: #e3e8f0; }
 .btn-block { width: 100%; }
 
-/* ---------- PHP selector extension grid ---------- */
-.ext-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: .4rem .8rem; }
-.ext-item { display: flex; align-items: center; gap: .45rem; font-size: .82rem; padding: .25rem .1rem; }
-.ext-item input { margin: 0; }
+/* ---------- PHP selector ---------- */
+.php-toolbar { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; margin-bottom: 1rem; }
+.php-search { flex: 1; min-width: 180px; padding: .5rem .8rem; border: 1px solid var(--border); border-radius: 8px; font-size: .85rem; background: #fff; color: var(--text); }
+.php-search:focus { outline: none; border-color: var(--orange); box-shadow: 0 0 0 3px var(--orange-soft); }
+.count-badge { font-size: .72rem; font-weight: 700; padding: .25rem .6rem; border-radius: 99px; background: var(--orange-soft); color: var(--orange-dark); white-space: nowrap; }
+
+.ext-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: .6rem; }
+.ext-item {
+  display: flex; align-items: center; justify-content: space-between; gap: .6rem;
+  padding: .7rem .85rem; border: 1px solid var(--border); border-radius: 10px;
+  background: #fff; font-size: .85rem; font-weight: 600; color: var(--ink);
+  cursor: pointer; transition: border-color .15s, box-shadow .15s, background .15s;
+}
+.ext-item:hover { border-color: #cdd4df; box-shadow: var(--shadow); }
+.ext-item.on { border-color: #cfe9d4; background: #f6fcf7; }
+.ext-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* iOS-style toggle switch */
+.switch { position: relative; display: inline-block; width: 40px; height: 22px; flex: 0 0 auto; }
+.switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+.slider { position: absolute; inset: 0; background: #cbd2dc; border-radius: 99px; transition: background .18s; }
+.slider::before { content: ""; position: absolute; height: 16px; width: 16px; left: 3px; top: 3px; background: #fff; border-radius: 50%; transition: transform .18s; box-shadow: 0 1px 2px rgba(0,0,0,.25); }
+.switch input:checked + .slider { background: var(--ok); }
+.switch input:checked + .slider::before { transform: translateX(18px); }
+.switch input:focus-visible + .slider { box-shadow: 0 0 0 3px var(--orange-soft); }
+
+.card-actions { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; margin-top: 1.1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+.card-actions .btn-secondary { margin-top: 0; }
+.ini-value { width: 100%; padding: .45rem .6rem; border: 1px solid var(--border); border-radius: 6px; font-family: ui-monospace, monospace; font-size: .82rem; background: #fff; color: var(--text); }
+.ini-value:focus { outline: none; border-color: var(--orange); box-shadow: 0 0 0 3px var(--orange-soft); }
 
 /* ---------- Pills / misc ---------- */
 .pill { font-size: .72rem; padding: .2rem .55rem; border-radius: 99px; background: #eef1f6; color: var(--muted); font-weight: 600; }
@@ -278,6 +304,13 @@ label input { display: block; width: 100%; margin-top: .3rem; font-weight: 400; 
 [data-theme="dark"] .flash { background: #1d2a37; border-color: #2f4a5f; color: #9fd0ef; }
 [data-theme="dark"] .cred-card { background: #2a2410; border-color: #514420; }
 [data-theme="dark"] .badge-demo { background: #33220f; color: #ffab73; }
+[data-theme="dark"] .ext-item { background: #141a21; color: var(--side-text); border-color: #232c36; }
+[data-theme="dark"] .ext-item:hover { border-color: #33414f; }
+[data-theme="dark"] .ext-item.on { background: #12241a; border-color: #2c5a3c; }
+[data-theme="dark"] .php-search, [data-theme="dark"] .ini-value { background: #141a21; color: var(--text); }
+[data-theme="dark"] .count-badge { background: #33220f; color: #ffab73; }
+[data-theme="dark"] .slider { background: #3a4552; }
+[data-theme="dark"] .card-actions { border-top-color: #232c36; }
 
 /* ---------- Responsive ---------- */
 @media (max-width: 992px) {
