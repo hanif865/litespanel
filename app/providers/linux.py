@@ -309,7 +309,14 @@ class LinuxProvider(Provider):
         return True, f"Installed Node.js {installed}."
 
     def node_installed_version(self) -> str | None:
-        proc = subprocess.run(["node", "--version"], capture_output=True, text=True)
+        # `node` is only present once the admin installs the runtime, so a fresh
+        # box legitimately has no binary. subprocess.run raises FileNotFoundError
+        # (not a non-zero return) when the command is missing — catch it so the
+        # Node page renders "not installed" instead of 500ing.
+        try:
+            proc = subprocess.run(["node", "--version"], capture_output=True, text=True)
+        except (FileNotFoundError, OSError):
+            return None
         if proc.returncode != 0:
             return None
         return proc.stdout.strip().lstrip("v") or None
@@ -419,8 +426,11 @@ class LinuxProvider(Provider):
             unit = self._node_unit_path(name)
         except ValueError:
             return "unknown"
-        proc = subprocess.run(["systemctl", "is-active", unit.name],
-                              capture_output=True, text=True)
+        try:
+            proc = subprocess.run(["systemctl", "is-active", unit.name],
+                                  capture_output=True, text=True)
+        except (FileNotFoundError, OSError):
+            return "unknown"
         state = proc.stdout.strip()
         if state == "active":
             return "running"
