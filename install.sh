@@ -167,6 +167,24 @@ chmod 600 "$ENV_FILE"
 ok "Config written to ${ENV_FILE}"
 
 # --------------------------------------------------------------------------
+# 4b. Database schema (Alembic migrations)
+# --------------------------------------------------------------------------
+# Apply migrations explicitly here — up front and loudly — instead of relying
+# only on the app's startup hook. A reinstall re-copies migrations/ (above), so
+# this brings the live DB to the newest revision (e.g. node_apps) and, crucially,
+# aborts the install if a migration fails rather than booting a half-migrated app.
+step "Applying database migrations"
+set -a
+# shellcheck disable=SC1090
+. "$ENV_FILE"
+set +a
+if (cd "$PANEL_DIR" && "$PANEL_DIR/.venv/bin/python" -c "from app.db import init_db; init_db()"); then
+    ok "Database schema is up to date"
+else
+    die "Database migration failed — aborting so the panel is not left half-migrated"
+fi
+
+# --------------------------------------------------------------------------
 # 5. systemd service
 # --------------------------------------------------------------------------
 step "Creating the systemd service"
