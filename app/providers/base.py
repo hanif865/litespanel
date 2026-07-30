@@ -90,6 +90,26 @@ class Provider(ABC):
         """
 
     @abstractmethod
+    def list_installed_extensions(self, php_version: str) -> set[str]:
+        """Return the set of PHP extensions actually loaded on this host.
+
+        Used by the PHP Selector to show which toggled extensions are really
+        available (installed) vs merely requested.
+        """
+
+    @abstractmethod
+    def install_extension(self, extension: str, php_version: str) -> tuple[bool, str]:
+        """Install one PHP extension's system package. Returns (ok, message).
+
+        Admin-only at the router layer — this shells out to the package manager
+        as root, so it must never be reachable by ordinary hosting accounts.
+        """
+
+    @abstractmethod
+    def uninstall_extension(self, extension: str, php_version: str) -> tuple[bool, str]:
+        """Remove one PHP extension's system package. Returns (ok, message)."""
+
+    @abstractmethod
     def set_https_redirect(self, domain: str, docroot: str, php_version: str,
                            system_user: str, enabled: bool, has_ssl: bool) -> None:
         """Rewrite the vhost to force (or stop forcing) an HTTP→HTTPS redirect."""

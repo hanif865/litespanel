@@ -68,6 +68,68 @@ _DEFAULT_ON: set[str] = {
 
 AVAILABLE_EXTENSIONS: list[str] = list(ALL_EXTENSIONS)
 
+# Extensions that PHP ships built-in / always-compiled on Debian/Ubuntu (part
+# of php-cli / php-common). These need no apt package — they're just there, so
+# the UI marks them "built-in" rather than offering an install button.
+BUILTIN_EXTENSIONS: set[str] = {
+    "core", "standard", "date", "spl", "pcre", "hash", "json", "filter",
+    "reflection", "tokenizer", "ctype", "fileinfo", "posix", "session",
+    "libxml", "dom", "simplexml", "xml", "xmlreader", "xmlwriter", "xmlrpc",
+    "openssl", "pdo", "phar", "sockets", "iconv", "ftp", "calendar", "exif",
+    "gettext", "random", "mysqlnd", "pcntl", "shmop", "sysvmsg", "sysvsem",
+    "sysvshm",
+}
+
+# Map an extension to the apt package that provides it (Debian/Ubuntu). Most
+# follow the phpX.Y-<name> convention, filled in dynamically in apt_package();
+# this dict only holds the exceptions where the package name differs from the
+# extension name.
+_APT_PACKAGE_OVERRIDES: dict[str, str] = {
+    "pdo_mysql": "mysql",       # php8.3-mysql provides pdo_mysql + mysqli
+    "mysqli": "mysql",
+    "nd_mysqli": "mysql",
+    "nd_pdo_mysql": "mysql",
+    "pdo_sqlite": "sqlite3",
+    "pdo_pgsql": "pgsql",
+    "pdo_dblib": "sybase",
+    "pdo_odbc": "odbc",
+    "opcache": "opcache",
+    "sodium": "sodium",
+    "apcu": "apcu",
+    "memcached": "memcached",
+    "mongodb": "mongodb",
+    "http": "http",
+    "xdebug": "xdebug",
+    "grpc": "grpc",
+    "swoole": "swoole",
+}
+
+# Extensions with no straightforward apt package (commercial, PECL-only, or
+# vendor-supplied). The UI still lists them but marks install as unavailable so
+# nobody clicks a button that can't work.
+NO_APT_PACKAGE: set[str] = {
+    "ioncube_loader", "sourceguardian", "newrelic", "elastic_apm", "scoutapm",
+    "snuffleupagus", "tideways_xhprof", "phalcon5", "swoole", "grpc", "vips",
+    "geos", "luasandbox", "htscanner", "diseval", "jsmin", "bitset", "eio",
+    "phpiredis", "leveldb", "gmagick", "gearman", "gender", "sqlsrv",
+    "pdo_sqlsrv", "oci8", "pdo_oci", "pdf", "yaf", "yaz", "solr", "stats",
+    "trader", "rrd", "raphf", "protobuf", "psr",
+}
+
+
+def apt_package(ext: str, php_ver: str) -> str | None:
+    """The apt package that provides `ext` for the given PHP version.
+
+    Returns None when the extension is built-in (nothing to install) or has no
+    installable apt package.
+    """
+    if ext in BUILTIN_EXTENSIONS:
+        return None
+    if ext in NO_APT_PACKAGE:
+        return None
+    suffix = _APT_PACKAGE_OVERRIDES.get(ext, ext)
+    return f"php{php_ver}-{suffix}"
+
 # Editable php.ini directives with their default values (strings — the form
 # posts strings and php.ini is textual anyway).
 _DIRECTIVES: list[tuple[str, str]] = [

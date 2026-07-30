@@ -124,6 +124,35 @@ class DemoProvider(Provider):
             lines.append(f"{prefix}extension={name}")
         target.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
+    # --- PHP extension packages (simulated) -------------------------------
+    def _installed_ext_file(self) -> Path:
+        return config.PHP_DIR / "installed_extensions.txt"
+
+    def list_installed_extensions(self, php_version: str) -> set[str]:
+        from .. import php_catalog
+
+        # Built-ins are always present; plus whatever the demo has "installed".
+        installed = set(php_catalog.BUILTIN_EXTENSIONS)
+        installed |= {n for n, on in php_catalog.default_extensions().items() if on}
+        f = self._installed_ext_file()
+        if f.exists():
+            installed |= {ln.strip() for ln in f.read_text().splitlines() if ln.strip()}
+        return installed
+
+    def install_extension(self, extension: str, php_version: str) -> tuple[bool, str]:
+        f = self._installed_ext_file()
+        current = set(f.read_text().splitlines()) if f.exists() else set()
+        current.add(extension)
+        f.write_text("\n".join(sorted(c for c in current if c)) + "\n", encoding="utf-8")
+        return True, f"(demo) installed php{php_version}-{extension}"
+
+    def uninstall_extension(self, extension: str, php_version: str) -> tuple[bool, str]:
+        f = self._installed_ext_file()
+        if f.exists():
+            current = {ln for ln in f.read_text().splitlines() if ln.strip() and ln.strip() != extension}
+            f.write_text("\n".join(sorted(current)) + "\n", encoding="utf-8")
+        return True, f"(demo) removed php{php_version}-{extension}"
+
     def set_https_redirect(self, domain: str, docroot: str, php_version: str,
                            system_user: str, enabled: bool, has_ssl: bool) -> None:
         vhost = config.NGINX_DIR / f"{domain}.conf"

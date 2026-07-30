@@ -85,6 +85,25 @@ apt-get install -y -qq \
     wget curl unzip ufw >/dev/null
 ok "nginx, MySQL, PHP ${PHP_VER}, certbot installed"
 
+# Common PHP extensions the PHP Selector enables by default, so a fresh box
+# has the usual WordPress/Laravel stack working out of the box. Installed
+# best-effort: any package missing from the distro repos is skipped, not fatal.
+# The panel's PHP Selector can install more on demand later (admin only).
+step "Installing common PHP extensions"
+PHP_EXT_PKGS=(
+    "php${PHP_VER}-bcmath" "php${PHP_VER}-bz2" "php${PHP_VER}-gmp"
+    "php${PHP_VER}-imagick" "php${PHP_VER}-soap" "php${PHP_VER}-xsl"
+    "php${PHP_VER}-sqlite3" "php${PHP_VER}-redis" "php${PHP_VER}-igbinary"
+    "php${PHP_VER}-opcache" "php${PHP_VER}-readline" "php${PHP_VER}-gettext"
+    "php${PHP_VER}-ldap" "php${PHP_VER}-tidy" "php${PHP_VER}-ssh2"
+)
+for pkg in "${PHP_EXT_PKGS[@]}"; do
+    apt-get install -y -qq "$pkg" >/dev/null 2>&1 && echo -e "  ${GREEN}✓${RESET} $pkg" || warn "$pkg not available — skipped"
+done
+systemctl reload "php${PHP_VER}-fpm" >/dev/null 2>&1 || true
+ok "Common PHP extensions installed"
+
+
 # --------------------------------------------------------------------------
 # 2. Panel code + Python environment
 # --------------------------------------------------------------------------

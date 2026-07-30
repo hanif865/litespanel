@@ -220,14 +220,18 @@ label input { display: block; width: 100%; margin-top: .3rem; font-weight: 400; 
 .ext-group { margin-bottom: 1.1rem; }
 .ext-letter { font-size: .8rem; font-weight: 800; color: var(--orange); text-transform: uppercase; letter-spacing: .05em; margin: 0 0 .5rem; padding-bottom: .3rem; border-bottom: 1px solid var(--border); }
 .ext-item {
-  display: flex; align-items: center; justify-content: space-between; gap: .6rem;
+  display: flex; flex-direction: column; gap: .55rem;
   padding: .7rem .85rem; border: 1px solid var(--border); border-radius: 10px;
   background: #fff; font-size: .85rem; font-weight: 600; color: var(--ink);
-  cursor: pointer; transition: border-color .15s, box-shadow .15s, background .15s;
+  transition: border-color .15s, box-shadow .15s, background .15s;
 }
 .ext-item:hover { border-color: #cdd4df; box-shadow: var(--shadow); }
 .ext-item.on { border-color: #cfe9d4; background: #f6fcf7; }
+.ext-toggle { display: flex; align-items: center; justify-content: space-between; gap: .6rem; cursor: pointer; }
 .ext-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ext-meta { display: flex; align-items: center; gap: .5rem; }
+.ext-meta .pill { font-size: .66rem; padding: .15rem .45rem; }
+.btn-xs { font-size: .68rem; padding: .18rem .5rem; margin-left: auto; }
 
 /* iOS-style toggle switch */
 .switch { position: relative; display: inline-block; width: 40px; height: 22px; flex: 0 0 auto; }

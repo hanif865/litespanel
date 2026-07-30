@@ -158,6 +158,61 @@ class LinuxProvider(Provider):
         override.write_text("\n".join(lines) + "\n")
         self._reload_php()
 
+    # --- PHP extension packages -------------------------------------------
+    _EXT_NAME_RE = re.compile(r"^[a-z0-9_]{1,40}$")
+
+    def list_installed_extensions(self, php_version: str) -> set[str]:
+        # `php -m` lists the modules loaded for the CLI SAPI; close enough to
+        # what FPM loads for the UI's "installed?" indicator. Names are
+        # lowercased to match the catalog.
+        proc = subprocess.run(
+            [f"php{php_version}", "-m"], capture_output=True, text=True
+        )
+        if proc.returncode != 0:
+            return set()
+        return {
+            line.strip().lower()
+            for line in proc.stdout.splitlines()
+            if line.strip() and not line.startswith("[")
+        }
+
+    def _ext_package(self, extension: str, php_version: str) -> str:
+        from .. import php_catalog
+
+        if not self._EXT_NAME_RE.match(extension):
+            raise ValueError(f"Unsafe extension name: {extension!r}")
+        if not re.match(r"^\d+\.\d+$", php_version):
+            raise ValueError(f"Unsafe PHP version: {php_version!r}")
+        pkg = php_catalog.apt_package(extension, php_version)
+        if pkg is None:
+            raise ValueError(f"No installable apt package for {extension!r}")
+        return pkg
+
+    def _apt(self, action: str, extension: str, php_version: str) -> tuple[bool, str]:
+        import os
+
+        try:
+            pkg = self._ext_package(extension, php_version)
+        except ValueError as exc:
+            return False, str(exc)
+        proc = subprocess.run(
+            ["apt-get", action, "-y", pkg],
+            capture_output=True, text=True,
+            env={**os.environ, "DEBIAN_FRONTEND": "noninteractive"},
+            timeout=300,
+        )
+        if proc.returncode != 0:
+            return False, (proc.stderr or proc.stdout).strip()[-500:]
+        self._reload_php()
+        verb = "Installed" if action == "install" else "Removed"
+        return True, f"{verb} {pkg}."
+
+    def install_extension(self, extension: str, php_version: str) -> tuple[bool, str]:
+        return self._apt("install", extension, php_version)
+
+    def uninstall_extension(self, extension: str, php_version: str) -> tuple[bool, str]:
+        return self._apt("remove", extension, php_version)
+
     def set_https_redirect(self, domain: str, docroot: str, php_version: str,
                            system_user: str, enabled: bool, has_ssl: bool) -> None:
         _ident(system_user, "account username")

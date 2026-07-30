@@ -92,6 +92,15 @@ def php_selector(
     db.commit()
 
     flash = request.session.pop("flash", None)
+
+    # Toggling an extension only records intent — it still has to be present as a
+    # system package to actually load. Show which are installed, and (admins only)
+    # offer 1-click install for the ones that ship as an apt package.
+    installed = get_provider().list_installed_extensions(cfg.php_version)
+    installable = {
+        ext: php_catalog.apt_package(ext, cfg.php_version) is not None
+        for ext in php_catalog.AVAILABLE_EXTENSIONS
+    }
     return templates.TemplateResponse(
         request,
         "php.html",
@@ -106,6 +115,9 @@ def php_selector(
             "ext_state": php_catalog.merged_extensions(cfg.extensions),
             "dir_state": php_catalog.merged_directives(cfg.directives),
             "current_version": cfg.php_version,
+            "installed": installed,
+            "installable": installable,
+            "is_admin": user.role == "admin",
             "active": "php",
             "flash": flash,
         },
@@ -195,4 +207,62 @@ async def reset_extensions(
     _apply(cfg, user, domain)
     db.commit()
     _flash(request, "↩️ PHP extensions reset to default.")
+    return _redirect(domain)
+
+
+@router.post("/install")
+async def install_extension(
+    request: Request,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """Install a PHP extension system package. Admin only (shells out as root)."""
+    form = await request.form()
+    domain_id = form.get("domain_id")
+    domain = _resolve_domain(db, user, int(domain_id) if domain_id else None)
+    extension = (form.get("extension") or "").strip()
+
+    if user.role != "admin":
+        _flash(request, "❌ Only an admin can install PHP extensions.")
+        return _redirect(domain)
+    if extension not in php_catalog.AVAILABLE_EXTENSIONS:
+        _flash(request, "❌ Unknown extension.")
+        return _redirect(domain)
+
+    cfg = _get_or_create_config(db, user, domain)
+    if php_catalog.apt_package(extension, cfg.php_version) is None:
+        _flash(request, f"❌ {extension} is not installable via a package.")
+        return _redirect(domain)
+
+    ok, message = get_provider().install_extension(extension, cfg.php_version)
+    _flash(request, ("✅ " if ok else "❌ ") + message)
+    return _redirect(domain)
+
+
+@router.post("/uninstall")
+async def uninstall_extension(
+    request: Request,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """Remove a PHP extension system package. Admin only (shells out as root)."""
+    form = await request.form()
+    domain_id = form.get("domain_id")
+    domain = _resolve_domain(db, user, int(domain_id) if domain_id else None)
+    extension = (form.get("extension") or "").strip()
+
+    if user.role != "admin":
+        _flash(request, "❌ Only an admin can remove PHP extensions.")
+        return _redirect(domain)
+    if extension not in php_catalog.AVAILABLE_EXTENSIONS:
+        _flash(request, "❌ Unknown extension.")
+        return _redirect(domain)
+
+    cfg = _get_or_create_config(db, user, domain)
+    if php_catalog.apt_package(extension, cfg.php_version) is None:
+        _flash(request, f"❌ {extension} cannot be removed (built-in or not a package).")
+        return _redirect(domain)
+
+    ok, message = get_provider().uninstall_extension(extension, cfg.php_version)
+    _flash(request, ("✅ " if ok else "❌ ") + message)
     return _redirect(domain)
