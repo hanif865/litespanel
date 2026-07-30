@@ -1,0 +1,52 @@
+LITESPANEL LIVE TEST — https://panel.netlihost.com
+health: {'status': 'ok', 'provider': 'linux'}
+
+[ADMIN] login POST -> 303 loc=/ ok=True
+
+============================================================
+ADMIN route crawl
+============================================================
+  /                      200  [Home · LitesPanel]
+  /domains               200  [Domains · LitesPanel]
+  /subdomains            200  [Subdomains · LitesPanel]
+  /dns                   200  [Zone Editor · LitesPanel]
+  /email                 200  [Email Accounts · LitesPanel]
+  /forwarders            200  [Forwarders · LitesPanel]
+  /autoresponders        200  [Autoresponders · LitesPanel]
+  /files                 200  [File Manager · LitesPanel]
+  /databases             200  [Databases · LitesPanel]
+  /database-wizard       200  [Database Wizard · LitesPanel]
+  /database-manager      200  [Database Manager · LitesPanel]
+  /php                   200  [PHP Selector · LitesPanel]
+  /node                  200  [Node.js · LitesPanel]
+  /cron                  200  [Cron Jobs · LitesPanel]
+  /wordpress             200  [WordPress · LitesPanel]
+  /ssl                   200  [SSL · LitesPanel]
+  /backups               200  [Backups · LitesPanel]
+  /packages              200  [Packages · LitesPanel]
+  /users                 200  [User Manager · LitesPanel]
+
+[USER (sostahaat)] login POST -> 303 loc=/ ok=True
+
+============================================================
+USER (sostahaat) route crawl
+============================================================
+  /                      200  [Home · LitesPanel]
+  /domains               200  [Domains · LitesPanel]
+  /subdomains            200  [Subdomains · LitesPanel]
+  /dns                   200  [Zone Editor · LitesPanel]
+  /email                 200  [Email Accounts · LitesPanel]
+  /forwarders            200  [Forwarders · LitesPanel]
+  /autoresponders        200  [Autoresponders · LitesPanel]
+  /files                 200  [File Manager · LitesPanel]
+  /databases             200  [Databases · LitesPanel]
+  /database-wizard       200  [Database Wizard · LitesPanel]
+  /database-manager      200  [Database Manager · LitesPanel]
+  /php                   200  [PHP Selector · LitesPanel]
+  /node                  303  -> /
+  /cron                  200  [Cron Jobs · LitesPanel]
+  /wordpress             200  [WordPress · LitesPanel]
+  /ssl                   200  [SSL · LitesPanel]
+  /backups               200  [Backups · LitesPanel]
+  /packages              403
+  /users                 403
