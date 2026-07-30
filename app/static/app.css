@@ -217,6 +217,8 @@ label input { display: block; width: 100%; margin-top: .3rem; font-weight: 400; 
 .count-badge { font-size: .72rem; font-weight: 700; padding: .25rem .6rem; border-radius: 99px; background: var(--orange-soft); color: var(--orange-dark); white-space: nowrap; }
 
 .ext-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: .6rem; }
+.ext-group { margin-bottom: 1.1rem; }
+.ext-letter { font-size: .8rem; font-weight: 800; color: var(--orange); text-transform: uppercase; letter-spacing: .05em; margin: 0 0 .5rem; padding-bottom: .3rem; border-bottom: 1px solid var(--border); }
 .ext-item {
   display: flex; align-items: center; justify-content: space-between; gap: .6rem;
   padding: .7rem .85rem; border: 1px solid var(--border); border-radius: 10px;
@@ -311,6 +313,7 @@ label input { display: block; width: 100%; margin-top: .3rem; font-weight: 400; 
 [data-theme="dark"] .count-badge { background: #33220f; color: #ffab73; }
 [data-theme="dark"] .slider { background: #3a4552; }
 [data-theme="dark"] .card-actions { border-top-color: #232c36; }
+[data-theme="dark"] .ext-letter { border-bottom-color: #232c36; }
 
 /* ---------- Responsive ---------- */
 @media (max-width: 992px) {

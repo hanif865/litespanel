@@ -63,16 +63,23 @@
       <span class="btn btn-sm" onclick="toggleAll(false)">Deselect all</span>
     </div>
 
-    <div class="ext-grid" id="extGrid">
-      {% for ext in extensions %}
-        <label class="ext-item {{ 'on' if ext_state[ext] }}" data-name="{{ ext }}">
-          <span class="ext-name">{{ ext }}</span>
-          <span class="switch">
-            <input type="checkbox" name="ext" value="{{ ext }}" {{ 'checked' if ext_state[ext] }}
-                   onchange="this.closest('.ext-item').classList.toggle('on', this.checked); countExts();">
-            <span class="slider"></span>
-          </span>
-        </label>
+    <div id="extGrid">
+      {% for letter, names in ext_groups %}
+        <div class="ext-group" data-letter="{{ letter }}">
+          <div class="ext-letter">{{ letter }}</div>
+          <div class="ext-grid">
+            {% for ext in names %}
+              <label class="ext-item {{ 'on' if ext_state[ext] }}" data-name="{{ ext }}">
+                <span class="ext-name">{{ ext }}</span>
+                <span class="switch">
+                  <input type="checkbox" name="ext" value="{{ ext }}" {{ 'checked' if ext_state[ext] }}
+                         onchange="this.closest('.ext-item').classList.toggle('on', this.checked); countExts();">
+                  <span class="slider"></span>
+                </span>
+              </label>
+            {% endfor %}
+          </div>
+        </div>
       {% endfor %}
     </div>
 
@@ -127,6 +134,11 @@
     document.querySelectorAll('#extGrid .ext-item').forEach(function (item) {
       var match = item.getAttribute('data-name').indexOf(q) !== -1;
       item.style.display = match ? '' : 'none';
+    });
+    // Hide a letter group when none of its extensions match the search.
+    document.querySelectorAll('#extGrid .ext-group').forEach(function (grp) {
+      var anyVisible = grp.querySelector('.ext-item:not([style*="display: none"])');
+      grp.style.display = anyVisible ? '' : 'none';
     });
   }
   countExts();

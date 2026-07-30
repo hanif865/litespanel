@@ -101,6 +101,7 @@ def php_selector(
             "scope_domain": domain,
             "versions": PHP_VERSIONS,
             "extensions": php_catalog.AVAILABLE_EXTENSIONS,
+            "ext_groups": php_catalog.grouped_extensions(),
             "directive_order": php_catalog.DIRECTIVE_ORDER,
             "ext_state": php_catalog.merged_extensions(cfg.extensions),
             "dir_state": php_catalog.merged_directives(cfg.directives),
