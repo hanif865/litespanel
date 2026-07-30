@@ -179,6 +179,73 @@ class DemoProvider(Provider):
     def remove_subdomain(self, fqdn: str) -> None:
         (config.NGINX_DIR / f"{fqdn}.conf").unlink(missing_ok=True)
 
+    # --- Node.js (admin-only, simulated) ----------------------------------
+    def _node_state_file(self) -> Path:
+        return config.NODE_DIR / "installed_node.txt"
+
+    def _node_status_file(self, name: str) -> Path:
+        return config.NODE_DIR / f"{name}.status"
+
+    def install_node(self, version: str) -> tuple[bool, str]:
+        self._node_state_file().write_text(f"{version}.0.0\n", encoding="utf-8")
+        return True, f"(demo) installed Node.js {version}.x via NodeSource"
+
+    def node_installed_version(self) -> str | None:
+        f = self._node_state_file()
+        return f.read_text(encoding="utf-8").strip() if f.exists() else None
+
+    def deploy_node_app(self, name: str, domain: str, app_dir: Path, port: int,
+                        entrypoint: str, system_user: str, node_version: str) -> tuple[bool, str]:
+        app_dir = Path(app_dir)
+        app_dir.mkdir(parents=True, exist_ok=True)
+        # Write an inspectable systemd unit so the demo shows what Linux would do.
+        unit = config.NODE_DIR / f"litespanel-node-{name}.service"
+        unit.write_text(
+            "[Unit]\n"
+            f"Description=LitesPanel Node app {name} ({domain})\n"
+            "After=network.target\n\n"
+            "[Service]\n"
+            "Type=simple\n"
+            f"User={system_user}\n"
+            f"WorkingDirectory={app_dir.as_posix()}\n"
+            "Environment=NODE_ENV=production\n"
+            f"Environment=PORT={port}\n"
+            f"ExecStart=/usr/bin/node {entrypoint}\n"
+            "Restart=on-failure\nRestartSec=5\n\n"
+            "[Install]\nWantedBy=multi-user.target\n",
+            encoding="utf-8",
+        )
+        # And the reverse-proxy vhost that replaces the domain's PHP vhost.
+        vhost = config.NGINX_DIR / f"{domain}.conf"
+        vhost.write_text(
+            f"# account: {system_user} — Node.js reverse proxy\n"
+            f"server {{\n    listen 80;\n    server_name {domain} www.{domain};\n"
+            f"    location / {{\n        proxy_pass http://127.0.0.1:{port};\n"
+            f"        proxy_set_header Host $host;\n"
+            f"        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
+            f"    }}\n}}\n",
+            encoding="utf-8",
+        )
+        self._node_status_file(name).write_text("running\n", encoding="utf-8")
+        return True, f"(demo) Node app '{name}' running on port {port}, serving {domain}."
+
+    def control_node_app(self, name: str, action: str) -> tuple[bool, str]:
+        if action not in ("start", "stop", "restart"):
+            return False, f"Unknown action: {action}"
+        state = "stopped" if action == "stop" else "running"
+        self._node_status_file(name).write_text(state + "\n", encoding="utf-8")
+        past = {"start": "started", "stop": "stopped", "restart": "restarted"}[action]
+        return True, f"(demo) {past} '{name}'."
+
+    def remove_node_app(self, name: str, domain: str) -> None:
+        (config.NODE_DIR / f"litespanel-node-{name}.service").unlink(missing_ok=True)
+        self._node_status_file(name).unlink(missing_ok=True)
+        (config.NGINX_DIR / f"{domain}.conf").unlink(missing_ok=True)
+
+    def node_app_status(self, name: str) -> str:
+        f = self._node_status_file(name)
+        return f.read_text(encoding="utf-8").strip() if f.exists() else "unknown"
+
     def set_owner(self, path: Path, system_user: str) -> None:
         # No POSIX ownership on the Windows demo box — nothing to do.
         return None

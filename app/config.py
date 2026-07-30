@@ -75,6 +75,7 @@ DNS_DIR = DATA_DIR / "dns"          # generated zone files
 MAIL_DIR = DATA_DIR / "mail"        # virtual mailbox store
 BACKUPS_DIR = DATA_DIR / "backups"  # account backup archives
 PHP_DIR = DATA_DIR / "php"          # generated php.ini / pool overrides
+NODE_DIR = DATA_DIR / "node"        # generated systemd units + reverse-proxy conf
 # Per-account home directories (system-user isolation). The demo provider
 # simulates these under DATA_DIR; the linux provider uses real /home.
 HOME_DIR = DATA_DIR / "home"
@@ -82,9 +83,14 @@ HOME_DIR = DATA_DIR / "home"
 # PHP-FPM version used for per-account pools (linux provider).
 PHP_FPM_VERSION = _env("PANEL_PHP_FPM_VERSION", "8.3")
 
+# Node.js support (admin-only). Major versions the panel can install via
+# NodeSource, and the local port range reverse-proxied apps are assigned from.
+NODE_VERSIONS = ("22", "20", "18")
+NODE_PORT_BASE = int(_env("PANEL_NODE_PORT_BASE", "3100"))
+
 
 def ensure_dirs() -> None:
     """Create the data directories on startup (idempotent)."""
     for d in (DATA_DIR, SITES_DIR, NGINX_DIR, CERTS_DIR, DB_SANDBOX_DIR, DNS_DIR,
-              MAIL_DIR, BACKUPS_DIR, HOME_DIR, PHP_DIR):
+              MAIL_DIR, BACKUPS_DIR, HOME_DIR, PHP_DIR, NODE_DIR):
         d.mkdir(parents=True, exist_ok=True)

@@ -27,6 +27,10 @@ WEB_ROOT = Path("/var/www")
 # depth so a bad name can never be interpolated into SQL, even if a caller
 # forgets to check.
 _IDENT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,63}$")
+# Node app slug (systemd unit name) and entrypoint file — kept strict so they
+# can never inject extra directives into the generated unit file.
+_NODE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
+_ENTRY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/ -]{0,254}$")
 
 
 def _ident(value: str, what: str) -> str:
@@ -272,6 +276,157 @@ class LinuxProvider(Provider):
         (NGINX_SITES / f"{fqdn}.conf").write_text(self._vhost(fqdn, "", docroot, system_user))
         self.reload_web()
         return docroot
+
+    # --- Node.js (admin-only) ---------------------------------------------
+    def _node_unit_path(self, name: str) -> Path:
+        if not _NODE_NAME_RE.match(name):
+            raise ValueError(f"Unsafe node app name: {name!r}")
+        return Path(f"/etc/systemd/system/litespanel-node-{name}.service")
+
+    def install_node(self, version: str) -> tuple[bool, str]:
+        import os
+
+        if not re.match(r"^\d{1,2}$", version):
+            return False, f"Unsafe Node version: {version!r}"
+        env = {**os.environ, "DEBIAN_FRONTEND": "noninteractive"}
+        # NodeSource: fetch the setup script for this major, run it (adds the
+        # apt repo + key), then install the nodejs package.
+        setup = Path("/tmp/nodesource_setup.sh")
+        try:
+            _run(["curl", "-fsSL", f"https://deb.nodesource.com/setup_{version}.x",
+                  "-o", str(setup)])
+        except RuntimeError as exc:
+            return False, f"Could not fetch NodeSource setup: {exc}"
+        proc = subprocess.run(["bash", str(setup)], capture_output=True, text=True,
+                              env=env, timeout=300)
+        if proc.returncode != 0:
+            return False, (proc.stderr or proc.stdout).strip()[-500:]
+        proc = subprocess.run(["apt-get", "install", "-y", "nodejs"],
+                              capture_output=True, text=True, env=env, timeout=600)
+        if proc.returncode != 0:
+            return False, (proc.stderr or proc.stdout).strip()[-500:]
+        installed = self.node_installed_version() or f"{version}.x"
+        return True, f"Installed Node.js {installed}."
+
+    def node_installed_version(self) -> str | None:
+        proc = subprocess.run(["node", "--version"], capture_output=True, text=True)
+        if proc.returncode != 0:
+            return None
+        return proc.stdout.strip().lstrip("v") or None
+
+    def _node_proxy_vhost(self, domain: str, port: int) -> str:
+        names = f"{domain} www.{domain}"
+        return (
+            f"server {{\n    listen 80;\n    server_name {names};\n"
+            f"    location / {{\n"
+            f"        proxy_pass http://127.0.0.1:{port};\n"
+            f"        proxy_http_version 1.1;\n"
+            f"        proxy_set_header Upgrade $http_upgrade;\n"
+            f"        proxy_set_header Connection \"upgrade\";\n"
+            f"        proxy_set_header Host $host;\n"
+            f"        proxy_set_header X-Real-IP $remote_addr;\n"
+            f"        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
+            f"        proxy_set_header X-Forwarded-Proto $scheme;\n"
+            f"    }}\n}}\n"
+        )
+
+    def deploy_node_app(self, name: str, domain: str, app_dir: Path, port: int,
+                        entrypoint: str, system_user: str, node_version: str) -> tuple[bool, str]:
+        _ident(system_user, "account username")
+        try:
+            unit = self._node_unit_path(name)
+        except ValueError as exc:
+            return False, str(exc)
+        if not _ENTRY_RE.match(entrypoint):
+            return False, f"Unsafe entrypoint: {entrypoint!r}"
+        if not (1024 <= int(port) <= 65535):
+            return False, f"Port out of range: {port}"
+        node_bin = "/usr/bin/node"
+        if not Path(node_bin).exists():
+            node_bin = "/usr/bin/env node"
+
+        app_dir = Path(app_dir)
+        app_dir.mkdir(parents=True, exist_ok=True)
+        _run(["chown", "-R", f"{system_user}:{system_user}", str(app_dir)])
+
+        unit.write_text(
+            "[Unit]\n"
+            f"Description=LitesPanel Node app {name} ({domain})\n"
+            "After=network.target\n\n"
+            "[Service]\n"
+            "Type=simple\n"
+            f"User={system_user}\n"
+            f"WorkingDirectory={app_dir}\n"
+            "Environment=NODE_ENV=production\n"
+            f"Environment=PORT={int(port)}\n"
+            f"ExecStart={node_bin} {entrypoint}\n"
+            "Restart=on-failure\n"
+            "RestartSec=5\n\n"
+            "[Install]\n"
+            "WantedBy=multi-user.target\n"
+        )
+        # Point the domain's vhost at the Node process.
+        (NGINX_SITES / f"{domain}.conf").write_text(self._node_proxy_vhost(domain, int(port)))
+
+        _run(["systemctl", "daemon-reload"])
+        try:
+            _run(["systemctl", "enable", "--now", unit.name])
+        except RuntimeError as exc:
+            # The unit is installed and nginx is pointed at it, but the app
+            # failed to start (missing deps, bad entrypoint). Surface it rather
+            # than pretend success — admin can fix and hit Restart.
+            self.reload_web()
+            return False, f"Deployed, but the service failed to start: {exc}"
+        self.reload_web()
+        return True, f"Node app '{name}' is running on port {port}, serving {domain}."
+
+    def control_node_app(self, name: str, action: str) -> tuple[bool, str]:
+        if action not in ("start", "stop", "restart"):
+            return False, f"Unknown action: {action}"
+        try:
+            unit = self._node_unit_path(name)
+        except ValueError as exc:
+            return False, str(exc)
+        try:
+            _run(["systemctl", action, unit.name])
+        except RuntimeError as exc:
+            return False, str(exc)
+        past = {"start": "started", "stop": "stopped", "restart": "restarted"}[action]
+        return True, f"{past.capitalize()} '{name}'."
+
+    def remove_node_app(self, name: str, domain: str) -> None:
+        try:
+            unit = self._node_unit_path(name)
+        except ValueError:
+            return
+        # Best-effort: a not-yet-started / already-removed unit must not raise.
+        for cmd in (["systemctl", "stop", unit.name],
+                    ["systemctl", "disable", unit.name]):
+            try:
+                _run(cmd)
+            except RuntimeError:
+                pass
+        unit.unlink(missing_ok=True)
+        try:
+            _run(["systemctl", "daemon-reload"])
+        except RuntimeError:
+            pass
+        # Drop the reverse-proxy vhost; the router restores the PHP vhost after.
+        (NGINX_SITES / f"{domain}.conf").unlink(missing_ok=True)
+
+    def node_app_status(self, name: str) -> str:
+        try:
+            unit = self._node_unit_path(name)
+        except ValueError:
+            return "unknown"
+        proc = subprocess.run(["systemctl", "is-active", unit.name],
+                              capture_output=True, text=True)
+        state = proc.stdout.strip()
+        if state == "active":
+            return "running"
+        if state in ("inactive", "failed", "deactivating"):
+            return "stopped"
+        return "unknown"
 
     def remove_subdomain(self, fqdn: str) -> None:
         (NGINX_SITES / f"{fqdn}.conf").unlink(missing_ok=True)

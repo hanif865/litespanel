@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+{% block title %}Node.js{% endblock %}
+{% block content %}
+<div class="breadcrumb"><a href="/">🏠 Home</a> / Software / Node.js</div>
+<h1>Node.js Apps</h1>
+<p class="muted">
+  Admin-only. Install the Node.js runtime, then run an app on one of your
+  domains. The domain is served by a managed systemd service behind an nginx
+  reverse proxy.
+</p>
+
+{% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
+
+<!-- Runtime -->
+<div class="card">
+  <h2>Runtime</h2>
+  {% if runtime %}
+    <p><span class="pill pill-ok">Installed: Node.js {{ runtime }}</span></p>
+    <p class="muted small">Re-run an install below to add or upgrade a major version.</p>
+  {% else %}
+    <p><span class="pill">Node.js is not installed on this server.</span></p>
+  {% endif %}
+  <form method="post" action="/node/install-runtime" class="inline-form"
+        onsubmit="return confirm('Install the Node.js runtime via NodeSource now? This runs as root.');">
+    <select name="version">
+      {% for v in node_versions %}
+        <option value="{{ v }}">Node.js {{ v }}.x</option>
+      {% endfor %}
+    </select>
+    <button type="submit" class="btn btn-sm btn-primary">Install runtime</button>
+  </form>
+</div>
+
+<!-- Deploy a new app -->
+<div class="card">
+  <h2>Deploy an App</h2>
+  {% if available_domains %}
+  <p class="muted small">
+    Pick a domain, the entry file (relative to its document root) and a port.
+    The app runs as your account user and restarts on failure.
+  </p>
+  <form method="post" action="/node/deploy">
+    <div class="ext-grid">
+      <div>
+        <label class="small" style="display:block; margin-bottom:.25rem;">Domain</label>
+        <select name="domain_id" required>
+          {% for d in available_domains %}
+            <option value="{{ d.id }}">{{ d.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label class="small" style="display:block; margin-bottom:.25rem;">Entry file</label>
+        <input type="text" class="ini-value" name="entrypoint" value="server.js"
+               placeholder="server.js">
+      </div>
+      <div>
+        <label class="small" style="display:block; margin-bottom:.25rem;">Node version</label>
+        <select name="node_version">
+          {% for v in node_versions %}
+            <option value="{{ v }}">Node.js {{ v }}.x</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label class="small" style="display:block; margin-bottom:.25rem;">Port</label>
+        <input type="number" class="ini-value" name="port" value="{{ suggested_port }}"
+               min="1024" max="65535">
+      </div>
+    </div>
+    <div class="card-actions">
+      <button type="submit" class="btn btn-sm btn-primary"
+              {% if not runtime %}onclick="return confirm('Node.js is not installed yet. Deploy anyway? The service will fail to start until you install the runtime.');"{% endif %}>
+        Deploy app
+      </button>
+    </div>
+  </form>
+  {% else %}
+    <p class="muted">Every domain already runs a Node.js app. Remove one below to free a domain.</p>
+  {% endif %}
+</div>
+
+<!-- Running apps -->
+<div class="card">
+  <h2>Your Apps</h2>
+  {% if apps %}
+  <table class="table">
+    <thead>
+      <tr><th>App</th><th>Domain</th><th>Port</th><th>Entry</th><th>Node</th><th>Status</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for row in apps %}
+      <tr>
+        <td><code>{{ row.app.name }}</code></td>
+        <td>{{ row.app.domain.name }}</td>
+        <td>{{ row.app.port }}</td>
+        <td><code>{{ row.app.entrypoint }}</code></td>
+        <td>{{ row.app.node_version }}.x</td>
+        <td>
+          {% if row.status == 'running' %}
+            <span class="pill pill-ok">Running</span>
+          {% elif row.status == 'stopped' %}
+            <span class="pill">Stopped</span>
+          {% else %}
+            <span class="pill">Unknown</span>
+          {% endif %}
+        </td>
+        <td style="white-space:nowrap;">
+          <button type="button" class="btn btn-xs btn-primary"
+                  onclick="nodeAct('/node/control', {{ row.app.id }}, 'restart')">Restart</button>
+          {% if row.status == 'running' %}
+            <button type="button" class="btn btn-xs btn-secondary"
+                    onclick="nodeAct('/node/control', {{ row.app.id }}, 'stop')">Stop</button>
+          {% else %}
+            <button type="button" class="btn btn-xs btn-secondary"
+                    onclick="nodeAct('/node/control', {{ row.app.id }}, 'start')">Start</button>
+          {% endif %}
+          <button type="button" class="btn btn-xs btn-danger"
+                  onclick="nodeRemove({{ row.app.id }}, '{{ row.app.domain.name }}')">Remove</button>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+    <p class="muted">No Node.js apps yet.</p>
+  {% endif %}
+</div>
+
+<script>
+  // Post a control action (start/stop/restart) via a throwaway form.
+  function nodeAct(action, appId, act) {
+    var f = document.createElement('form');
+    f.method = 'post'; f.action = action;
+    f.appendChild(hidden('app_id', appId));
+    f.appendChild(hidden('action', act));
+    document.body.appendChild(f); f.submit();
+  }
+  function nodeRemove(appId, domain) {
+    if (!confirm('Remove the Node.js app on ' + domain + '? The domain will be restored to PHP.')) return;
+    var f = document.createElement('form');
+    f.method = 'post'; f.action = '/node/remove';
+    f.appendChild(hidden('app_id', appId));
+    document.body.appendChild(f); f.submit();
+  }
+  function hidden(name, value) {
+    var i = document.createElement('input');
+    i.type = 'hidden'; i.name = name; i.value = value;
+    return i;
+  }
+</script>
+{% endblock %}

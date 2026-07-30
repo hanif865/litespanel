@@ -84,6 +84,11 @@
       <a href="/php" class="jnav-item {{ 'is-active' if active == 'php' }}" data-tip="PHP Version">
         <span class="jnav-ico">🐘</span><span class="jnav-label">PHP Version</span>
       </a>
+      {% if user.role == 'admin' %}
+      <a href="/node" class="jnav-item {{ 'is-active' if active == 'node' }}" data-tip="Node.js">
+        <span class="jnav-ico">🟩</span><span class="jnav-label">Node.js</span>
+      </a>
+      {% endif %}
       <a href="/cron" class="jnav-item {{ 'is-active' if active == 'cron' }}" data-tip="Cron Jobs">
         <span class="jnav-ico">⏰</span><span class="jnav-label">Cron Jobs</span>
       </a>

@@ -114,6 +114,43 @@ class Provider(ABC):
                            system_user: str, enabled: bool, has_ssl: bool) -> None:
         """Rewrite the vhost to force (or stop forcing) an HTTP→HTTPS redirect."""
 
+    # --- Node.js (admin-only) ---------------------------------------------
+    @abstractmethod
+    def install_node(self, version: str) -> tuple[bool, str]:
+        """Install the Node.js runtime (major `version`) on this host.
+
+        Admin-only at the router layer — this shells out to the package manager
+        as root (NodeSource), so it must never be reachable by ordinary hosting
+        accounts. Returns (ok, message).
+        """
+
+    @abstractmethod
+    def node_installed_version(self) -> str | None:
+        """Return the installed Node.js version string, or None if absent."""
+
+    @abstractmethod
+    def deploy_node_app(self, name: str, domain: str, app_dir: Path, port: int,
+                        entrypoint: str, system_user: str, node_version: str) -> tuple[bool, str]:
+        """Create/refresh a Node app's systemd unit + nginx reverse proxy and start it.
+
+        Admin-only at the router layer. Writes a per-app systemd service that
+        runs `node <entrypoint>` in `app_dir` as `system_user` on `port`,
+        rewrites the domain's vhost to proxy_pass to that port, then reloads.
+        Returns (ok, message).
+        """
+
+    @abstractmethod
+    def control_node_app(self, name: str, action: str) -> tuple[bool, str]:
+        """Start/stop/restart a Node app's service. action in {start, stop, restart}."""
+
+    @abstractmethod
+    def remove_node_app(self, name: str, domain: str) -> None:
+        """Stop+disable the service, remove its unit and the reverse-proxy vhost."""
+
+    @abstractmethod
+    def node_app_status(self, name: str) -> str:
+        """Return "running", "stopped" or "unknown" for the app's service."""
+
     # --- Subdomains -------------------------------------------------------
     @abstractmethod
     def create_subdomain(self, fqdn: str, docroot: Path, php_version: str, system_user: str) -> Path:

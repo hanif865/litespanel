@@ -279,6 +279,40 @@ class WordPressApp(Base):
     domain: Mapped["Domain"] = relationship()
 
 
+class NodeApp(Base):
+    """A Node.js application the panel runs behind an nginx reverse proxy.
+
+    Admin-only feature (enabled per-domain by an admin). Each app is a systemd
+    service listening on a local `port`; the domain's vhost is rewritten to
+    proxy_pass to it. The DB row is the source of truth — the provider
+    materializes the systemd unit + nginx config from these fields.
+    """
+
+    __tablename__ = "node_apps"
+    __table_args__ = (UniqueConstraint("domain_id", name="uq_nodeapp_domain"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    domain_id: Mapped[int] = mapped_column(ForeignKey("domains.id", ondelete="CASCADE"))
+    # Short slug used to name the systemd unit (litespanel-node-<name>.service).
+    name: Mapped[str] = mapped_column(String(64))
+    # Local port the Node process listens on; nginx proxies the domain to it.
+    port: Mapped[int] = mapped_column()
+    node_version: Mapped[str] = mapped_column(String(16), default="20")
+    # File the app starts with, e.g. "server.js" (run as `node <entrypoint>`).
+    entrypoint: Mapped[str] = mapped_column(String(255), default="server.js")
+    # Directory the app lives in (its docroot / working dir).
+    app_dir: Mapped[str] = mapped_column(String(500))
+    active: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    domain: Mapped["Domain"] = relationship()
+
+    @property
+    def unit(self) -> str:
+        return f"litespanel-node-{self.name}"
+
+
 class Backup(Base):
     __tablename__ = "backups"
 
