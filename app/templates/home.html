@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_icons.html" import icon %}
 {% block title %}Home{% endblock %}
 {% block content %}
 <div class="home-grid">
@@ -6,130 +7,170 @@
     <div class="groups">
 
       <!-- FILES -->
-      <div class="group">
-        <div class="group-head"><span class="g-ico">📁</span> Files</div>
-        <a class="tool" href="/files" data-tool="file manager">
-          <span class="t-ico">🗂️</span><span class="t-name">File Manager</span>
-        </a>
-        <a class="tool" href="/" data-tool="disk usage">
-          <span class="t-ico">📊</span><span class="t-name">Disk Usage</span>
-        </a>
-        <span class="tool disabled" data-tool="ftp accounts">
-          <span class="t-ico">🔌</span><span class="t-name">FTP Accounts</span><span class="soon">soon</span>
-        </span>
-        <a class="tool" href="/backups" data-tool="backup">
-          <span class="t-ico">💾</span><span class="t-name">Backup</span>
-        </a>
+      <div class="group" data-group="files">
+        <button class="group-head" type="button" onclick="toggleGroup(this)">
+          <span class="g-ico">{{ icon("file-manager", 18) }}</span> Files
+          <span class="g-chev">{{ icon("chevron", 18) }}</span>
+        </button>
+        <div class="group-body">
+          <a class="tool" href="/files" data-tool="file manager">
+            <span class="t-ico">{{ icon("file-manager") }}</span><span class="t-name">File Manager</span>
+          </a>
+          <a class="tool" href="/" data-tool="disk usage">
+            <span class="t-ico">{{ icon("disk-usage") }}</span><span class="t-name">Disk Usage</span>
+          </a>
+          <span class="tool disabled" data-tool="ftp accounts">
+            <span class="t-ico">{{ icon("ftp") }}</span><span class="t-name">FTP Accounts</span><span class="soon">soon</span>
+          </span>
+          <a class="tool" href="/backups" data-tool="backup">
+            <span class="t-ico">{{ icon("backup") }}</span><span class="t-name">Backup</span>
+          </a>
+        </div>
       </div>
 
       <!-- DATABASES -->
-      <div class="group">
-        <div class="group-head"><span class="g-ico">🗄️</span> Databases</div>
-        <a class="tool" href="/databases" data-tool="mysql databases">
-          <span class="t-ico">🛢️</span><span class="t-name">MySQL® Databases</span>
-        </a>
-        <a class="tool" href="/database-manager" data-tool="phpmyadmin">
-          <span class="t-ico">🐬</span><span class="t-name">phpMyAdmin</span>
-        </a>
-        <a class="tool" href="/database-wizard" data-tool="mysql database wizard">
-          <span class="t-ico">🧙</span><span class="t-name">Database Wizard</span>
-        </a>
+      <div class="group" data-group="databases">
+        <button class="group-head" type="button" onclick="toggleGroup(this)">
+          <span class="g-ico">{{ icon("databases", 18) }}</span> Databases
+          <span class="g-chev">{{ icon("chevron", 18) }}</span>
+        </button>
+        <div class="group-body">
+          <a class="tool" href="/databases" data-tool="mysql databases">
+            <span class="t-ico">{{ icon("databases") }}</span><span class="t-name">MySQL® Databases</span>
+          </a>
+          <a class="tool" href="/database-manager" data-tool="phpmyadmin">
+            <span class="t-ico">{{ icon("phpmyadmin") }}</span><span class="t-name">phpMyAdmin</span>
+          </a>
+          <a class="tool" href="/database-wizard" data-tool="mysql database wizard">
+            <span class="t-ico">{{ icon("db-wizard") }}</span><span class="t-name">Database Wizard</span>
+          </a>
+        </div>
       </div>
 
       <!-- DOMAINS -->
-      <div class="group">
-        <div class="group-head"><span class="g-ico">🌐</span> Domains</div>
-        <a class="tool" href="/domains" data-tool="domains">
-          <span class="t-ico">🌍</span><span class="t-name">Domains</span>
-        </a>
-        <a class="tool" href="/subdomains" data-tool="subdomains">
-          <span class="t-ico">🔗</span><span class="t-name">Subdomains</span>
-        </a>
-        <span class="tool disabled" data-tool="addon domains">
-          <span class="t-ico">➕</span><span class="t-name">Addon Domains</span><span class="soon">soon</span>
-        </span>
-        <a class="tool" href="/dns" data-tool="zone editor dns records">
-          <span class="t-ico">🧭</span><span class="t-name">Zone Editor (DNS)</span>
-        </a>
+      <div class="group" data-group="domains">
+        <button class="group-head" type="button" onclick="toggleGroup(this)">
+          <span class="g-ico">{{ icon("domains", 18) }}</span> Domains
+          <span class="g-chev">{{ icon("chevron", 18) }}</span>
+        </button>
+        <div class="group-body">
+          <a class="tool" href="/domains" data-tool="domains">
+            <span class="t-ico">{{ icon("domains") }}</span><span class="t-name">Domains</span>
+          </a>
+          <a class="tool" href="/subdomains" data-tool="subdomains">
+            <span class="t-ico">{{ icon("subdomains") }}</span><span class="t-name">Subdomains</span>
+          </a>
+          <span class="tool disabled" data-tool="addon domains">
+            <span class="t-ico">{{ icon("domains") }}</span><span class="t-name">Addon Domains</span><span class="soon">soon</span>
+          </span>
+          <a class="tool" href="/dns" data-tool="zone editor dns records">
+            <span class="t-ico">{{ icon("dns") }}</span><span class="t-name">Zone Editor (DNS)</span>
+          </a>
+        </div>
       </div>
 
       <!-- EMAIL -->
-      <div class="group">
-        <div class="group-head"><span class="g-ico">✉️</span> Email</div>
-        <a class="tool" href="/email" data-tool="email accounts">
-          <span class="t-ico">📧</span><span class="t-name">Email Accounts</span>
-        </a>
-        {% if WEBMAIL_URL %}
-        <a class="tool" href="{{ WEBMAIL_URL }}" target="_blank" rel="noopener" data-tool="webmail roundcube">
-          <span class="t-ico">📬</span><span class="t-name">Webmail (Roundcube)</span>
-        </a>
-        {% else %}
-        <span class="tool disabled" data-tool="webmail roundcube">
-          <span class="t-ico">📬</span><span class="t-name">Webmail</span><span class="soon">setup</span>
-        </span>
-        {% endif %}
-        <a class="tool" href="/forwarders" data-tool="forwarders">
-          <span class="t-ico">📤</span><span class="t-name">Forwarders</span>
-        </a>
-        <a class="tool" href="/autoresponders" data-tool="autoresponders">
-          <span class="t-ico">🤖</span><span class="t-name">Autoresponders</span>
-        </a>
-      </div>
-
-      <!-- SECURITY -->
-      <div class="group">
-        <div class="group-head"><span class="g-ico">🔒</span> Security</div>
-        <a class="tool" href="/ssl" data-tool="ssl tls status">
-          <span class="t-ico">🔐</span><span class="t-name">SSL/TLS Status</span>
-        </a>
-        <a class="tool" href="/ssl" data-tool="lets encrypt ssl">
-          <span class="t-ico">📜</span><span class="t-name">Let's Encrypt™ SSL</span>
-        </a>
-        <span class="tool disabled" data-tool="ip blocker">
-          <span class="t-ico">🚫</span><span class="t-name">IP Blocker</span><span class="soon">soon</span>
-        </span>
+      <div class="group" data-group="email">
+        <button class="group-head" type="button" onclick="toggleGroup(this)">
+          <span class="g-ico">{{ icon("email", 18) }}</span> Email
+          <span class="g-chev">{{ icon("chevron", 18) }}</span>
+        </button>
+        <div class="group-body">
+          <a class="tool" href="/email" data-tool="email accounts">
+            <span class="t-ico">{{ icon("email") }}</span><span class="t-name">Email Accounts</span>
+          </a>
+          {% if WEBMAIL_URL %}
+          <a class="tool" href="{{ WEBMAIL_URL }}" target="_blank" rel="noopener" data-tool="webmail roundcube">
+            <span class="t-ico">{{ icon("email") }}</span><span class="t-name">Webmail (Roundcube)</span>
+          </a>
+          {% else %}
+          <span class="tool disabled" data-tool="webmail roundcube">
+            <span class="t-ico">{{ icon("email") }}</span><span class="t-name">Webmail</span><span class="soon">setup</span>
+          </span>
+          {% endif %}
+          <a class="tool" href="/forwarders" data-tool="forwarders">
+            <span class="t-ico">{{ icon("forwarders") }}</span><span class="t-name">Forwarders</span>
+          </a>
+          <a class="tool" href="/autoresponders" data-tool="autoresponders">
+            <span class="t-ico">{{ icon("autoresponders") }}</span><span class="t-name">Autoresponders</span>
+          </a>
+        </div>
       </div>
 
       <!-- METRICS -->
-      <div class="group">
-        <div class="group-head"><span class="g-ico">📈</span> Metrics</div>
-        <span class="tool disabled" data-tool="visitors">
-          <span class="t-ico">👥</span><span class="t-name">Visitors</span><span class="soon">soon</span>
-        </span>
-        <span class="tool disabled" data-tool="errors">
-          <span class="t-ico">⚠️</span><span class="t-name">Errors</span><span class="soon">soon</span>
-        </span>
-        <span class="tool disabled" data-tool="bandwidth">
-          <span class="t-ico">📶</span><span class="t-name">Bandwidth</span><span class="soon">soon</span>
-        </span>
+      <div class="group" data-group="metrics">
+        <button class="group-head" type="button" onclick="toggleGroup(this)">
+          <span class="g-ico">{{ icon("metrics", 18) }}</span> Metrics
+          <span class="g-chev">{{ icon("chevron", 18) }}</span>
+        </button>
+        <div class="group-body">
+          <span class="tool disabled" data-tool="visitors">
+            <span class="t-ico">{{ icon("visitors") }}</span><span class="t-name">Visitors</span><span class="soon">soon</span>
+          </span>
+          <span class="tool disabled" data-tool="errors">
+            <span class="t-ico">{{ icon("errors") }}</span><span class="t-name">Errors</span><span class="soon">soon</span>
+          </span>
+          <span class="tool disabled" data-tool="bandwidth">
+            <span class="t-ico">{{ icon("bandwidth") }}</span><span class="t-name">Bandwidth</span><span class="soon">soon</span>
+          </span>
+        </div>
+      </div>
+
+      <!-- SECURITY -->
+      <div class="group" data-group="security">
+        <button class="group-head" type="button" onclick="toggleGroup(this)">
+          <span class="g-ico">{{ icon("ssl", 18) }}</span> Security
+          <span class="g-chev">{{ icon("chevron", 18) }}</span>
+        </button>
+        <div class="group-body">
+          <a class="tool" href="/ssl" data-tool="ssl tls status">
+            <span class="t-ico">{{ icon("ssl") }}</span><span class="t-name">SSL/TLS Status</span>
+          </a>
+          <a class="tool" href="/ssl" data-tool="lets encrypt ssl">
+            <span class="t-ico">{{ icon("ssl") }}</span><span class="t-name">Let's Encrypt™ SSL</span>
+          </a>
+          <span class="tool disabled" data-tool="ip blocker">
+            <span class="t-ico">{{ icon("ip-blocker") }}</span><span class="t-name">IP Blocker</span><span class="soon">soon</span>
+          </span>
+        </div>
+      </div>
+
+      <!-- SOFTWARE -->
+      <div class="group" data-group="software">
+        <button class="group-head" type="button" onclick="toggleGroup(this)">
+          <span class="g-ico">{{ icon("software", 18) }}</span> Software
+          <span class="g-chev">{{ icon("chevron", 18) }}</span>
+        </button>
+        <div class="group-body">
+          <a class="tool" href="/wordpress" data-tool="wordpress 1-click installer">
+            <span class="t-ico">{{ icon("wordpress") }}</span><span class="t-name">WordPress</span>
+          </a>
+          <a class="tool" href="/php" data-tool="select php version">
+            <span class="t-ico">{{ icon("php") }}</span><span class="t-name">Select PHP Version</span>
+          </a>
+          <a class="tool" href="/cron" data-tool="cron jobs">
+            <span class="t-ico">{{ icon("cron") }}</span><span class="t-name">Cron Jobs</span>
+          </a>
+        </div>
       </div>
 
       {% if user.role in ('admin', 'reseller') %}
-      <!-- PREFERENCES / WHM -->
-      <div class="group">
-        <div class="group-head"><span class="g-ico">👥</span> Preferences</div>
-        <a class="tool" href="/users" data-tool="user manager accounts whm">
-          <span class="t-ico">👤</span><span class="t-name">User Manager</span>
-        </a>
-        <a class="tool" href="/packages" data-tool="packages plans hosting">
-          <span class="t-ico">📦</span><span class="t-name">Packages</span>
-        </a>
+      <!-- PREFERENCES -->
+      <div class="group" data-group="preferences">
+        <button class="group-head" type="button" onclick="toggleGroup(this)">
+          <span class="g-ico">{{ icon("users", 18) }}</span> Preferences
+          <span class="g-chev">{{ icon("chevron", 18) }}</span>
+        </button>
+        <div class="group-body">
+          <a class="tool" href="/users" data-tool="user manager accounts whm">
+            <span class="t-ico">{{ icon("users") }}</span><span class="t-name">User Manager</span>
+          </a>
+          <a class="tool" href="/packages" data-tool="packages plans hosting">
+            <span class="t-ico">{{ icon("packages") }}</span><span class="t-name">Packages</span>
+          </a>
+        </div>
       </div>
       {% endif %}
-
-      <!-- SOFTWARE -->
-      <div class="group">
-        <div class="group-head"><span class="g-ico">⚙️</span> Software</div>
-        <a class="tool" href="/wordpress" data-tool="wordpress 1-click installer">
-          <span class="t-ico">📝</span><span class="t-name">WordPress</span>
-        </a>
-        <a class="tool" href="/php" data-tool="select php version">
-          <span class="t-ico">🐘</span><span class="t-name">Select PHP Version</span>
-        </a>
-        <a class="tool" href="/cron" data-tool="cron jobs">
-          <span class="t-ico">⏰</span><span class="t-name">Cron Jobs</span>
-        </a>
-      </div>
 
     </div>
   </div>
@@ -185,4 +226,23 @@
     </div>
   </aside>
 </div>
+
+<script>
+  // Collapse / expand a tool group; remember state per group in localStorage.
+  function toggleGroup(btn) {
+    var grp = btn.closest('.group');
+    var key = 'grp:' + grp.getAttribute('data-group');
+    var collapsed = grp.classList.toggle('collapsed');
+    try { localStorage.setItem(key, collapsed ? '1' : '0'); } catch (e) {}
+  }
+  (function restoreGroups() {
+    document.querySelectorAll('.group[data-group]').forEach(function (grp) {
+      try {
+        if (localStorage.getItem('grp:' + grp.getAttribute('data-group')) === '1') {
+          grp.classList.add('collapsed');
+        }
+      } catch (e) {}
+    });
+  })();
+</script>
 {% endblock %}

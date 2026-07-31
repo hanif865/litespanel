@@ -1,3 +1,4 @@
+{% from "_icons.html" import icon %}
 <!doctype html>
 <html lang="en">
 <head>
@@ -30,100 +31,100 @@
 
     <nav class="jnav">
       <a href="/" class="jnav-item {{ 'is-active' if active == 'home' }}" data-tip="Tools">
-        <span class="jnav-ico">🏠</span><span class="jnav-label">Tools</span>
+        <span class="jnav-ico">{{ icon("home", 20) }}</span><span class="jnav-label">Tools</span>
       </a>
 
       <div class="jnav-section">Management</div>
       <a href="/domains" class="jnav-item {{ 'is-active' if active == 'domains' }}" data-tip="Domains">
-        <span class="jnav-ico">🌐</span><span class="jnav-label">Domains</span>
+        <span class="jnav-ico">{{ icon("domains", 20) }}</span><span class="jnav-label">Domains</span>
       </a>
       <a href="/subdomains" class="jnav-item {{ 'is-active' if active == 'subdomains' }}" data-tip="Subdomains">
-        <span class="jnav-ico">🔗</span><span class="jnav-label">Subdomains</span>
+        <span class="jnav-ico">{{ icon("subdomains", 20) }}</span><span class="jnav-label">Subdomains</span>
       </a>
       <a href="/dns" class="jnav-item {{ 'is-active' if active == 'dns' }}" data-tip="Zone Editor">
-        <span class="jnav-ico">🧭</span><span class="jnav-label">Zone Editor</span>
+        <span class="jnav-ico">{{ icon("dns", 20) }}</span><span class="jnav-label">Zone Editor</span>
       </a>
       <a href="/files" class="jnav-item {{ 'is-active' if active == 'files' }}" data-tip="File Manager">
-        <span class="jnav-ico">📁</span><span class="jnav-label">File Manager</span>
+        <span class="jnav-ico">{{ icon("file-manager", 20) }}</span><span class="jnav-label">File Manager</span>
       </a>
       <a href="/backups" class="jnav-item {{ 'is-active' if active == 'backups' }}" data-tip="Backups">
-        <span class="jnav-ico">💾</span><span class="jnav-label">Backups</span>
+        <span class="jnav-ico">{{ icon("backup", 20) }}</span><span class="jnav-label">Backups</span>
       </a>
 
       <div class="jnav-section">Email</div>
       <a href="/email" class="jnav-item {{ 'is-active' if active == 'email' }}" data-tip="Email Accounts">
-        <span class="jnav-ico">📧</span><span class="jnav-label">Email Accounts</span>
+        <span class="jnav-ico">{{ icon("email", 20) }}</span><span class="jnav-label">Email Accounts</span>
       </a>
       <a href="/forwarders" class="jnav-item {{ 'is-active' if active == 'forwarders' }}" data-tip="Forwarders">
-        <span class="jnav-ico">📤</span><span class="jnav-label">Forwarders</span>
+        <span class="jnav-ico">{{ icon("forwarders", 20) }}</span><span class="jnav-label">Forwarders</span>
       </a>
       <a href="/autoresponders" class="jnav-item {{ 'is-active' if active == 'autoresponders' }}" data-tip="Autoresponders">
-        <span class="jnav-ico">🤖</span><span class="jnav-label">Autoresponders</span>
+        <span class="jnav-ico">{{ icon("autoresponders", 20) }}</span><span class="jnav-label">Autoresponders</span>
       </a>
       {% if WEBMAIL_URL %}
       <a href="{{ WEBMAIL_URL }}" target="_blank" rel="noopener" class="jnav-item" data-tip="Webmail">
-        <span class="jnav-ico">📬</span><span class="jnav-label">Webmail</span>
+        <span class="jnav-ico">{{ icon("email", 20) }}</span><span class="jnav-label">Webmail</span>
       </a>
       {% endif %}
 
       <div class="jnav-section">Databases</div>
       <a href="/databases" class="jnav-item {{ 'is-active' if active == 'databases' }}" data-tip="Databases">
-        <span class="jnav-ico">🗄️</span><span class="jnav-label">MySQL® Databases</span>
+        <span class="jnav-ico">{{ icon("databases", 20) }}</span><span class="jnav-label">MySQL® Databases</span>
       </a>
       <a href="/database-wizard" class="jnav-item {{ 'is-active' if active == 'dbwizard' }}" data-tip="Database Wizard">
-        <span class="jnav-ico">🧙</span><span class="jnav-label">Database Wizard</span>
+        <span class="jnav-ico">{{ icon("db-wizard", 20) }}</span><span class="jnav-label">Database Wizard</span>
       </a>
       <a href="/database-manager" class="jnav-item {{ 'is-active' if active == 'phpmyadmin' }}" data-tip="phpMyAdmin">
-        <span class="jnav-ico">🐬</span><span class="jnav-label">phpMyAdmin</span>
+        <span class="jnav-ico">{{ icon("phpmyadmin", 20) }}</span><span class="jnav-label">phpMyAdmin</span>
       </a>
 
       <div class="jnav-section">Software</div>
       <a href="/wordpress" class="jnav-item {{ 'is-active' if active == 'wordpress' }}" data-tip="WordPress">
-        <span class="jnav-ico">📝</span><span class="jnav-label">WordPress</span>
+        <span class="jnav-ico">{{ icon("wordpress", 20) }}</span><span class="jnav-label">WordPress</span>
       </a>
       <a href="/php" class="jnav-item {{ 'is-active' if active == 'php' }}" data-tip="PHP Version">
-        <span class="jnav-ico">🐘</span><span class="jnav-label">PHP Version</span>
+        <span class="jnav-ico">{{ icon("php", 20) }}</span><span class="jnav-label">PHP Version</span>
       </a>
       {% if user.role == 'admin' %}
       <a href="/node" class="jnav-item {{ 'is-active' if active == 'node' }}" data-tip="Node.js">
-        <span class="jnav-ico">🟩</span><span class="jnav-label">Node.js</span>
+        <span class="jnav-ico">{{ icon("node", 20) }}</span><span class="jnav-label">Node.js</span>
       </a>
       {% endif %}
       <a href="/cron" class="jnav-item {{ 'is-active' if active == 'cron' }}" data-tip="Cron Jobs">
-        <span class="jnav-ico">⏰</span><span class="jnav-label">Cron Jobs</span>
+        <span class="jnav-ico">{{ icon("cron", 20) }}</span><span class="jnav-label">Cron Jobs</span>
       </a>
 
       <div class="jnav-section">Security</div>
       <a href="/ssl" class="jnav-item {{ 'is-active' if active == 'ssl' }}" data-tip="SSL/TLS">
-        <span class="jnav-ico">🔒</span><span class="jnav-label">SSL / TLS</span>
+        <span class="jnav-ico">{{ icon("ssl", 20) }}</span><span class="jnav-label">SSL / TLS</span>
       </a>
       {% if user.role == 'admin' %}
       <a href="/firewall" class="jnav-item {{ 'is-active' if active == 'firewall' }}" data-tip="Firewall & Security">
-        <span class="jnav-ico">🛡️</span><span class="jnav-label">Firewall</span>
+        <span class="jnav-ico">{{ icon("firewall", 20) }}</span><span class="jnav-label">Firewall</span>
       </a>
       <a href="/logs" class="jnav-item {{ 'is-active' if active == 'logs' }}" data-tip="Log Viewer">
-        <span class="jnav-ico">📜</span><span class="jnav-label">Logs</span>
+        <span class="jnav-ico">{{ icon("logs", 20) }}</span><span class="jnav-label">Logs</span>
       </a>
       {% endif %}
 
       <div class="jnav-section">Account</div>
       <a href="/account/security" class="jnav-item {{ 'is-active' if active == 'account' }}" data-tip="Security & 2FA">
-        <span class="jnav-ico">🔐</span><span class="jnav-label">Security</span>
+        <span class="jnav-ico">{{ icon("2fa", 20) }}</span><span class="jnav-label">Security</span>
       </a>
 
       {% if user.role in ('admin', 'reseller') %}
       <div class="jnav-section">Preferences</div>
       <a href="/users" class="jnav-item {{ 'is-active' if active == 'users' }}" data-tip="User Manager">
-        <span class="jnav-ico">👥</span><span class="jnav-label">User Manager</span>
+        <span class="jnav-ico">{{ icon("users", 20) }}</span><span class="jnav-label">User Manager</span>
       </a>
       <a href="/packages" class="jnav-item {{ 'is-active' if active == 'packages' }}" data-tip="Packages">
-        <span class="jnav-ico">📦</span><span class="jnav-label">Packages</span>
+        <span class="jnav-ico">{{ icon("packages", 20) }}</span><span class="jnav-label">Packages</span>
       </a>
       {% endif %}
     </nav>
 
     <div class="jsidebar-foot">
-      <span class="jnav-ico">👤</span>
+      <span class="jnav-ico">{{ icon("account-prefs", 20) }}</span>
       <span class="jnav-label">{{ user.username }}</span>
     </div>
   </aside>
