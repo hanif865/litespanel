@@ -497,6 +497,87 @@ class DemoProvider(Provider):
         if entries.pop(username, None) is not None:
             self._ftp_write(entries)
 
+    # --- Web Disk (WebDAV) ------------------------------------------------
+    def _webdisk_passwd(self) -> Path:
+        # Tab-delimited htpasswd-style store, one line per login:
+        #   "<login>\t{SHA256}<hash>\t<home_dir>\t<ro|rw>"
+        return config.WEBDISK_DIR / "passwd"
+
+    def _webdisk_entries(self) -> dict[str, str]:
+        entries: dict[str, str] = {}
+        passwd = self._webdisk_passwd()
+        if passwd.exists():
+            for line in passwd.read_text(encoding="utf-8").splitlines():
+                if line and not line.startswith("#") and "\t" in line:
+                    entries[line.split("\t", 1)[0]] = line
+        return entries
+
+    def _webdisk_write(self, entries: dict[str, str]) -> None:
+        header = f"# Web Disk (WebDAV) users — managed by {config.APP_NAME}."
+        body = "\n".join([header, *entries.values()])
+        self._webdisk_passwd().write_text(body + "\n", encoding="utf-8")
+
+    def create_webdisk_account(self, username: str, password: str, home_dir: Path,
+                               read_only: bool = False) -> None:
+        home = Path(home_dir)
+        home.mkdir(parents=True, exist_ok=True)
+        pwhash = hashlib.sha256(password.encode()).hexdigest()
+        mode = "ro" if read_only else "rw"
+        entries = self._webdisk_entries()
+        entries[username] = f"{username}\t{{SHA256}}{pwhash}\t{home.as_posix()}\t{mode}"
+        self._webdisk_write(entries)
+
+    def set_webdisk_password(self, username: str, password: str) -> None:
+        entries = self._webdisk_entries()
+        existing = entries.get(username)
+        if existing is None:
+            return
+        parts = existing.split("\t")
+        home = parts[2] if len(parts) > 2 else ""
+        mode = parts[3] if len(parts) > 3 else "rw"
+        pwhash = hashlib.sha256(password.encode()).hexdigest()
+        entries[username] = f"{username}\t{{SHA256}}{pwhash}\t{home}\t{mode}"
+        self._webdisk_write(entries)
+
+    def delete_webdisk_account(self, username: str) -> None:
+        entries = self._webdisk_entries()
+        if entries.pop(username, None) is not None:
+            self._webdisk_write(entries)
+
+    # --- Git version control ----------------------------------------------
+    def create_git_repo(self, path: Path, owner: str | None,
+                        clone_url: str | None = None) -> None:
+        # Simulate a repo on the local filesystem — no git binary required, so
+        # the demo works identically on Windows. We lay down a minimal .git
+        # marker so the tree is recognizable and records the remote.
+        repo = Path(path)
+        repo.mkdir(parents=True, exist_ok=True)
+        git_dir = repo / ".git"
+        git_dir.mkdir(exist_ok=True)
+        (git_dir / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+        remote = f'[remote "origin"]\n\turl = {clone_url}\n' if clone_url else ""
+        (git_dir / "config").write_text(
+            f"# Simulated repo — managed by {config.APP_NAME}.\n{remote}",
+            encoding="utf-8",
+        )
+        if clone_url:
+            (repo / "README.md").write_text(
+                f"# Cloned from {clone_url}\n\n(demo provider simulation)\n",
+                encoding="utf-8",
+            )
+
+    def git_pull(self, path: Path) -> str:
+        repo = Path(path)
+        if not (repo / ".git").exists():
+            return "Not a git repository."
+        stamp = datetime.now(timezone.utc).isoformat()
+        (repo / ".git" / "FETCH_HEAD").write_text(stamp + "\n", encoding="utf-8")
+        return f"Already up to date. (demo pull at {stamp})"
+
+    def delete_git_repo(self, path: Path) -> None:
+        import shutil
+        shutil.rmtree(Path(path), ignore_errors=True)
+
     # --- Backups ----------------------------------------------------------
     def create_backup(self, dest_zip: Path, sites: list[tuple[str, str]], databases: list[str]) -> dict:
         import json

@@ -79,6 +79,7 @@ NODE_DIR = DATA_DIR / "node"        # generated systemd units + reverse-proxy co
 FIREWALL_DIR = DATA_DIR / "firewall"  # demo firewall/fail2ban state files
 LOG_DIR = DATA_DIR / "logs"           # demo synthetic access/error logs
 FTP_DIR = DATA_DIR / "ftp"            # demo virtual-FTP user store (passwd files)
+WEBDISK_DIR = DATA_DIR / "webdisk"    # demo WebDAV credential store (htpasswd files)
 # Per-account home directories (system-user isolation). The demo provider
 # simulates these under DATA_DIR; the linux provider uses real /home.
 HOME_DIR = DATA_DIR / "home"
@@ -96,5 +97,5 @@ def ensure_dirs() -> None:
     """Create the data directories on startup (idempotent)."""
     for d in (DATA_DIR, SITES_DIR, NGINX_DIR, CERTS_DIR, DB_SANDBOX_DIR, DNS_DIR,
               MAIL_DIR, BACKUPS_DIR, HOME_DIR, PHP_DIR, NODE_DIR, FIREWALL_DIR, LOG_DIR,
-              FTP_DIR):
+              FTP_DIR, WEBDISK_DIR):
         d.mkdir(parents=True, exist_ok=True)

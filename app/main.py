@@ -19,8 +19,8 @@ from .security import hash_password
 from .web import TEMPLATES_DIR, templates
 from .routers import (
     account, auth, autoresponders, backups, cron, dashboard, databases, dbconsole, dbwizard,
-    dns, domains, email, files, firewall, forwarders, ftp, logs, node, packages, php, ssl,
-    subdomains, users, wordpress,
+    disk_usage, dns, domains, email, files, firewall, forwarders, ftp, git, logs, node,
+    packages, php, ssl, subdomains, users, webdisk, wordpress,
 )
 
 app = FastAPI(title=config.APP_NAME, docs_url=None, redoc_url=None)
@@ -54,7 +54,10 @@ app.include_router(email.router)
 app.include_router(forwarders.router)
 app.include_router(autoresponders.router)
 app.include_router(files.router)
+app.include_router(disk_usage.router)
 app.include_router(ftp.router)
+app.include_router(webdisk.router)
+app.include_router(git.router)
 app.include_router(databases.router)
 app.include_router(dbwizard.router)
 app.include_router(dbconsole.router)

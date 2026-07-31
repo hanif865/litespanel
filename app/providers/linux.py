@@ -22,6 +22,10 @@ from .base import CertInfo, DbCredentials, Provider
 # On Debian/Ubuntu these are the conventional locations.
 NGINX_SITES = Path("/etc/nginx/sites-enabled")
 WEB_ROOT = Path("/var/www")
+# Web Disk (WebDAV) artifacts: a shared htpasswd credential store plus a
+# per-login nginx dav location snippet an admin includes into a WebDAV server
+# block. Kept out of sites-enabled so it never disturbs a real vhost.
+WEBDAV_DIR = Path("/etc/litespanel/webdav")
 
 # Database/user names must be plain identifiers — validated here as defense in
 # depth so a bad name can never be interpolated into SQL, even if a caller
@@ -686,6 +690,125 @@ class LinuxProvider(Provider):
         # -m keeps the home directory; only the login is removed.
         subprocess.run(["pure-pw", "userdel", login, "-m"], capture_output=True, text=True)
         subprocess.run(["pure-pw", "mkdb"], capture_output=True, text=True)
+
+    # --- Web Disk (WebDAV) ------------------------------------------------
+    # A Web Disk login is an HTTP basic-auth credential the WebDAV server checks.
+    # We keep a shared htpasswd store and a per-login nginx `dav` location snippet
+    # (write access via PUT/DELETE/MKCOL/COPY/MOVE; read-only omits them). The
+    # snippet is included into a WebDAV server block by the host's nginx config.
+    _WEBDISK_LOGIN_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._@-]{0,126}[A-Za-z0-9])?$")
+
+    def _webdisk_login(self, username: str) -> str:
+        if not self._WEBDISK_LOGIN_RE.match(username):
+            raise ValueError(f"Unsafe Web Disk login: {username!r}")
+        return username
+
+    def _htpasswd_path(self) -> Path:
+        return WEBDAV_DIR / "htpasswd"
+
+    def _apr1(self, password: str) -> str:
+        # apr1 (Apache MD5) — supported by nginx's auth_basic module.
+        result = subprocess.run(["openssl", "passwd", "-apr1", "-stdin"],
+                                input=password, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(f"openssl passwd failed: {result.stderr.strip()}")
+        return result.stdout.strip()
+
+    def _htpasswd_set(self, login: str, password: str) -> None:
+        WEBDAV_DIR.mkdir(parents=True, exist_ok=True)
+        path = self._htpasswd_path()
+        lines = []
+        if path.exists():
+            lines = [ln for ln in path.read_text(encoding="utf-8").splitlines()
+                     if ln and not ln.startswith(f"{login}:")]
+        lines.append(f"{login}:{self._apr1(password)}")
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        path.chmod(0o640)
+
+    def _htpasswd_remove(self, login: str) -> None:
+        path = self._htpasswd_path()
+        if not path.exists():
+            return
+        lines = [ln for ln in path.read_text(encoding="utf-8").splitlines()
+                 if ln and not ln.startswith(f"{login}:")]
+        path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+
+    def create_webdisk_account(self, username: str, password: str, home_dir: Path,
+                               read_only: bool = False) -> None:
+        login = self._webdisk_login(username)
+        home = Path(home_dir)
+        home.mkdir(parents=True, exist_ok=True)
+        _run(["chown", "-R", "www-data:www-data", str(home)])
+        self._htpasswd_set(login, password)
+        WEBDAV_DIR.mkdir(parents=True, exist_ok=True)
+        dav_methods = "" if read_only else "        dav_methods PUT DELETE MKCOL COPY MOVE;\n"
+        # A safe location key derived from the login (no slashes / specials).
+        slug = re.sub(r"[^A-Za-z0-9._-]", "_", login)
+        (WEBDAV_DIR / f"{slug}.conf").write_text(
+            f"# Managed by {config.APP_NAME} — WebDAV for {login}\n"
+            f"location /webdav/{slug}/ {{\n"
+            f"        alias {home.as_posix()}/;\n"
+            f"        auth_basic \"Web Disk\";\n"
+            f"        auth_basic_user_file {self._htpasswd_path().as_posix()};\n"
+            f"{dav_methods}"
+            f"        create_full_put_path on;\n"
+            f"        dav_access user:rw group:rw all:r;\n"
+            f"        autoindex on;\n"
+            f"}}\n",
+            encoding="utf-8",
+        )
+
+    def set_webdisk_password(self, username: str, password: str) -> None:
+        login = self._webdisk_login(username)
+        self._htpasswd_set(login, password)
+
+    def delete_webdisk_account(self, username: str) -> None:
+        try:
+            login = self._webdisk_login(username)
+        except ValueError:
+            return
+        self._htpasswd_remove(login)
+        slug = re.sub(r"[^A-Za-z0-9._-]", "_", login)
+        (WEBDAV_DIR / f"{slug}.conf").unlink(missing_ok=True)
+
+    # --- Git version control ----------------------------------------------
+    def create_git_repo(self, path: Path, owner: str | None,
+                        clone_url: str | None = None) -> None:
+        repo = Path(path)
+        repo.mkdir(parents=True, exist_ok=True)
+        if owner:
+            _ident(owner, "account username")
+            _run(["chown", owner, str(repo)])
+        # Run git as the account user so the tree stays owned by them.
+        prefix = ["runuser", "-u", owner, "--"] if owner else []
+        if clone_url:
+            cmd = prefix + ["git", "clone", "--", clone_url, str(repo)]
+        else:
+            cmd = prefix + ["git", "init", "-b", "main", str(repo)]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        if result.returncode != 0:
+            raise RuntimeError(f"git failed: {(result.stdout + result.stderr).strip()}")
+
+    def git_pull(self, path: Path) -> str:
+        repo = Path(path)
+        owner = None
+        try:
+            owner = repo.owner()  # POSIX: stat owner name
+        except (KeyError, OSError, AttributeError):
+            owner = None
+        prefix = ["runuser", "-u", owner, "--"] if owner else []
+        cmd = prefix + ["git", "-C", str(repo), "pull", "--ff-only"]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        return (result.stdout + result.stderr).strip() or "pull complete"
+
+    def delete_git_repo(self, path: Path) -> None:
+        import shutil
+        repo = Path(path).resolve()
+        # Guard: only ever remove trees under a real account home.
+        if repo == Path("/") or "home" not in repo.parts:
+            raise ValueError(f"Refusing to delete unexpected path: {repo}")
+        shutil.rmtree(repo, ignore_errors=True)
+
 
     def create_backup(self, dest_zip: Path, sites: list[tuple[str, str]], databases: list[str]) -> dict:
         import zipfile

@@ -344,6 +344,54 @@ class FtpAccount(Base):
     owner: Mapped["User"] = relationship()
 
 
+class WebDiskAccount(Base):
+    """A Web Disk (WebDAV) login giving file access to a directory over HTTP(S).
+
+    Like FTP, the DB is source of truth and the provider materializes the real
+    WebDAV auth (an htpasswd-style credential the web server checks). Password
+    is encrypted at rest so the credential can be re-materialized on the host.
+    """
+
+    __tablename__ = "webdisk_accounts"
+    __table_args__ = (UniqueConstraint("username", name="uq_webdisk_username"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    username: Mapped[str] = mapped_column(String(128), index=True)
+    password_enc: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Directory exposed over WebDAV (absolute path on the host).
+    home_dir: Mapped[str] = mapped_column(String(500))
+    # Read-only vs read-write access.
+    read_only: Mapped[bool] = mapped_column(default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    owner: Mapped["User"] = relationship()
+
+
+class GitRepo(Base):
+    """A Git repository managed under the account's home directory.
+
+    Created either empty (git init) or by cloning a remote URL. The provider
+    performs the real git operations on the host; this row records the panel's
+    knowledge of the repo and its remote.
+    """
+
+    __tablename__ = "git_repos"
+    __table_args__ = (UniqueConstraint("owner_id", "path", name="uq_git_owner_path"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    name: Mapped[str] = mapped_column(String(128))
+    # Absolute path of the repository working tree on the host.
+    path: Mapped[str] = mapped_column(String(500))
+    # Remote clone URL, if this repo was cloned (null for git-init repos).
+    clone_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    last_pull_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    owner: Mapped["User"] = relationship()
+
+
 class Backup(Base):
     __tablename__ = "backups"
 

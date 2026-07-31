@@ -280,6 +280,34 @@ class Provider(ABC):
     def delete_ftp_account(self, username: str) -> None:
         """Remove a virtual FTP login (its files are left untouched)."""
 
+    # --- Web Disk (WebDAV) ------------------------------------------------
+    @abstractmethod
+    def create_webdisk_account(self, username: str, password: str, home_dir: Path,
+                               read_only: bool = False) -> None:
+        """Create/replace a WebDAV login exposing home_dir over HTTP(S)."""
+
+    @abstractmethod
+    def set_webdisk_password(self, username: str, password: str) -> None:
+        """Reset the password for an existing Web Disk login."""
+
+    @abstractmethod
+    def delete_webdisk_account(self, username: str) -> None:
+        """Remove a Web Disk login (its files are left untouched)."""
+
+    # --- Git version control ----------------------------------------------
+    @abstractmethod
+    def create_git_repo(self, path: Path, owner: str | None,
+                        clone_url: str | None = None) -> None:
+        """Init an empty repo at path, or clone clone_url into it."""
+
+    @abstractmethod
+    def git_pull(self, path: Path) -> str:
+        """Pull the latest changes in the repo at path; return command output."""
+
+    @abstractmethod
+    def delete_git_repo(self, path: Path) -> None:
+        """Remove a repository's working tree from disk."""
+
     # --- Backups ----------------------------------------------------------
     @abstractmethod
     def create_backup(self, dest_zip: Path, sites: list[tuple[str, str]], databases: list[str]) -> dict:

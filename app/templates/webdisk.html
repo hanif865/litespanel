@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}Web Disk{% endblock %}
+{% block content %}
+<div class="breadcrumb"><a href="/">🏠 Home</a> / Files / Web Disk</div>
+<h1>Web Disk</h1>
+<p class="muted">Web Disk lets you manage your files over WebDAV — map them as a
+  network drive in Windows, Finder, or Linux. Each login is scoped to a folder
+  inside one of your sites.</p>
+
+{% if new_cred %}
+<div class="card" style="border-color:var(--orange,#e8730c)">
+  <strong>✅ Save this password now — it won't be shown again.</strong>
+  <table class="table" style="margin-top:.5rem">
+    <tr><th>Login</th><td><code>{{ new_cred.username }}</code></td></tr>
+    <tr><th>Password</th><td><code>{{ new_cred.password }}</code></td></tr>
+    <tr><th>Directory</th><td><code>{{ new_cred.home_dir }}</code></td></tr>
+  </table>
+</div>
+{% endif %}
+
+{% if not domains %}
+<div class="empty">Add a domain first to create Web Disk accounts.</div>
+{% else %}
+
+<div class="card">
+  <form method="post" action="/webdisk/create" class="row-form">
+    <input type="text" name="local_part" placeholder="webdav" required style="max-width:150px">
+    <span class="muted">@</span>
+    <select name="domain_id" required>
+      {% for d in domains %}<option value="{{ d.id }}">{{ d.name }}</option>{% endfor %}
+    </select>
+    <input type="text" name="directory" placeholder="optional subfolder" style="flex:1;min-width:160px">
+    <label class="muted small" style="display:flex;align-items:center;gap:.3rem">
+      <input type="checkbox" name="read_only"> Read-only
+    </label>
+    <button type="submit" class="btn btn-primary">+ Create Web Disk Account</button>
+  </form>
+  <p class="muted small" style="margin:.5rem 0 0">Directory is relative to the site's document root.</p>
+</div>
+
+{% if accounts %}
+<table class="table">
+  <thead><tr><th>Login</th><th>Directory</th><th>Access</th><th></th></tr></thead>
+  <tbody>
+  {% for a in accounts %}
+    <tr>
+      <td><strong>{{ a.username }}</strong></td>
+      <td><code>{{ a.home_dir }}</code></td>
+      <td>{{ 'Read-only' if a.read_only else 'Read / Write' }}</td>
+      <td class="actions">
+        <form method="post" action="/webdisk/{{ a.id }}/password" style="display:inline"
+              onsubmit="return confirm('Reset the password for {{ a.username }}?')">
+          <button type="submit" class="btn btn-sm">Reset password</button>
+        </form>
+        <form method="post" action="/webdisk/{{ a.id }}/delete" style="display:inline"
+              onsubmit="return confirm('Delete Web Disk account {{ a.username }}? (Files are kept.)')">
+          <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="empty">No Web Disk accounts yet.</div>
+{% endif %}
+{% endif %}
+{% endblock %}

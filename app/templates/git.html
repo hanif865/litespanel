@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Git Version Control{% endblock %}
+{% block content %}
+<div class="breadcrumb"><a href="/">🏠 Home</a> / Files / Git Version Control</div>
+<h1>Git&trade; Version Control</h1>
+<p class="muted">Create an empty repository or clone one from a remote URL. Each
+  repository lives in a folder inside one of your sites.</p>
+
+{% if output %}
+<div class="card">
+  <strong>Output — {{ output.repo }}</strong>
+  <pre class="log-pre" style="margin-top:.5rem;white-space:pre-wrap">{{ output.text }}</pre>
+</div>
+{% endif %}
+
+{% if not domains %}
+<div class="empty">Add a domain first to create repositories.</div>
+{% else %}
+
+<div class="card">
+  <form method="post" action="/git/create" class="row-form">
+    <input type="text" name="name" placeholder="repo-folder-name" required style="max-width:200px">
+    <span class="muted">in</span>
+    <select name="domain_id" required>
+      {% for d in domains %}<option value="{{ d.id }}">{{ d.name }}</option>{% endfor %}
+    </select>
+    <input type="text" name="clone_url" placeholder="https://github.com/user/repo.git (optional)"
+           style="flex:1;min-width:220px">
+    <button type="submit" class="btn btn-primary">+ Create / Clone</button>
+  </form>
+  <p class="muted small" style="margin:.5rem 0 0">Leave the URL empty to run <code>git init</code>.
+    The folder is created under the selected site's document root.</p>
+</div>
+
+{% if repos %}
+<table class="table">
+  <thead><tr><th>Repository</th><th>Path</th><th>Remote</th><th>Last pull</th><th></th></tr></thead>
+  <tbody>
+  {% for r in repos %}
+    <tr>
+      <td><strong>{{ r.name }}</strong></td>
+      <td><code>{{ r.path }}</code></td>
+      <td>{% if r.clone_url %}<code>{{ r.clone_url }}</code>{% else %}<span class="muted">— local —</span>{% endif %}</td>
+      <td class="muted small">{{ r.last_pull_at.strftime('%Y-%m-%d %H:%M') if r.last_pull_at else 'never' }}</td>
+      <td class="actions">
+        {% if r.clone_url %}
+        <form method="post" action="/git/{{ r.id }}/pull" style="display:inline">
+          <button type="submit" class="btn btn-sm">Pull</button>
+        </form>
+        {% endif %}
+        <form method="post" action="/git/{{ r.id }}/delete" style="display:inline"
+              onsubmit="return confirm('Remove repository {{ r.name }} from the panel?')">
+          <label class="muted small" style="margin-right:.3rem">
+            <input type="checkbox" name="remove_files"> delete files
+          </label>
+          <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="empty">No repositories yet.</div>
+{% endif %}
+{% endif %}
+{% endblock %}

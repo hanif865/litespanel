@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Disk Usage{% endblock %}
+{% block content %}
+<div class="breadcrumb"><a href="/">🏠 Home</a> / Files / Disk Usage</div>
+<h1>Disk Usage</h1>
+<p class="muted">Where your account's disk space is going — broken down by site and
+  by the top-level folders inside each site.</p>
+
+<div class="card">
+  <div class="stat-item">
+    <div class="stat-top">
+      <span class="s-label">Total Usage</span>
+      <span class="s-val">{{ total_display }}{{ ' / ∞' if not quota_mb else (' / ' ~ quota_mb ~ ' MB') }}</span>
+    </div>
+    <div class="meter"><div class="meter-fill {{ 'hot' if percent > 85 }}" style="width: {{ percent }}%"></div></div>
+  </div>
+</div>
+
+{% if not sites %}
+<div class="empty">No sites yet — add a domain to start using disk space.</div>
+{% else %}
+<table class="table">
+  <thead><tr><th>Site</th><th>Location</th><th style="text-align:right">Size</th><th style="width:30%"></th></tr></thead>
+  <tbody>
+  {% for s in sites %}
+    <tr>
+      <td><strong>{{ s.name }}</strong></td>
+      <td><code>{{ s.path }}</code></td>
+      <td style="text-align:right">{{ s.display }}</td>
+      <td><div class="meter"><div class="meter-fill" style="width: {{ s.bar }}%"></div></div></td>
+    </tr>
+    {% for c in s.children %}
+    <tr class="muted small">
+      <td style="padding-left:1.5rem">↳ {{ c.name }}/</td>
+      <td></td>
+      <td style="text-align:right">{{ c.display }}</td>
+      <td></td>
+    </tr>
+    {% endfor %}
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}
