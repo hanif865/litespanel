@@ -12,6 +12,7 @@ import re
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import RedirectResponse
+from starlette.concurrency import run_in_threadpool
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -113,7 +114,7 @@ async def install_runtime(
     if version not in NODE_VERSIONS:
         _flash(request, "❌ Unsupported Node.js version.")
         return _redirect()
-    ok, message = get_provider().install_node(version)
+    ok, message = await run_in_threadpool(get_provider().install_node, version)
     _flash(request, ("✅ " if ok else "❌ ") + message)
     return _redirect()
 
@@ -175,7 +176,8 @@ async def deploy(
     db.add(node_app)
     db.flush()
 
-    ok, message = get_provider().deploy_node_app(
+    ok, message = await run_in_threadpool(
+        get_provider().deploy_node_app,
         name, domain.name, Path(app_dir), port, entrypoint,
         _account_user(user), node_version,
     )
@@ -201,7 +203,7 @@ async def control(
     if app is None or app.owner_id != user.id:
         _flash(request, "❌ Unknown app.")
         return _redirect()
-    ok, message = get_provider().control_node_app(app.name, action)
+    ok, message = await run_in_threadpool(get_provider().control_node_app, app.name, action)
     if ok:
         app.active = action != "stop"
         db.commit()
@@ -227,12 +229,16 @@ async def remove(
 
     domain = db.get(Domain, app.domain_id)
     provider = get_provider()
-    provider.remove_node_app(app.name, domain.name if domain else app.name)
+    await run_in_threadpool(
+        provider.remove_node_app, app.name, domain.name if domain else app.name
+    )
     # Restore the normal PHP vhost so the domain keeps serving after Node is off.
     if domain is not None:
-        provider.create_site(domain.name, Path(domain.docroot),
-                             domain.php_version, _account_user(user))
-        provider.reload_web()
+        await run_in_threadpool(
+            provider.create_site, domain.name, Path(domain.docroot),
+            domain.php_version, _account_user(user),
+        )
+        await run_in_threadpool(provider.reload_web)
     db.delete(app)
     db.commit()
     _flash(request, f"🗑️ Node.js app removed; {domain.name if domain else 'domain'} restored to PHP.")
