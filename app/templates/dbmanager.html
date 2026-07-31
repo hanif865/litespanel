@@ -5,7 +5,6 @@
 <h1>Database Manager</h1>
 
 {% if phpmyadmin_url %}
-  {% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
   {% if not databases %}
     <div class="empty">No databases yet. <a href="/databases">Create one →</a> then open it here.</div>
   {% else %}
