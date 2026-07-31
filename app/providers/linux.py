@@ -895,3 +895,61 @@ class LinuxProvider(Provider):
         if proc.returncode != 0:
             return False, (proc.stderr or proc.stdout).strip()[-500:]
         return True, f"unbanned {ip} from {jail}"
+
+    # --- Logs -------------------------------------------------------------
+    # Fixed allowlist of readable logs. The viewer passes back a `key` from this
+    # map — never a path — so it can only ever read these specific files.
+    _LOG_FILES: dict[str, tuple[str, str, str]] = {
+        # key: (label, category, path)
+        "nginx-access": ("Nginx — Access", "Web", "/var/log/nginx/access.log"),
+        "nginx-error": ("Nginx — Error", "Web", "/var/log/nginx/error.log"),
+        "auth": ("System — Auth (SSH/sudo)", "System", "/var/log/auth.log"),
+        "syslog": ("System — Syslog", "System", "/var/log/syslog"),
+        "fail2ban": ("Security — fail2ban", "Security", "/var/log/fail2ban.log"),
+        "mysql-error": ("MySQL — Error", "Database", "/var/log/mysql/error.log"),
+        "ufw": ("Security — ufw", "Security", "/var/log/ufw.log"),
+    }
+    # The panel's own log comes from journald (systemd unit), not a file.
+    _PANEL_UNIT = "litespanel"
+
+    def log_sources(self) -> list[dict]:
+        sources: list[dict] = []
+        for key, (label, category, path) in self._LOG_FILES.items():
+            if Path(path).exists():
+                sources.append({"key": key, "label": label, "category": category})
+        # Panel service log via journalctl (available if the unit exists).
+        try:
+            proc = subprocess.run(
+                ["systemctl", "status", self._PANEL_UNIT],
+                capture_output=True, text=True,
+            )
+            if proc.returncode in (0, 3):  # 0=running, 3=stopped but known
+                sources.append({"key": "panel", "label": "LitesPanel — App",
+                                "category": "Panel"})
+        except (FileNotFoundError, OSError):
+            pass
+        return sources
+
+    def read_log(self, key: str, lines: int = 200, grep: str | None = None) -> tuple[bool, str]:
+        if key == "panel":
+            cmd = ["journalctl", "-u", self._PANEL_UNIT, "-n", str(max(1, min(lines, 5000))),
+                   "--no-pager", "--output", "short-iso"]
+            try:
+                proc = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+            except (FileNotFoundError, OSError):
+                return False, "journalctl is not available on this host"
+            except subprocess.TimeoutExpired:
+                return False, "reading the journal timed out"
+            text = proc.stdout
+            if grep:
+                needle = grep.lower()
+                text = "\n".join(ln for ln in text.splitlines() if needle in ln.lower())
+            return True, text
+
+        entry = self._LOG_FILES.get(key)
+        if entry is None:
+            return False, "unknown log source"
+        from .base import tail_file
+
+        text = tail_file(Path(entry[2]), lines=lines, grep=grep)
+        return True, text

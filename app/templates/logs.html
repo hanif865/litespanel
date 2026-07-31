@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Logs{% endblock %}
+{% block content %}
+<div class="breadcrumb"><a href="/">🏠 Home</a> / Security / Logs</div>
+<h1>Log Viewer</h1>
+<p class="muted">
+  Admin-only. View access logs, error logs, and system logs. The log tail is
+  fetched live from the host — no logs are stored in the panel database.
+</p>
+
+{% if error %}<div class="alert-error">{{ error }}</div>{% endif %}
+
+<div class="card">
+  <h2>Source &amp; Filter</h2>
+  <form method="get" action="/logs" class="inline-form">
+    <label style="display:inline-block; margin-right:1rem;">
+      <span class="small" style="display:block; margin-bottom:.25rem;">Log file</span>
+      <select name="source" onchange="this.form.submit()" style="width:16rem;">
+        {% for src in sources %}
+          <option value="{{ src.key }}" {% if src.key == selected %}selected{% endif %}>
+            {{ src.label }}
+          </option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label style="display:inline-block; margin-right:1rem;">
+      <span class="small" style="display:block; margin-bottom:.25rem;">Lines</span>
+      <select name="lines" onchange="this.form.submit()" style="width:8rem;">
+        {% for choice in line_choices %}
+          <option value="{{ choice }}" {% if choice == lines %}selected{% endif %}>{{ choice }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label style="display:inline-block; margin-right:1rem;">
+      <span class="small" style="display:block; margin-bottom:.25rem;">Filter (optional)</span>
+      <input type="text" name="q" value="{{ q }}" placeholder="search text"
+             style="width:12rem;">
+    </label>
+
+    <button type="submit" class="btn btn-sm btn-primary" style="margin-top:1.25rem;">Refresh</button>
+  </form>
+
+  {% if selected %}
+  <p class="muted small" style="margin-top:1rem;">
+    Showing {{ line_count }} lines from <strong>{{ selected }}</strong>
+    {% if q %}matching "<strong>{{ q }}</strong>"{% endif %}
+  </p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Content</h2>
+  {% if content %}
+  <pre style="background:var(--bg-secondary, #f5f5f5); padding:1rem; border-radius:4px; overflow-x:auto; font-size:.875rem; line-height:1.4; max-height:600px; overflow-y:auto;">{{ content }}</pre>
+  {% else %}
+    <p class="muted">No log content to display.</p>
+  {% endif %}
+</div>
+{% endblock %}

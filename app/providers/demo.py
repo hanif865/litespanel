@@ -43,6 +43,42 @@ h1{{color:#2563eb}}</style></head>
 """
 
 
+# Sample log content the demo seeds under LOG_DIR so the Log Viewer has
+# something realistic to show on a machine with no real /var/log.
+_SAMPLE_LOGS = {
+    "access.log": (
+        '203.0.113.24 - - [31/Jul/2026:09:14:02 +0000] "GET / HTTP/1.1" 200 1043 "-" "Mozilla/5.0"\n'
+        '198.51.100.7 - - [31/Jul/2026:09:14:05 +0000] "GET /wp-login.php HTTP/1.1" 404 564 "-" "curl/8.4.0"\n'
+        '203.0.113.24 - - [31/Jul/2026:09:14:11 +0000] "POST /login HTTP/1.1" 303 0 "https://panel.example.com/login" "Mozilla/5.0"\n'
+        '192.0.2.55 - - [31/Jul/2026:09:15:40 +0000] "GET /static/app.css HTTP/1.1" 200 8210 "-" "Mozilla/5.0"\n'
+        '198.51.100.7 - - [31/Jul/2026:09:16:22 +0000] "GET /.env HTTP/1.1" 404 564 "-" "python-requests/2.31"\n'
+    ),
+    "error.log": (
+        "2026/07/31 09:14:05 [error] 812#812: *1024 open() \"/var/www/html/.env\" failed (2: No such file or directory), client: 198.51.100.7, server: panel.example.com\n"
+        "2026/07/31 09:16:22 [error] 812#812: *1031 open() \"/var/www/html/wp-login.php\" failed (2: No such file or directory), client: 198.51.100.7\n"
+        "2026/07/31 09:20:01 [warn] 812#812: *1044 upstream server temporarily disabled while connecting to upstream\n"
+    ),
+    "auth.log": (
+        "Jul 31 09:10:44 vps sshd[2201]: Accepted publickey for root from 203.0.113.24 port 51234 ssh2\n"
+        "Jul 31 09:12:03 vps sudo:     root : TTY=pts/0 ; PWD=/opt/litespanel ; USER=root ; COMMAND=/bin/systemctl restart litespanel\n"
+        "Jul 31 09:13:19 vps sshd[2260]: Failed password for invalid user admin from 198.51.100.7 port 40122 ssh2\n"
+        "Jul 31 09:13:22 vps sshd[2260]: Failed password for invalid user admin from 198.51.100.7 port 40122 ssh2\n"
+        "Jul 31 09:13:26 vps sshd[2260]: Disconnected from invalid user admin 198.51.100.7 port 40122 [preauth]\n"
+    ),
+    "fail2ban.log": (
+        "2026-07-31 09:13:26,441 fail2ban.filter [1123]: INFO [sshd] Found 198.51.100.7 - 2026-07-31 09:13:26\n"
+        "2026-07-31 09:13:30,502 fail2ban.actions [1123]: NOTICE [sshd] Ban 198.51.100.7\n"
+        "2026-07-31 10:13:30,512 fail2ban.actions [1123]: NOTICE [sshd] Unban 198.51.100.7\n"
+    ),
+    "litespanel.log": (
+        "2026-07-31T09:12:03+0000 INFO uvicorn.error: Application startup complete.\n"
+        "2026-07-31T09:14:11+0000 INFO litespanel.audit: login ok user=admin ip=203.0.113.24\n"
+        "2026-07-31T09:13:19+0000 WARNING litespanel.security: login failed user=admin ip=198.51.100.7\n"
+        "2026-07-31T09:20:44+0000 INFO litespanel.audit: firewall rule added 8443/tcp by admin\n"
+    ),
+}
+
+
 def _cell(value):
     """Render a SQLite cell value as a display string for the results table."""
     if value is None:
@@ -629,3 +665,41 @@ class DemoProvider(Provider):
             self._f2b_save(state)
             return True, f"(demo) unbanned {ip} from {jail}"
         return False, f"(demo) {ip} not banned in {jail}"
+
+    # --- Logs -------------------------------------------------------------
+    # The demo has no real /var/log, so it writes small, realistic sample logs
+    # under LOG_DIR the first time each is requested. The viewer still only
+    # accepts a `key` from this map — never a path.
+    _LOG_FILES: dict[str, tuple[str, str, str]] = {
+        # key: (label, category, filename under LOG_DIR)
+        "nginx-access": ("Nginx — Access", "Web", "access.log"),
+        "nginx-error": ("Nginx — Error", "Web", "error.log"),
+        "auth": ("System — Auth (SSH/sudo)", "System", "auth.log"),
+        "fail2ban": ("Security — fail2ban", "Security", "fail2ban.log"),
+        "panel": ("LitesPanel — App", "Panel", "litespanel.log"),
+    }
+
+    def _seed_log(self, filename: str) -> Path:
+        """Create a sample log file on first use (demo only)."""
+        path = config.LOG_DIR / filename
+        if path.exists():
+            return path
+        config.LOG_DIR.mkdir(parents=True, exist_ok=True)
+        path.write_text(_SAMPLE_LOGS.get(filename, "(no sample data)\n"), encoding="utf-8")
+        return path
+
+    def log_sources(self) -> list[dict]:
+        sources = []
+        for key, (label, category, filename) in self._LOG_FILES.items():
+            self._seed_log(filename)
+            sources.append({"key": key, "label": label, "category": category})
+        return sources
+
+    def read_log(self, key: str, lines: int = 200, grep: str | None = None) -> tuple[bool, str]:
+        entry = self._LOG_FILES.get(key)
+        if entry is None:
+            return False, "unknown log source"
+        from .base import tail_file
+
+        path = self._seed_log(entry[2])
+        return True, tail_file(path, lines=lines, grep=grep)

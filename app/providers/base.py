@@ -25,6 +25,40 @@ def safe_extract_path(base: Path, relative: str) -> Path | None:
     return None
 
 
+def tail_file(path: Path, lines: int = 200, grep: str | None = None) -> str:
+    """Return roughly the last `lines` lines of a text file, cheaply.
+
+    Reads from the end in blocks so a multi-gigabyte log never loads into
+    memory whole. When `grep` is given, only lines containing that substring
+    (case-insensitive) are kept, and up to `lines` of the most recent matches
+    are returned. Missing/unreadable files yield an empty string.
+    """
+    lines = max(1, min(lines, 5000))
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(0, 2)  # end of file
+            end = fh.tell()
+            block = 8192
+            data = b""
+            # Grepping needs to scan more of the file to find enough matches.
+            want = lines if grep is None else lines * 20
+            while end > 0 and data.count(b"\n") <= want:
+                step = min(block, end)
+                end -= step
+                fh.seek(end)
+                data = fh.read(step) + data
+    except OSError:
+        return ""
+
+    text = data.decode("utf-8", errors="replace")
+    result = text.splitlines()
+    if grep:
+        needle = grep.lower()
+        result = [ln for ln in result if needle in ln.lower()]
+    return "\n".join(result[-lines:])
+
+
+
 @dataclass
 class CertInfo:
     issuer: str
@@ -306,3 +340,25 @@ class Provider(ABC):
     @abstractmethod
     def unban_ip(self, ip: str, jail: str) -> tuple[bool, str]:
         """Unban an IP from a jail via fail2ban-client. Returns (ok, message)."""
+
+    # --- Logs (admin-only) ------------------------------------------------
+    @abstractmethod
+    def log_sources(self) -> list[dict]:
+        """Return the log files this host exposes to the viewer.
+
+        Each entry: {key, label, category}. `key` is an opaque identifier the
+        router passes back to read_log — the raw filesystem path is NEVER
+        accepted from the client, so the viewer can only ever read files on
+        this provider-defined allowlist (no path traversal). Entries whose
+        underlying file is absent are omitted. Admin-only at the router layer.
+        """
+
+    @abstractmethod
+    def read_log(self, key: str, lines: int = 200, grep: str | None = None) -> tuple[bool, str]:
+        """Return the tail of the log identified by `key`.
+
+        Returns (ok, text). ok is False (with an explanatory message) when
+        `key` is not a known source. `lines` caps how many trailing lines come
+        back; `grep` optionally filters to matching lines. Admin-only.
+        """
+
