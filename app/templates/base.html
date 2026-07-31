@@ -97,6 +97,11 @@
       <a href="/ssl" class="jnav-item {{ 'is-active' if active == 'ssl' }}" data-tip="SSL/TLS">
         <span class="jnav-ico">🔒</span><span class="jnav-label">SSL / TLS</span>
       </a>
+      {% if user.role == 'admin' %}
+      <a href="/firewall" class="jnav-item {{ 'is-active' if active == 'firewall' }}" data-tip="Firewall & Security">
+        <span class="jnav-ico">🛡️</span><span class="jnav-label">Firewall</span>
+      </a>
+      {% endif %}
 
       {% if user.role in ('admin', 'reseller') %}
       <div class="jnav-section">Preferences</div>

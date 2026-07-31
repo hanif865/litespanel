@@ -503,3 +503,129 @@ class DemoProvider(Provider):
             "mem_percent": metrics.mem_percent(),
             "disk": disk,
         }
+
+    # --- Firewall / security (admin-only) ---------------------------------
+    # State lives in two inspectable JSON files under FIREWALL_DIR so the demo
+    # shows genuine, persistent results without touching the real OS.
+    def _fw_file(self) -> Path:
+        return config.FIREWALL_DIR / "firewall.json"
+
+    def _fw_load(self) -> dict:
+        import json
+
+        try:
+            return json.loads(self._fw_file().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            # Seed a sensible default: firewall off, a couple of common rules.
+            return {
+                "enabled": False,
+                "default_incoming": "deny",
+                "default_outgoing": "allow",
+                "rules": [
+                    {"num": 1, "to": "22/tcp", "action": "allow", "source": "Anywhere"},
+                    {"num": 2, "to": "80/tcp", "action": "allow", "source": "Anywhere"},
+                    {"num": 3, "to": "443/tcp", "action": "allow", "source": "Anywhere"},
+                ],
+            }
+
+    def _fw_save(self, state: dict) -> None:
+        import json
+
+        config.FIREWALL_DIR.mkdir(parents=True, exist_ok=True)
+        self._fw_file().write_text(json.dumps(state, indent=2), encoding="utf-8")
+
+    def firewall_status(self) -> dict:
+        state = self._fw_load()
+        return {
+            "backend": "ufw",
+            "available": True,
+            "active": bool(state.get("enabled")),
+            "default_incoming": state.get("default_incoming", "deny"),
+            "default_outgoing": state.get("default_outgoing", "allow"),
+        }
+
+    def list_firewall_rules(self) -> list[dict]:
+        state = self._fw_load()
+        if not state.get("enabled"):
+            return []
+        return state.get("rules", [])
+
+    def set_firewall_enabled(self, enabled: bool) -> tuple[bool, str]:
+        state = self._fw_load()
+        state["enabled"] = bool(enabled)
+        self._fw_save(state)
+        return True, f"(demo) firewall {'enabled' if enabled else 'disabled'}"
+
+    def add_firewall_rule(self, port: int, proto: str, action: str,
+                          source: str | None = None) -> tuple[bool, str]:
+        state = self._fw_load()
+        rules = state.setdefault("rules", [])
+        next_num = max((r.get("num", 0) for r in rules), default=0) + 1
+        rules.append({
+            "num": next_num,
+            "to": f"{port}/{proto}",
+            "action": action,
+            "source": source or "Anywhere",
+        })
+        self._fw_save(state)
+        return True, f"(demo) {action} {port}/{proto}"
+
+    def delete_firewall_rule(self, num: int) -> tuple[bool, str]:
+        state = self._fw_load()
+        rules = state.get("rules", [])
+        kept = [r for r in rules if r.get("num") != num]
+        if len(kept) == len(rules):
+            return False, f"(demo) no rule with index {num}"
+        # Renumber so indices stay contiguous, like ufw does.
+        for i, r in enumerate(kept, start=1):
+            r["num"] = i
+        state["rules"] = kept
+        self._fw_save(state)
+        return True, f"(demo) deleted rule {num}"
+
+    def _f2b_file(self) -> Path:
+        return config.FIREWALL_DIR / "fail2ban.json"
+
+    def _f2b_load(self) -> dict:
+        import json
+
+        try:
+            return json.loads(self._f2b_file().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {"jails": {"sshd": []}}
+
+    def _f2b_save(self, state: dict) -> None:
+        import json
+
+        config.FIREWALL_DIR.mkdir(parents=True, exist_ok=True)
+        self._f2b_file().write_text(json.dumps(state, indent=2), encoding="utf-8")
+
+    def fail2ban_status(self) -> dict:
+        state = self._f2b_load()
+        return {
+            "available": True,
+            "active": True,
+            "jails": list(state.get("jails", {}).keys()),
+        }
+
+    def list_banned_ips(self, jail: str) -> list[str]:
+        state = self._f2b_load()
+        return list(state.get("jails", {}).get(jail, []))
+
+    def ban_ip(self, ip: str, jail: str) -> tuple[bool, str]:
+        state = self._f2b_load()
+        jails = state.setdefault("jails", {})
+        banned = jails.setdefault(jail, [])
+        if ip not in banned:
+            banned.append(ip)
+        self._f2b_save(state)
+        return True, f"(demo) banned {ip} in {jail}"
+
+    def unban_ip(self, ip: str, jail: str) -> tuple[bool, str]:
+        state = self._f2b_load()
+        banned = state.get("jails", {}).get(jail, [])
+        if ip in banned:
+            banned.remove(ip)
+            self._f2b_save(state)
+            return True, f"(demo) unbanned {ip} from {jail}"
+        return False, f"(demo) {ip} not banned in {jail}"

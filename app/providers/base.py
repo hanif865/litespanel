@@ -249,3 +249,60 @@ class Provider(ABC):
     @abstractmethod
     def system_stats(self) -> dict:
         """Coarse host metrics for the dashboard (cpu/mem/disk)."""
+
+    # --- Firewall / security (admin-only) ---------------------------------
+    @abstractmethod
+    def firewall_status(self) -> dict:
+        """Return the host firewall state.
+
+        Shape: {backend, available, active, default_incoming, default_outgoing}.
+        `backend` is "ufw" (or "none"); `available` is False when the tool is
+        not installed. Admin-only at the router layer.
+        """
+
+    @abstractmethod
+    def list_firewall_rules(self) -> list[dict]:
+        """List active firewall rules.
+
+        Each rule: {num, to, action, source}. `num` is the ufw rule index used
+        by delete_firewall_rule. Returns [] when the firewall is off/absent.
+        """
+
+    @abstractmethod
+    def set_firewall_enabled(self, enabled: bool) -> tuple[bool, str]:
+        """Enable or disable the host firewall. Returns (ok, message).
+
+        Admin-only — enabling ufw applies packet filtering to the whole host,
+        so a bad rule set can lock out SSH. The caller is expected to warn.
+        """
+
+    @abstractmethod
+    def add_firewall_rule(self, port: int, proto: str, action: str,
+                          source: str | None = None) -> tuple[bool, str]:
+        """Allow/deny a port (optionally from one source IP/CIDR).
+
+        proto in {tcp, udp}; action in {allow, deny}. Returns (ok, message).
+        """
+
+    @abstractmethod
+    def delete_firewall_rule(self, num: int) -> tuple[bool, str]:
+        """Delete the firewall rule with index `num`. Returns (ok, message)."""
+
+    @abstractmethod
+    def fail2ban_status(self) -> dict:
+        """Return the fail2ban state: {available, active, jails}.
+
+        `jails` is the list of configured jail names. Admin-only.
+        """
+
+    @abstractmethod
+    def list_banned_ips(self, jail: str) -> list[str]:
+        """List currently banned IPs for a jail. Returns [] if none/absent."""
+
+    @abstractmethod
+    def ban_ip(self, ip: str, jail: str) -> tuple[bool, str]:
+        """Ban an IP in a jail via fail2ban-client. Returns (ok, message)."""
+
+    @abstractmethod
+    def unban_ip(self, ip: str, jail: str) -> tuple[bool, str]:
+        """Unban an IP from a jail via fail2ban-client. Returns (ok, message)."""

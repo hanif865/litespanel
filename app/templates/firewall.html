@@ -1,0 +1,173 @@
+{% extends "base.html" %}
+{% block title %}Firewall & Security{% endblock %}
+{% block content %}
+<div class="breadcrumb"><a href="/">🏠 Home</a> / Security / Firewall</div>
+<h1>Firewall &amp; Security</h1>
+<p class="muted">
+  Admin-only. Manage the host firewall (ufw) and intrusion bans (fail2ban).
+  Rules apply to the whole server — a bad rule set can lock out SSH, so change
+  the firewall with care.
+</p>
+
+{% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
+
+<!-- Firewall status + toggle -->
+<div class="card">
+  <h2>Firewall</h2>
+  {% if fw.available %}
+    <p>
+      {% if fw.active %}
+        <span class="pill pill-ok">Active</span>
+      {% else %}
+        <span class="pill">Inactive</span>
+      {% endif %}
+      <span class="muted small">
+        backend: {{ fw.backend }} ·
+        default in: {{ fw.default_incoming or '—' }} ·
+        default out: {{ fw.default_outgoing or '—' }}
+      </span>
+    </p>
+    <form method="post" action="/firewall/toggle" class="inline-form"
+          onsubmit="return confirm({% if fw.active %}'Disable the firewall? The host will stop filtering incoming traffic.'{% else %}'Enable the firewall now? Make sure SSH (port 22) is allowed or you may be locked out.'{% endif %});">
+      <input type="hidden" name="enabled" value="{{ 0 if fw.active else 1 }}">
+      <button type="submit" class="btn btn-sm {{ 'btn-danger' if fw.active else 'btn-primary' }}">
+        {{ 'Disable firewall' if fw.active else 'Enable firewall' }}
+      </button>
+    </form>
+  {% else %}
+    <p><span class="pill">ufw is not installed on this server.</span></p>
+    <p class="muted small">Install ufw (<code>apt install ufw</code>) to manage the firewall from here.</p>
+  {% endif %}
+</div>
+
+<!-- Add a rule -->
+<div class="card">
+  <h2>Add Rule</h2>
+  <form method="post" action="/firewall/rules/add">
+    <div class="ext-grid">
+      <div>
+        <label class="small" style="display:block; margin-bottom:.25rem;">Action</label>
+        <select name="action">
+          <option value="allow">Allow</option>
+          <option value="deny">Deny</option>
+        </select>
+      </div>
+      <div>
+        <label class="small" style="display:block; margin-bottom:.25rem;">Port</label>
+        <input type="number" class="ini-value" name="port" min="1" max="65535"
+               placeholder="e.g. 22" required>
+      </div>
+      <div>
+        <label class="small" style="display:block; margin-bottom:.25rem;">Protocol</label>
+        <select name="proto">
+          <option value="tcp">TCP</option>
+          <option value="udp">UDP</option>
+        </select>
+      </div>
+      <div>
+        <label class="small" style="display:block; margin-bottom:.25rem;">Source (optional)</label>
+        <input type="text" class="ini-value" name="source" placeholder="IP or CIDR — blank = anywhere">
+      </div>
+    </div>
+    <div class="card-actions">
+      <button type="submit" class="btn btn-sm btn-primary">Add rule</button>
+    </div>
+  </form>
+</div>
+
+<!-- Active rules -->
+<div class="card">
+  <h2>Active Rules</h2>
+  {% if rules %}
+  <table class="table">
+    <thead>
+      <tr><th>#</th><th>To</th><th>Action</th><th>Source</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for r in rules %}
+      <tr>
+        <td>{{ r.num }}</td>
+        <td><code>{{ r.to }}</code></td>
+        <td>
+          {% if r.action == 'allow' %}
+            <span class="pill pill-ok">allow</span>
+          {% else %}
+            <span class="pill">{{ r.action }}</span>
+          {% endif %}
+        </td>
+        <td>{{ r.source }}</td>
+        <td style="white-space:nowrap;">
+          <form method="post" action="/firewall/rules/delete" style="display:inline;"
+                onsubmit="return confirm('Delete rule #{{ r.num }} ({{ r.to }})?');">
+            <input type="hidden" name="num" value="{{ r.num }}">
+            <button type="submit" class="btn btn-xs btn-danger">Delete</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+    <p class="muted">
+      {% if fw.available and not fw.active %}
+        No rules shown — the firewall is inactive.
+      {% else %}
+        No firewall rules.
+      {% endif %}
+    </p>
+  {% endif %}
+</div>
+
+<!-- fail2ban -->
+<div class="card">
+  <h2>Intrusion Bans (fail2ban)</h2>
+  {% if f2b.available %}
+    <p>
+      {% if f2b.active %}
+        <span class="pill pill-ok">Running</span>
+      {% else %}
+        <span class="pill">Stopped</span>
+      {% endif %}
+      <span class="muted small">jails: {{ f2b.jails|join(', ') if f2b.jails else 'none' }}</span>
+    </p>
+
+    {% if jails %}
+      {% for j in jails %}
+      <div class="ini-block">
+        <h3 style="margin:.5rem 0;"><code>{{ j.name }}</code></h3>
+        {% if j.banned %}
+        <table class="table">
+          <thead><tr><th>Banned IP</th><th></th></tr></thead>
+          <tbody>
+            {% for ip in j.banned %}
+            <tr>
+              <td><code>{{ ip }}</code></td>
+              <td style="white-space:nowrap;">
+                <form method="post" action="/firewall/fail2ban/unban" style="display:inline;">
+                  <input type="hidden" name="jail" value="{{ j.name }}">
+                  <input type="hidden" name="ip" value="{{ ip }}">
+                  <button type="submit" class="btn btn-xs btn-secondary">Unban</button>
+                </form>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+          <p class="muted small">No banned IPs in this jail.</p>
+        {% endif %}
+
+        <form method="post" action="/firewall/fail2ban/ban" class="inline-form" style="margin-top:.5rem;">
+          <input type="hidden" name="jail" value="{{ j.name }}">
+          <input type="text" class="ini-value" name="ip" placeholder="IP to ban" required>
+          <button type="submit" class="btn btn-xs btn-danger">Ban IP</button>
+        </form>
+      </div>
+      {% endfor %}
+    {% endif %}
+  {% else %}
+    <p><span class="pill">fail2ban is not installed on this server.</span></p>
+    <p class="muted small">Install fail2ban (<code>apt install fail2ban</code>) to manage bans from here.</p>
+  {% endif %}
+</div>
+{% endblock %}

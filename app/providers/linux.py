@@ -31,6 +31,12 @@ _IDENT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,63}$")
 # can never inject extra directives into the generated unit file.
 _NODE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 _ENTRY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/ -]{0,254}$")
+# Firewall inputs — validated before ever reaching ufw/fail2ban-client argv so a
+# crafted port/source can't turn into an extra argument.
+_IP_RE = re.compile(
+    r"^(\d{1,3}\.){3}\d{1,3}(/\d{1,2})?$"            # IPv4 or IPv4/CIDR
+    r"|^([0-9a-fA-F:]+)(/\d{1,3})?$"                  # IPv6 or IPv6/CIDR
+)
 
 
 def _ident(value: str, what: str) -> str:
@@ -703,3 +709,189 @@ class LinuxProvider(Provider):
         except OSError:
             pass
         return stats
+
+    # --- Firewall / security (admin-only) ---------------------------------
+    def _ufw(self, args: list[str]) -> str:
+        """Run `ufw <args>` non-interactively. Raises like _run on failure."""
+        return _run(["ufw"] + args)
+
+    def firewall_status(self) -> dict:
+        try:
+            out = subprocess.run(["ufw", "status", "verbose"],
+                                 capture_output=True, text=True)
+        except (FileNotFoundError, OSError):
+            return {"backend": "none", "available": False, "active": False,
+                    "default_incoming": "", "default_outgoing": ""}
+        text = out.stdout or ""
+        active = "Status: active" in text
+        incoming = outgoing = ""
+        for line in text.splitlines():
+            line = line.strip()
+            if line.startswith("Default:"):
+                # e.g. "Default: deny (incoming), allow (outgoing), disabled (routed)"
+                for part in line[len("Default:"):].split(","):
+                    part = part.strip()
+                    if "(incoming)" in part:
+                        incoming = part.split()[0]
+                    elif "(outgoing)" in part:
+                        outgoing = part.split()[0]
+        return {"backend": "ufw", "available": True, "active": active,
+                "default_incoming": incoming, "default_outgoing": outgoing}
+
+    def list_firewall_rules(self) -> list[dict]:
+        try:
+            out = subprocess.run(["ufw", "status", "numbered"],
+                                 capture_output=True, text=True)
+        except (FileNotFoundError, OSError):
+            return []
+        rules: list[dict] = []
+        # Lines look like: "[ 1] 22/tcp                     ALLOW IN    Anywhere"
+        for line in (out.stdout or "").splitlines():
+            m = re.match(r"\[\s*(\d+)\]\s+(.*)", line)
+            if not m:
+                continue
+            num = int(m.group(1))
+            rest = m.group(2)
+            # Split on the ALLOW/DENY/REJECT/LIMIT + direction token.
+            am = re.search(r"\b(ALLOW|DENY|REJECT|LIMIT)\b(?:\s+(IN|OUT|FWD))?", rest)
+            if not am:
+                continue
+            to = rest[:am.start()].strip()
+            action = am.group(1).lower()
+            source = rest[am.end():].strip() or "Anywhere"
+            rules.append({"num": num, "to": to, "action": action, "source": source})
+        return rules
+
+    def set_firewall_enabled(self, enabled: bool) -> tuple[bool, str]:
+        try:
+            if enabled:
+                proc = subprocess.run(["ufw", "--force", "enable"],
+                                      capture_output=True, text=True)
+            else:
+                proc = subprocess.run(["ufw", "disable"],
+                                      capture_output=True, text=True)
+        except (FileNotFoundError, OSError):
+            return False, "ufw is not installed on this host"
+        if proc.returncode != 0:
+            return False, (proc.stderr or proc.stdout).strip()[-500:]
+        return True, f"firewall {'enabled' if enabled else 'disabled'}"
+
+    def add_firewall_rule(self, port: int, proto: str, action: str,
+                          source: str | None = None) -> tuple[bool, str]:
+        try:
+            port = int(port)
+        except (TypeError, ValueError):
+            return False, "port must be an integer"
+        if not (1 <= port <= 65535):
+            return False, "port must be between 1 and 65535"
+        proto = (proto or "").lower()
+        if proto not in ("tcp", "udp"):
+            return False, "proto must be tcp or udp"
+        action = (action or "").lower()
+        if action not in ("allow", "deny"):
+            return False, "action must be allow or deny"
+        if source:
+            source = source.strip()
+            if not _IP_RE.match(source):
+                return False, "source must be a valid IP or CIDR"
+        # ufw allow from <src> to any port <port> proto <proto>
+        #   -- or, when no source, the simpler `ufw allow <port>/<proto>`.
+        if source:
+            cmd = ["ufw", action, "from", source, "to", "any",
+                   "port", str(port), "proto", proto]
+        else:
+            cmd = ["ufw", action, f"{port}/{proto}"]
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True)
+        except (FileNotFoundError, OSError):
+            return False, "ufw is not installed on this host"
+        if proc.returncode != 0:
+            return False, (proc.stderr or proc.stdout).strip()[-500:]
+        return True, f"rule added: {action} {port}/{proto}" + (
+            f" from {source}" if source else "")
+
+    def delete_firewall_rule(self, num: int) -> tuple[bool, str]:
+        try:
+            num = int(num)
+        except (TypeError, ValueError):
+            return False, "rule number must be an integer"
+        if num < 1:
+            return False, "rule number must be positive"
+        try:
+            proc = subprocess.run(["ufw", "--force", "delete", str(num)],
+                                  capture_output=True, text=True)
+        except (FileNotFoundError, OSError):
+            return False, "ufw is not installed on this host"
+        if proc.returncode != 0:
+            return False, (proc.stderr or proc.stdout).strip()[-500:]
+        return True, f"rule {num} deleted"
+
+    def fail2ban_status(self) -> dict:
+        try:
+            out = subprocess.run(["fail2ban-client", "status"],
+                                 capture_output=True, text=True)
+        except (FileNotFoundError, OSError):
+            return {"available": False, "active": False, "jails": []}
+        if out.returncode != 0:
+            # Binary present but the daemon isn't running.
+            return {"available": True, "active": False, "jails": []}
+        jails: list[str] = []
+        for line in (out.stdout or "").splitlines():
+            line = line.strip()
+            if line.startswith("Jail list:"):
+                names = line[len("Jail list:"):].strip()
+                jails = [j.strip() for j in names.split(",") if j.strip()]
+        return {"available": True, "active": True, "jails": jails}
+
+    def list_banned_ips(self, jail: str) -> list[str]:
+        try:
+            jail = _ident(jail, "jail")
+        except ValueError:
+            return []
+        try:
+            out = subprocess.run(["fail2ban-client", "status", jail],
+                                 capture_output=True, text=True)
+        except (FileNotFoundError, OSError):
+            return []
+        if out.returncode != 0:
+            return []
+        for line in (out.stdout or "").splitlines():
+            line = line.strip()
+            if "Banned IP list:" in line:
+                ips = line.split("Banned IP list:", 1)[1].strip()
+                return [ip for ip in ips.split() if ip]
+        return []
+
+    def ban_ip(self, ip: str, jail: str) -> tuple[bool, str]:
+        ip = (ip or "").strip()
+        if not _IP_RE.match(ip):
+            return False, "invalid IP address"
+        try:
+            jail = _ident(jail, "jail")
+        except ValueError as exc:
+            return False, str(exc)
+        try:
+            proc = subprocess.run(["fail2ban-client", "set", jail, "banip", ip],
+                                  capture_output=True, text=True)
+        except (FileNotFoundError, OSError):
+            return False, "fail2ban is not installed on this host"
+        if proc.returncode != 0:
+            return False, (proc.stderr or proc.stdout).strip()[-500:]
+        return True, f"banned {ip} in {jail}"
+
+    def unban_ip(self, ip: str, jail: str) -> tuple[bool, str]:
+        ip = (ip or "").strip()
+        if not _IP_RE.match(ip):
+            return False, "invalid IP address"
+        try:
+            jail = _ident(jail, "jail")
+        except ValueError as exc:
+            return False, str(exc)
+        try:
+            proc = subprocess.run(["fail2ban-client", "set", jail, "unbanip", ip],
+                                  capture_output=True, text=True)
+        except (FileNotFoundError, OSError):
+            return False, "fail2ban is not installed on this host"
+        if proc.returncode != 0:
+            return False, (proc.stderr or proc.stdout).strip()[-500:]
+        return True, f"unbanned {ip} from {jail}"
