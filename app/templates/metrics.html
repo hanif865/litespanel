@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block title %}Metrics{% endblock %}
+{% block content %}
+<div class="breadcrumb"><a href="/">🏠 Home</a> / Metrics</div>
+<h1>Metrics</h1>
+<p class="muted">Visitors, errors and bandwidth for your sites, read straight from
+  their access and error logs.</p>
+
+{% if not domains %}
+<div class="empty">No domains yet — add a domain to start collecting traffic.</div>
+{% else %}
+<form method="get" action="/metrics" class="toolbar">
+  <label class="field">
+    <span>Domain</span>
+    <select name="domain" onchange="this.form.submit()">
+      {% for d in domains %}
+      <option value="{{ d.name }}" {{ 'selected' if d.name == selected }}>{{ d.name }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <noscript><button class="btn" type="submit">View</button></noscript>
+</form>
+
+{% if stats %}
+<div class="stat-grid">
+  <div class="card stat-item">
+    <div class="stat-top"><span class="s-label">Unique Visitors</span></div>
+    <div class="s-big">{{ stats.visitors }}</div>
+    <div class="muted small">{{ stats.hits }} total hits</div>
+  </div>
+  <div class="card stat-item">
+    <div class="stat-top"><span class="s-label">Bandwidth</span></div>
+    <div class="s-big">{{ stats.bandwidth_display }}</div>
+    <div class="muted small">served in the logged period</div>
+  </div>
+  <div class="card stat-item">
+    <div class="stat-top"><span class="s-label">Errors (4xx / 5xx)</span></div>
+    <div class="s-big">{{ stats.status_classes['4xx'] + stats.status_classes['5xx'] }}</div>
+    <div class="muted small">{{ stats.status_classes['4xx'] }} client · {{ stats.status_classes['5xx'] }} server</div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Response status</h2>
+  <div class="status-bars">
+    {% for cls, label, hue in [('2xx','Success','ok'), ('3xx','Redirect','info'),
+                               ('4xx','Client error','warn'), ('5xx','Server error','hot')] %}
+    <div class="status-row">
+      <span class="status-key">{{ cls }} <span class="muted small">{{ label }}</span></span>
+      <div class="meter"><div class="meter-fill {{ hue }}"
+        style="width: {{ (stats.status_classes[cls] / stats.hits * 100) if stats.hits else 0 }}%"></div></div>
+      <span class="status-num">{{ stats.status_classes[cls] }}</span>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+{% if by_day %}
+<div class="card">
+  <h2>Traffic by day</h2>
+  <table class="table">
+    <tbody>
+    {% for row in by_day %}
+      <tr>
+        <td style="width:8rem">{{ row.day }}</td>
+        <td><div class="meter"><div class="meter-fill" style="width: {{ row.bar }}%"></div></div></td>
+        <td style="text-align:right;width:5rem">{{ row.count }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<div class="grid-2">
+  <div class="card">
+    <h2>Top pages</h2>
+    {% if stats.top_pages %}
+    <table class="table">
+      <tbody>
+      {% for path, count in stats.top_pages %}
+        <tr><td><code>{{ path }}</code></td><td style="text-align:right">{{ count }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}<p class="muted">No requests logged yet.</p>{% endif %}
+  </div>
+
+  <div class="card">
+    <h2>Top referrers</h2>
+    {% if stats.top_referrers %}
+    <table class="table">
+      <tbody>
+      {% for ref, count in stats.top_referrers %}
+        <tr><td><code>{{ ref }}</code></td><td style="text-align:right">{{ count }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}<p class="muted">No external referrers logged.</p>{% endif %}
+  </div>
+</div>
+
+{% if stats.not_found %}
+<div class="card">
+  <h2>Not found (404)</h2>
+  <table class="table">
+    <tbody>
+    {% for path, count in stats.not_found %}
+      <tr><td><code>{{ path }}</code></td><td style="text-align:right">{{ count }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<div class="card">
+  <h2>Recent errors</h2>
+  {% if errors %}
+  <pre class="logbox">{% for line in errors %}{{ line }}
+{% endfor %}</pre>
+  {% else %}
+  <p class="muted">No error-log entries — nothing has gone wrong here.</p>
+  {% endif %}
+</div>
+{% endif %}
+{% endif %}
+{% endblock %}

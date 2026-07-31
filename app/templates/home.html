@@ -110,15 +110,15 @@
           <span class="g-chev">{{ icon("chevron", 18) }}</span>
         </button>
         <div class="group-body">
-          <span class="tool disabled" data-tool="visitors">
-            <span class="t-ico">{{ icon("visitors") }}</span><span class="t-name">Visitors</span><span class="soon">soon</span>
-          </span>
-          <span class="tool disabled" data-tool="errors">
-            <span class="t-ico">{{ icon("errors") }}</span><span class="t-name">Errors</span><span class="soon">soon</span>
-          </span>
-          <span class="tool disabled" data-tool="bandwidth">
-            <span class="t-ico">{{ icon("bandwidth") }}</span><span class="t-name">Bandwidth</span><span class="soon">soon</span>
-          </span>
+          <a class="tool" href="/metrics" data-tool="visitors">
+            <span class="t-ico">{{ icon("visitors") }}</span><span class="t-name">Visitors</span>
+          </a>
+          <a class="tool" href="/metrics" data-tool="errors">
+            <span class="t-ico">{{ icon("errors") }}</span><span class="t-name">Errors</span>
+          </a>
+          <a class="tool" href="/metrics" data-tool="bandwidth">
+            <span class="t-ico">{{ icon("bandwidth") }}</span><span class="t-name">Bandwidth</span>
+          </a>
         </div>
       </div>
 

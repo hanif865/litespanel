@@ -19,7 +19,7 @@ from .security import hash_password
 from .web import TEMPLATES_DIR, templates
 from .routers import (
     account, auth, autoresponders, backups, cron, dashboard, databases, dbconsole, dbwizard,
-    disk_usage, dns, domains, email, files, firewall, forwarders, ftp, git, logs, node,
+    disk_usage, dns, domains, email, files, firewall, forwarders, ftp, git, logs, metrics, node,
     packages, php, ssl, subdomains, users, webdisk, wordpress,
 )
 
@@ -68,6 +68,7 @@ app.include_router(wordpress.router)
 app.include_router(ssl.router)
 app.include_router(firewall.router)
 app.include_router(logs.router)
+app.include_router(metrics.router)
 app.include_router(backups.router)
 app.include_router(packages.router)
 app.include_router(users.router)

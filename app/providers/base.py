@@ -404,3 +404,21 @@ class Provider(ABC):
         back; `grep` optionally filters to matching lines. Admin-only.
         """
 
+    # --- Per-domain web logs (Metrics) ------------------------------------
+    @abstractmethod
+    def read_access_log(self, domain: str, max_lines: int = 20000) -> list[str]:
+        """Return up to the last `max_lines` of a domain's access log.
+
+        Provider decides where the domain's access log lives (differs per
+        host); parsing happens in app.weblog so demo and linux feed the same
+        analysis. Returns an empty list when no log exists yet. The caller has
+        already verified the domain belongs to the requesting user.
+        """
+
+    @abstractmethod
+    def read_error_log(self, domain: str, max_lines: int = 200) -> list[str]:
+        """Return up to the last `max_lines` of a domain's error log.
+
+        Empty list when absent. Caller enforces domain ownership.
+        """
+

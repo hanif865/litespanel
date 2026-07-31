@@ -26,6 +26,10 @@ WEB_ROOT = Path("/var/www")
 # per-login nginx dav location snippet an admin includes into a WebDAV server
 # block. Kept out of sites-enabled so it never disturbs a real vhost.
 WEBDAV_DIR = Path("/etc/litespanel/webdav")
+# Per-domain nginx access/error logs (Metrics). nginx (running as root at
+# master, workers as www-data) opens these for writing, so the directory must
+# exist before a vhost referencing it is loaded.
+WEBLOG_DIR = Path("/var/log/litespanel")
 
 # Database/user names must be plain identifiers — validated here as defense in
 # depth so a bad name can never be interpolated into SQL, even if a caller
@@ -125,10 +129,16 @@ class LinuxProvider(Provider):
     def _reload_php(self) -> None:
         _run(["systemctl", "reload", f"php{config.PHP_FPM_VERSION}-fpm"])
 
+    def _ensure_weblog_dir(self) -> None:
+        """Make sure /var/log/litespanel exists before nginx opens a log there."""
+        WEBLOG_DIR.mkdir(parents=True, exist_ok=True)
+
     def _vhost(self, server_name: str, extra_names: str, docroot: Path, username: str) -> str:
         return (
             f"server {{\n    listen 80;\n    server_name {server_name}{extra_names};\n"
             f"    root {docroot};\n    index index.php index.html;\n"
+            f"    access_log /var/log/litespanel/{server_name}.access.log;\n"
+            f"    error_log /var/log/litespanel/{server_name}.error.log;\n"
             f"    location ~ \\.php$ {{ fastcgi_pass unix:{self._php_sock(username)};"
             f" include fastcgi_params; fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name; }}\n}}\n"
         )
@@ -136,6 +146,7 @@ class LinuxProvider(Provider):
     # --- Web hosting ------------------------------------------------------
     def create_site(self, domain: str, docroot: Path, php_version: str, system_user: str) -> Path:
         _ident(system_user, "account username")
+        self._ensure_weblog_dir()
         docroot.mkdir(parents=True, exist_ok=True)
         # Hand ownership of the whole site tree to the account.
         _run(["chown", "-R", f"{system_user}:{system_user}", str(Path(docroot).parent)])
@@ -257,8 +268,11 @@ class LinuxProvider(Provider):
     def set_https_redirect(self, domain: str, docroot: str, php_version: str,
                            system_user: str, enabled: bool, has_ssl: bool) -> None:
         _ident(system_user, "account username")
+        self._ensure_weblog_dir()
         docroot = Path(docroot)
         names = f"{domain} www.{domain}"
+        logs = (f" access_log /var/log/litespanel/{domain}.access.log;"
+                f" error_log /var/log/litespanel/{domain}.error.log;")
         php = (f"location ~ \\.php$ {{ fastcgi_pass unix:{self._php_sock(system_user)};"
                f" include fastcgi_params; fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name; }}")
         blocks = []
@@ -266,21 +280,22 @@ class LinuxProvider(Provider):
             cert = f"/etc/letsencrypt/live/{domain}"
             if enabled:
                 blocks.append(f"server {{ listen 80; server_name {names};"
-                              f" return 301 https://$host$request_uri; }}")
+                              f"{logs} return 301 https://$host$request_uri; }}")
             else:
                 blocks.append(f"server {{ listen 80; server_name {names}; root {docroot};"
-                              f" index index.php index.html; {php} }}")
+                              f" index index.php index.html;{logs} {php} }}")
             blocks.append(f"server {{ listen 443 ssl; server_name {names};"
                           f" ssl_certificate {cert}/fullchain.pem; ssl_certificate_key {cert}/privkey.pem;"
-                          f" root {docroot}; index index.php index.html; {php} }}")
+                          f" root {docroot}; index index.php index.html;{logs} {php} }}")
         else:
             blocks.append(f"server {{ listen 80; server_name {names}; root {docroot};"
-                          f" index index.php index.html; {php} }}")
+                          f" index index.php index.html;{logs} {php} }}")
         (NGINX_SITES / f"{domain}.conf").write_text("\n".join(blocks) + "\n")
         self.reload_web()
 
     def create_subdomain(self, fqdn: str, docroot: Path, php_version: str, system_user: str) -> Path:
         _ident(system_user, "account username")
+        self._ensure_weblog_dir()
         docroot.mkdir(parents=True, exist_ok=True)
         _run(["chown", "-R", f"{system_user}:{system_user}", str(docroot)])
         (NGINX_SITES / f"{fqdn}.conf").write_text(self._vhost(fqdn, "", docroot, system_user))
@@ -1122,3 +1137,13 @@ class LinuxProvider(Provider):
 
         text = tail_file(Path(entry[2]), lines=lines, grep=grep)
         return True, text
+
+    # --- Per-domain web logs (Metrics) ------------------------------------
+    def read_access_log(self, domain: str, max_lines: int = 20000) -> list[str]:
+        _ident_ok = True  # domain is not a shell arg; validated by the caller's ownership check
+        text = tail_file(WEBLOG_DIR / f"{domain}.access.log", lines=max_lines)
+        return text.splitlines() if text else []
+
+    def read_error_log(self, domain: str, max_lines: int = 200) -> list[str]:
+        text = tail_file(WEBLOG_DIR / f"{domain}.error.log", lines=max_lines)
+        return text.splitlines() if text else []

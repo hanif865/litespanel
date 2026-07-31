@@ -116,6 +116,8 @@ class DemoProvider(Provider):
 
         # Write the vhost config as real text so users can inspect it.
         self._write_vhost(domain, docroot, php_version, system_user)
+        # Seed synthetic per-domain logs so the Metrics page shows real numbers.
+        self._seed_domain_logs(domain)
         return docroot
 
     def _write_vhost(self, domain: str, docroot: Path, php_version: str, system_user: str) -> None:
@@ -816,6 +818,102 @@ class DemoProvider(Provider):
         config.LOG_DIR.mkdir(parents=True, exist_ok=True)
         path.write_text(_SAMPLE_LOGS.get(filename, "(no sample data)\n"), encoding="utf-8")
         return path
+
+    # --- Per-domain web logs (Metrics) ------------------------------------
+    def _domain_log_dir(self) -> Path:
+        d = config.LOG_DIR / "domains"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def _domain_access_path(self, domain: str) -> Path:
+        return self._domain_log_dir() / f"{domain}.access.log"
+
+    def _domain_error_path(self, domain: str) -> Path:
+        return self._domain_log_dir() / f"{domain}.error.log"
+
+    def _seed_domain_logs(self, domain: str) -> None:
+        """Generate a realistic week of synthetic traffic for a new site.
+
+        Demo-only: real hosts get genuine nginx logs. Deterministic per domain
+        so the numbers are stable across page loads.
+        """
+        access = self._domain_access_path(domain)
+        if access.exists():
+            return
+        import random
+
+        rnd = random.Random(hashlib.sha256(domain.encode()).hexdigest())
+        ips = [f"203.0.113.{n}" for n in range(2, 60)] + \
+              [f"198.51.100.{n}" for n in range(2, 40)] + \
+              [f"192.0.2.{n}" for n in range(2, 30)]
+        paths = [
+            ("GET", "/", 0.34), ("GET", "/about", 0.10), ("GET", "/blog", 0.12),
+            ("GET", "/blog/hello-world", 0.08), ("GET", "/contact", 0.06),
+            ("GET", "/static/app.css", 0.09), ("GET", "/static/app.js", 0.08),
+            ("GET", "/favicon.ico", 0.05), ("POST", "/contact", 0.03),
+            ("GET", "/wp-login.php", 0.02), ("GET", "/.env", 0.015),
+            ("GET", "/pricing", 0.045),
+        ]
+        agents = [
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1 Safari/605.1",
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) Mobile/15E148",
+            "curl/8.4.0", "python-requests/2.31", "Googlebot/2.1",
+        ]
+        referers = ["-", f"https://{domain}/", "https://www.google.com/",
+                    "https://t.co/abc", "https://news.ycombinator.com/"]
+        weighted = [(m, p) for (m, p, _) in paths]
+        weights = [w for (_, _, w) in paths]
+        lines: list[str] = []
+        now = datetime.now(timezone.utc)
+        for day_ago in range(6, -1, -1):
+            hits = rnd.randint(180, 420)
+            for _ in range(hits):
+                method, path = rnd.choices(weighted, weights=weights, k=1)[0]
+                ts = now - timedelta(days=day_ago, hours=rnd.randint(0, 23),
+                                     minutes=rnd.randint(0, 59), seconds=rnd.randint(0, 59))
+                if path in ("/wp-login.php", "/.env"):
+                    status, size = 404, rnd.randint(500, 600)
+                elif method == "POST":
+                    status, size = 303, 0
+                elif rnd.random() < 0.04:
+                    status, size = 500, rnd.randint(500, 900)
+                else:
+                    status, size = 200, rnd.randint(400, 20000)
+                stamp = ts.strftime("%d/%b/%Y:%H:%M:%S +0000")
+                lines.append(
+                    f'{rnd.choice(ips)} - - [{stamp}] "{method} {path} HTTP/1.1" '
+                    f'{status} {size} "{rnd.choice(referers)}" "{rnd.choice(agents)}"'
+                )
+        lines.sort(key=lambda ln: datetime.strptime(
+            ln.split("[", 1)[1].split("]", 1)[0].split()[0], "%d/%b/%Y:%H:%M:%S"))
+        access.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        errs = []
+        for day_ago in range(3, -1, -1):
+            ts = now - timedelta(days=day_ago, hours=rnd.randint(0, 23))
+            errs.append(
+                f'{ts.strftime("%Y/%m/%d %H:%M:%S")} [error] 812#812: *{rnd.randint(1000, 9999)} '
+                f'open() "/home/site/{domain}/public_html/.env" failed (2: No such file '
+                f'or directory), client: {rnd.choice(ips)}, server: {domain}'
+            )
+        self._domain_error_path(domain).write_text("\n".join(errs) + "\n", encoding="utf-8")
+
+    def read_access_log(self, domain: str, max_lines: int = 20000) -> list[str]:
+        self._seed_domain_logs(domain)
+        path = self._domain_access_path(domain)
+        if not path.exists():
+            return []
+        with path.open("r", encoding="utf-8", errors="replace") as fh:
+            return fh.read().splitlines()[-max_lines:]
+
+    def read_error_log(self, domain: str, max_lines: int = 200) -> list[str]:
+        self._seed_domain_logs(domain)
+        path = self._domain_error_path(domain)
+        if not path.exists():
+            return []
+        with path.open("r", encoding="utf-8", errors="replace") as fh:
+            return fh.read().splitlines()[-max_lines:]
 
     def log_sources(self) -> list[dict]:
         sources = []
