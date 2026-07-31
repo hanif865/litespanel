@@ -103,6 +103,11 @@
       </a>
       {% endif %}
 
+      <div class="jnav-section">Account</div>
+      <a href="/account/security" class="jnav-item {{ 'is-active' if active == 'account' }}" data-tip="Security & 2FA">
+        <span class="jnav-ico">🔐</span><span class="jnav-label">Security</span>
+      </a>
+
       {% if user.role in ('admin', 'reseller') %}
       <div class="jnav-section">Preferences</div>
       <a href="/users" class="jnav-item {{ 'is-active' if active == 'users' }}" data-tip="User Manager">

@@ -18,7 +18,7 @@ from .models import User
 from .security import hash_password
 from .web import TEMPLATES_DIR, templates
 from .routers import (
-    auth, autoresponders, backups, cron, dashboard, databases, dbconsole, dbwizard,
+    account, auth, autoresponders, backups, cron, dashboard, databases, dbconsole, dbwizard,
     dns, domains, email, files, firewall, forwarders, node, packages, php, ssl, subdomains,
     users, wordpress,
 )
@@ -45,6 +45,7 @@ STATIC_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 app.include_router(auth.router)
+app.include_router(account.router)
 app.include_router(dashboard.router)
 app.include_router(domains.router)
 app.include_router(subdomains.router)

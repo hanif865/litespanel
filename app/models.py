@@ -30,6 +30,11 @@ class User(Base):
     # Which admin/reseller created this account (null for the root admin).
     created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     suspended: Mapped[bool] = mapped_column(default=False)
+    # Two-factor auth (TOTP). Secret is encrypted at rest (see app/crypto.py);
+    # recovery_codes holds SHA-256 hashes of single-use backup codes.
+    totp_enabled: Mapped[bool] = mapped_column(default=False, server_default="0")
+    totp_secret_enc: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    recovery_codes: Mapped[list] = mapped_column(JSON, default=list)
     # Dedicated Linux system user for this hosting account (isolation). Sites
     # owned by this account run PHP as this user and live under its home dir.
     system_user: Mapped[str | None] = mapped_column(String(32), nullable=True)

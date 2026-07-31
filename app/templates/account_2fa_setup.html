@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Set up 2FA{% endblock %}
+{% block content %}
+<div class="breadcrumb"><a href="/">🏠 Home</a> / <a href="/account/security">Security</a> / Set up 2FA</div>
+<h1>Set up Two-Factor Authentication</h1>
+
+{% if error %}<div class="alert-error">{{ error }}</div>{% endif %}
+
+<div class="card">
+  <h2>Step 1 — Scan the QR code</h2>
+  <p class="muted">
+    Open your authenticator app (Google Authenticator, Authy, 1Password, Microsoft
+    Authenticator, …) and scan this code.
+  </p>
+  <div style="display:flex; gap:2rem; flex-wrap:wrap; align-items:flex-start; margin:1rem 0;">
+    <div style="background:#fff; padding:1rem; border-radius:8px; width:220px; height:220px;">
+      {% if qr_svg %}
+        {{ qr_svg | safe }}
+      {% else %}
+        <p class="muted small">QR rendering unavailable. Use the manual key below.</p>
+      {% endif %}
+    </div>
+    <div>
+      <p class="muted small">Can't scan? Enter this key manually:</p>
+      <code style="display:inline-block; padding:.5rem .75rem; background:var(--bg-secondary, #f5f5f5); border-radius:4px; font-size:1.05rem; letter-spacing:2px; word-break:break-all;">{{ secret }}</code>
+      <p class="muted small" style="margin-top:.75rem;">Type: Time-based · Digits: 6 · Period: 30s</p>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Step 2 — Confirm the code</h2>
+  <p class="muted">Enter the current 6-digit code from your app to finish enabling 2FA.</p>
+  <form method="post" action="/account/security/2fa/confirm" class="inline-form">
+    <input type="text" name="code" autofocus autocomplete="one-time-code"
+           placeholder="6-digit code" required
+           style="width:12rem; margin-right:.5rem; font-size:1.1rem; letter-spacing:2px;">
+    <button type="submit" class="btn btn-primary">Verify &amp; Enable</button>
+    <a href="/account/security" class="btn btn-secondary">Cancel</a>
+  </form>
+</div>
+{% endblock %}

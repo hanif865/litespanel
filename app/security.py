@@ -5,6 +5,7 @@ compile on a fresh Windows or minimal VPS install — one less thing to break.
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import secrets
@@ -47,6 +48,34 @@ def record_login_failure(key: str) -> None:
 
 def clear_login_failures(key: str) -> None:
     _failed_logins.pop(key, None)
+
+
+def generate_recovery_codes(n: int = 10) -> list[str]:
+    """Human-friendly one-time backup codes (shown once at enrollment)."""
+    # 5 bytes -> 8 base32 chars; grouped as XXXX-XXXX for readability.
+    codes = []
+    for _ in range(n):
+        raw = base64.b32encode(secrets.token_bytes(5)).decode("ascii").rstrip("=")
+        codes.append(f"{raw[:4]}-{raw[4:8]}")
+    return codes
+
+
+def hash_recovery_code(code: str) -> str:
+    """SHA-256 of a normalized recovery code. These are already high-entropy,
+    so a fast hash is fine (unlike passwords, which need pbkdf2)."""
+    norm = code.strip().upper().replace(" ", "").replace("-", "")
+    return hashlib.sha256(norm.encode()).hexdigest()
+
+
+def check_and_consume_recovery_code(codes: list[str], attempt: str) -> tuple[bool, list[str]]:
+    """If `attempt` matches a stored hash, return (True, codes-without-it).
+    Recovery codes are single-use, so a match is removed from the list."""
+    target = hash_recovery_code(attempt)
+    for i, stored in enumerate(codes or []):
+        if hmac.compare_digest(stored, target):
+            remaining = list(codes[:i]) + list(codes[i + 1:])
+            return True, remaining
+    return False, list(codes or [])
 
 
 def hash_password(password: str) -> str:

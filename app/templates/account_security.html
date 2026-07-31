@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Security{% endblock %}
+{% block content %}
+<div class="breadcrumb"><a href="/">🏠 Home</a> / Account / Security</div>
+<h1>Security</h1>
+<p class="muted">Manage your account security settings.</p>
+
+{% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
+
+<!-- Fresh recovery codes (shown once after enable or regenerate) -->
+{% if fresh_codes %}
+<div class="card" style="border: 2px solid var(--color-success, #22c55e);">
+  <h2>⚠️ Save Your Recovery Codes</h2>
+  <p><strong>These codes will only be shown once.</strong> Save them in a secure location (password manager, encrypted file). Each code can be used once if you lose access to your authenticator app.</p>
+  <div style="background: var(--bg-secondary, #f5f5f5); padding:1rem; margin:1rem 0; border-radius:4px; font-family: monospace;">
+    {% for code in fresh_codes %}
+      <div style="padding:.25rem 0;">{{ code }}</div>
+    {% endfor %}
+  </div>
+  <p class="muted small">Print these, store them in your password manager, or write them down. Once you leave this page they cannot be recovered.</p>
+</div>
+{% endif %}
+
+<!-- Two-Factor Authentication -->
+<div class="card">
+  <h2>Two-Factor Authentication (2FA)</h2>
+  {% if user.totp_enabled %}
+    <p>
+      <span class="pill pill-ok">Enabled</span>
+      <span class="muted small">{{ recovery_count }} recovery codes remaining</span>
+    </p>
+    <p class="muted">
+      When you log in, you'll need to enter a 6-digit code from your authenticator app
+      (Google Authenticator, Authy, 1Password, etc.) after your password.
+    </p>
+    <div class="card-actions">
+      <form method="post" action="/account/security/2fa/disable" class="inline-form"
+            onsubmit="return confirm('Disable two-factor authentication? Your account will be less secure.');">
+        <input type="text" name="code" placeholder="6-digit code" required
+               style="width:10rem; margin-right:.5rem;">
+        <button type="submit" class="btn btn-sm btn-danger">Disable 2FA</button>
+      </form>
+    </div>
+
+    <!-- Regenerate recovery codes -->
+    <details style="margin-top:1rem;">
+      <summary style="cursor:pointer; color:var(--color-primary, #3b82f6);">Regenerate recovery codes</summary>
+      <p class="muted small" style="margin:.5rem 0;">
+        Generate a new set of 10 recovery codes. Your old codes will stop working.
+      </p>
+      <form method="post" action="/account/security/recovery-codes/regenerate" class="inline-form">
+        <input type="text" name="code" placeholder="6-digit code" required
+               style="width:10rem; margin-right:.5rem;">
+        <button type="submit" class="btn btn-sm btn-secondary">Regenerate</button>
+      </form>
+    </details>
+  {% else %}
+    <p><span class="pill">Not enabled</span></p>
+    <p class="muted">
+      Add an extra layer of security to your account. After enabling 2FA, you'll need
+      both your password and a code from your phone to log in.
+    </p>
+    <form method="post" action="/account/security/2fa/enable">
+      <button type="submit" class="btn btn-sm btn-primary">Enable 2FA</button>
+    </form>
+  {% endif %}
+</div>
+
+<!-- Password (placeholder for future) -->
+<div class="card">
+  <h2>Password</h2>
+  <p class="muted">Change your account password.</p>
+  <p class="muted small" style="font-style:italic;">
+    Password change is coming soon. For now, contact an administrator to reset your password.
+  </p>
+</div>
+{% endblock %}
