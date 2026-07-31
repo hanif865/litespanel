@@ -266,6 +266,20 @@ class Provider(ABC):
     def remove_autoresponder(self, address: str) -> None:
         ...
 
+    # --- FTP accounts -----------------------------------------------------
+    @abstractmethod
+    def create_ftp_account(self, username: str, password: str, home_dir: Path,
+                           quota_mb: int = 0) -> None:
+        """Create/replace a virtual FTP login jailed to home_dir."""
+
+    @abstractmethod
+    def set_ftp_password(self, username: str, password: str) -> None:
+        """Reset the password for an existing FTP login."""
+
+    @abstractmethod
+    def delete_ftp_account(self, username: str) -> None:
+        """Remove a virtual FTP login (its files are left untouched)."""
+
     # --- Backups ----------------------------------------------------------
     @abstractmethod
     def create_backup(self, dest_zip: Path, sites: list[tuple[str, str]], databases: list[str]) -> dict:

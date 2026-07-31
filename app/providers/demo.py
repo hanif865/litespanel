@@ -449,6 +449,54 @@ class DemoProvider(Provider):
         local, _, domain = address.partition("@")
         (config.MAIL_DIR / domain / "autoresponders" / f"{local}.txt").unlink(missing_ok=True)
 
+    # --- FTP accounts -----------------------------------------------------
+    def _ftp_passwd(self) -> Path:
+        # Single pure-ftpd-style virtual-users file, one tab-delimited line per
+        # login:  "<login>\t{SHA256}<hash>\t<home_dir>\t<quota_mb>". Tab-delimited
+        # (not ':') because a Windows demo home path contains a drive-letter colon.
+        return config.FTP_DIR / "passwd"
+
+    def _ftp_entries(self) -> dict[str, str]:
+        entries: dict[str, str] = {}
+        passwd = self._ftp_passwd()
+        if passwd.exists():
+            for line in passwd.read_text(encoding="utf-8").splitlines():
+                if line and not line.startswith("#") and "\t" in line:
+                    entries[line.split("\t", 1)[0]] = line
+        return entries
+
+    def _ftp_write(self, entries: dict[str, str]) -> None:
+        header = f"# Virtual FTP users — managed by {config.APP_NAME}."
+        body = "\n".join([header, *entries.values()])
+        self._ftp_passwd().write_text(body + "\n", encoding="utf-8")
+
+    def create_ftp_account(self, username: str, password: str, home_dir: Path,
+                           quota_mb: int = 0) -> None:
+        home = Path(home_dir)
+        home.mkdir(parents=True, exist_ok=True)
+        pwhash = hashlib.sha256(password.encode()).hexdigest()
+        entries = self._ftp_entries()
+        entries[username] = f"{username}\t{{SHA256}}{pwhash}\t{home.as_posix()}\t{int(quota_mb)}"
+        self._ftp_write(entries)
+
+    def set_ftp_password(self, username: str, password: str) -> None:
+        entries = self._ftp_entries()
+        existing = entries.get(username)
+        if existing is None:
+            return
+        parts = existing.split("\t")
+        # parts = [login, "{SHA256}hash", home, quota]
+        home = parts[2] if len(parts) > 2 else ""
+        quota = parts[3] if len(parts) > 3 else "0"
+        pwhash = hashlib.sha256(password.encode()).hexdigest()
+        entries[username] = f"{username}\t{{SHA256}}{pwhash}\t{home}\t{quota}"
+        self._ftp_write(entries)
+
+    def delete_ftp_account(self, username: str) -> None:
+        entries = self._ftp_entries()
+        if entries.pop(username, None) is not None:
+            self._ftp_write(entries)
+
     # --- Backups ----------------------------------------------------------
     def create_backup(self, dest_zip: Path, sites: list[tuple[str, str]], databases: list[str]) -> dict:
         import json

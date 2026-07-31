@@ -641,6 +641,52 @@ class LinuxProvider(Provider):
         local, _, domain = address.partition("@")
         Path(f"/var/mail/vhosts/{domain}/{local}/.dovecot.sieve").unlink(missing_ok=True)
 
+    # --- FTP accounts -----------------------------------------------------
+    # Virtual FTP users via pure-ftpd's pure-pw (no system account per login).
+    # The login name is validated so it can never inject extra pure-pw argv, and
+    # the password is passed on stdin (twice) rather than on the command line.
+    _FTP_LOGIN_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._@-]{0,126}[A-Za-z0-9])?$")
+
+    def _ftp_login(self, username: str) -> str:
+        if not self._FTP_LOGIN_RE.match(username):
+            raise ValueError(f"Unsafe FTP login: {username!r}")
+        return username
+
+    def _pure_pw(self, args: list[str], password: str | None = None) -> None:
+        # pure-pw prompts for the password twice on stdin when creating/updating.
+        stdin = f"{password}\n{password}\n" if password is not None else None
+        result = subprocess.run(["pure-pw", *args], input=stdin,
+                                capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(f"pure-pw {args[0]} failed: {result.stderr.strip()}")
+        # Rebuild the hashed database pure-ftpd actually reads.
+        subprocess.run(["pure-pw", "mkdb"], capture_output=True, text=True)
+
+    def create_ftp_account(self, username: str, password: str, home_dir: Path,
+                           quota_mb: int = 0) -> None:
+        login = self._ftp_login(username)
+        home = Path(home_dir)
+        home.mkdir(parents=True, exist_ok=True)
+        # Own the jail as the web user so uploads land with sane ownership.
+        _run(["chown", "-R", "www-data:www-data", str(home)])
+        args = ["useradd", login, "-u", "www-data", "-d", str(home)]
+        if quota_mb and int(quota_mb) > 0:
+            args += ["-N", str(int(quota_mb))]  # quota in MB
+        self._pure_pw(args, password=password)
+
+    def set_ftp_password(self, username: str, password: str) -> None:
+        login = self._ftp_login(username)
+        self._pure_pw(["passwd", login], password=password)
+
+    def delete_ftp_account(self, username: str) -> None:
+        try:
+            login = self._ftp_login(username)
+        except ValueError:
+            return
+        # -m keeps the home directory; only the login is removed.
+        subprocess.run(["pure-pw", "userdel", login, "-m"], capture_output=True, text=True)
+        subprocess.run(["pure-pw", "mkdb"], capture_output=True, text=True)
+
     def create_backup(self, dest_zip: Path, sites: list[tuple[str, str]], databases: list[str]) -> dict:
         import zipfile
 

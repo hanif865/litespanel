@@ -318,6 +318,32 @@ class NodeApp(Base):
         return f"litespanel-node-{self.name}"
 
 
+class FtpAccount(Base):
+    """A virtual FTP/SFTP login scoped to a directory under the account's home.
+
+    The panel DB is the source of truth; the provider materializes the real
+    FTP user (pure-ftpd virtual user on linux; a passwd file in the demo). The
+    password is encrypted at rest (see app/crypto.py) so the account can be
+    re-materialized on the host without prompting the user again.
+    """
+
+    __tablename__ = "ftp_accounts"
+    __table_args__ = (UniqueConstraint("username", name="uq_ftp_username"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    # Full login name, e.g. "upload@example.com" (cPanel style) or a plain slug.
+    username: Mapped[str] = mapped_column(String(128), index=True)
+    password_enc: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Directory the login is jailed to (absolute path on the host).
+    home_dir: Mapped[str] = mapped_column(String(500))
+    # Optional quota in MB (0 = unlimited).
+    quota_mb: Mapped[int] = mapped_column(default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    owner: Mapped["User"] = relationship()
+
+
 class Backup(Base):
     __tablename__ = "backups"
 

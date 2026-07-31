@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}FTP Accounts{% endblock %}
+{% block content %}
+<div class="breadcrumb"><a href="/">🏠 Home</a> / Files / FTP Accounts</div>
+<h1>FTP Accounts</h1>
+<p class="muted">Create FTP logins jailed to a folder inside one of your sites. Use these
+  with any FTP client (host = your server, port 21).</p>
+
+{% if new_cred %}
+<div class="card" style="border-color:var(--orange,#e8730c)">
+  <strong>✅ Save this password now — it won't be shown again.</strong>
+  <table class="table" style="margin-top:.5rem">
+    <tr><th>Login</th><td><code>{{ new_cred.username }}</code></td></tr>
+    <tr><th>Password</th><td><code>{{ new_cred.password }}</code></td></tr>
+    <tr><th>Directory</th><td><code>{{ new_cred.home_dir }}</code></td></tr>
+  </table>
+</div>
+{% endif %}
+
+{% if not domains %}
+<div class="empty">Add a domain first to create FTP accounts.</div>
+{% else %}
+
+<div class="card">
+  <form method="post" action="/ftp/create" class="row-form">
+    <input type="text" name="local_part" placeholder="upload" required style="max-width:150px">
+    <span class="muted">@</span>
+    <select name="domain_id" required>
+      {% for d in domains %}<option value="{{ d.id }}">{{ d.name }}</option>{% endfor %}
+    </select>
+    <input type="text" name="directory" placeholder="optional subfolder (e.g. uploads)" style="flex:1;min-width:160px">
+    <input type="number" name="quota_mb" min="0" value="0" title="Quota in MB (0 = unlimited)" style="max-width:110px">
+    <button type="submit" class="btn btn-primary">+ Create FTP Account</button>
+  </form>
+  <p class="muted small" style="margin:.5rem 0 0">Directory is relative to the site's document root. Quota <code>0</code> means unlimited.</p>
+</div>
+
+{% if accounts %}
+<table class="table">
+  <thead><tr><th>Login</th><th>Directory</th><th>Quota</th><th></th></tr></thead>
+  <tbody>
+  {% for a in accounts %}
+    <tr>
+      <td><strong>{{ a.username }}</strong></td>
+      <td><code>{{ a.home_dir }}</code></td>
+      <td>{{ (a.quota_mb ~ ' MB') if a.quota_mb else 'Unlimited' }}</td>
+      <td class="actions">
+        <form method="post" action="/ftp/{{ a.id }}/password" style="display:inline"
+              onsubmit="return confirm('Reset the password for {{ a.username }}?')">
+          <button type="submit" class="btn btn-sm">Reset password</button>
+        </form>
+        <form method="post" action="/ftp/{{ a.id }}/delete" style="display:inline"
+              onsubmit="return confirm('Delete FTP account {{ a.username }}? (Files are kept.)')">
+          <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="empty">No FTP accounts yet.</div>
+{% endif %}
+{% endif %}
+{% endblock %}

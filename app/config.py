@@ -78,6 +78,7 @@ PHP_DIR = DATA_DIR / "php"          # generated php.ini / pool overrides
 NODE_DIR = DATA_DIR / "node"        # generated systemd units + reverse-proxy conf
 FIREWALL_DIR = DATA_DIR / "firewall"  # demo firewall/fail2ban state files
 LOG_DIR = DATA_DIR / "logs"           # demo synthetic access/error logs
+FTP_DIR = DATA_DIR / "ftp"            # demo virtual-FTP user store (passwd files)
 # Per-account home directories (system-user isolation). The demo provider
 # simulates these under DATA_DIR; the linux provider uses real /home.
 HOME_DIR = DATA_DIR / "home"
@@ -94,5 +95,6 @@ NODE_PORT_BASE = int(_env("PANEL_NODE_PORT_BASE", "3100"))
 def ensure_dirs() -> None:
     """Create the data directories on startup (idempotent)."""
     for d in (DATA_DIR, SITES_DIR, NGINX_DIR, CERTS_DIR, DB_SANDBOX_DIR, DNS_DIR,
-              MAIL_DIR, BACKUPS_DIR, HOME_DIR, PHP_DIR, NODE_DIR, FIREWALL_DIR, LOG_DIR):
+              MAIL_DIR, BACKUPS_DIR, HOME_DIR, PHP_DIR, NODE_DIR, FIREWALL_DIR, LOG_DIR,
+              FTP_DIR):
         d.mkdir(parents=True, exist_ok=True)
