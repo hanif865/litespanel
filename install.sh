@@ -82,8 +82,8 @@ apt-get install -y -qq \
     python3-venv python3-pip \
     "php${PHP_VER}-fpm" "php${PHP_VER}-mysql" "php${PHP_VER}-cli" "php${PHP_VER}-curl" \
     "php${PHP_VER}-gd" "php${PHP_VER}-mbstring" "php${PHP_VER}-xml" "php${PHP_VER}-zip" "php${PHP_VER}-intl" \
-    wget curl unzip ufw >/dev/null
-ok "nginx, MySQL, PHP ${PHP_VER}, certbot installed"
+    wget curl unzip ufw fail2ban >/dev/null
+ok "nginx, MySQL, PHP ${PHP_VER}, certbot, ufw, fail2ban installed"
 
 # Common PHP extensions the PHP Selector enables by default, so a fresh box
 # has the usual WordPress/Laravel stack working out of the box. Installed
@@ -269,12 +269,39 @@ systemctl reload nginx
 ok "nginx serving the panel"
 
 # --------------------------------------------------------------------------
-# 7. Firewall
+# 7. Firewall (ufw) + intrusion prevention (fail2ban)
 # --------------------------------------------------------------------------
-step "Opening the firewall (OpenSSH, HTTP, HTTPS)"
+# The panel's Firewall & Security page manages ufw rules and fail2ban bans at
+# runtime, but the host needs both installed, configured and ENABLED first so
+# that page shows an active firewall out of the box. SSH is allowed *before*
+# enabling ufw so this can never lock out the current session.
+step "Enabling the firewall (OpenSSH, HTTP, HTTPS)"
 ufw allow OpenSSH >/dev/null 2>&1 || true
 ufw allow 'Nginx Full' >/dev/null 2>&1 || true
-ok "Firewall rules added (enable with 'ufw enable' if not already)"
+# --force skips the interactive "proceed?" prompt; SSH is already allowed above.
+ufw --force enable >/dev/null 2>&1 && ok "ufw enabled (OpenSSH, Nginx Full allowed)" \
+    || warn "Could not enable ufw automatically — run 'ufw --force enable' manually"
+
+step "Configuring fail2ban (sshd jail)"
+# A minimal local jail so fail2ban actively protects SSH and the panel's
+# Firewall page has a live jail to manage. jail.local overrides the package
+# default without being clobbered on upgrades.
+if [ ! -f /etc/fail2ban/jail.local ]; then
+    cat > /etc/fail2ban/jail.local <<'EOF'
+[DEFAULT]
+bantime  = 1h
+findtime = 10m
+maxretry = 5
+backend  = systemd
+
+[sshd]
+enabled = true
+EOF
+fi
+systemctl enable fail2ban >/dev/null 2>&1 || true
+systemctl restart fail2ban >/dev/null 2>&1 \
+    && ok "fail2ban running with the sshd jail" \
+    || warn "fail2ban did not start — check 'systemctl status fail2ban'"
 
 # --------------------------------------------------------------------------
 # 8. SSL (optional, needs a domain pointing at this server)
