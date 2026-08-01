@@ -848,6 +848,44 @@ class DemoProvider(Provider):
                 return True, f"(demo) unblocked {ip}"
         return False, f"(demo) {ip} is not blocked"
 
+    # --- ModSecurity WAF --------------------------------------------------
+    # A single on/off (+ mode) toggle, kept in its own JSON file so the demo
+    # state is inspectable and survives a restart, like the firewall toggle.
+    def _modsec_file(self) -> Path:
+        return config.FIREWALL_DIR / "modsecurity.json"
+
+    def _modsec_load(self) -> dict:
+        import json
+
+        try:
+            return json.loads(self._modsec_file().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {"enabled": False, "mode": "On"}
+
+    def _modsec_save(self, state: dict) -> None:
+        import json
+
+        config.FIREWALL_DIR.mkdir(parents=True, exist_ok=True)
+        self._modsec_file().write_text(json.dumps(state, indent=2), encoding="utf-8")
+
+    def modsecurity_status(self) -> dict:
+        state = self._modsec_load()
+        return {
+            "available": True,
+            "enabled": bool(state.get("enabled", False)),
+            "mode": state.get("mode", "On"),
+            "engine": "ModSecurity 3.x (demo)",
+            "ruleset": "OWASP CRS 4.x",
+        }
+
+    def set_modsecurity(self, enabled: bool, mode: str = "On") -> tuple[bool, str]:
+        if mode not in ("On", "DetectionOnly"):
+            return False, f"(demo) invalid mode {mode!r}"
+        self._modsec_save({"enabled": bool(enabled), "mode": mode})
+        if not enabled:
+            return True, "(demo) ModSecurity turned off"
+        return True, f"(demo) ModSecurity turned on ({mode})"
+
     # --- Logs -------------------------------------------------------------
     # The demo has no real /var/log, so it writes small, realistic sample logs
     # under LOG_DIR the first time each is requested. The viewer still only

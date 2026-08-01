@@ -138,6 +138,11 @@
           <a class="tool" href="/ip-blocker" data-tool="ip blocker">
             <span class="t-ico">{{ icon("ip-blocker") }}</span><span class="t-name">IP Blocker</span>
           </a>
+          {% if user.role == 'admin' %}
+          <a class="tool" href="/modsecurity" data-tool="modsecurity waf web application firewall">
+            <span class="t-ico">{{ icon("modsecurity") }}</span><span class="t-name">ModSecurity</span>
+          </a>
+          {% endif %}
         </div>
       </div>
 

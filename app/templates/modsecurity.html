@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}ModSecurity WAF{% endblock %}
+{% block content %}
+<div class="breadcrumb"><a href="/">🏠 Home</a> / Security / ModSecurity</div>
+<h1>ModSecurity WAF</h1>
+<p class="muted">
+  Admin-only. ModSecurity is a Web Application Firewall that inspects every HTTP
+  request and blocks common attacks — SQL injection, cross-site scripting, path
+  traversal and more — using the OWASP Core Rule Set. It filters traffic for the
+  whole host, so switching it on affects every site.
+</p>
+
+<!-- WAF status + toggle -->
+<div class="card">
+  <h2>Web Application Firewall</h2>
+  {% if waf.available %}
+    <p>
+      {% if waf.enabled %}
+        <span class="pill pill-ok">Enabled{{ ' (log-only)' if waf.mode == 'DetectionOnly' }}</span>
+      {% else %}
+        <span class="pill">Disabled</span>
+      {% endif %}
+      <span class="muted small">
+        engine: {{ waf.engine }} · ruleset: {{ waf.ruleset }}
+        {%- if waf.enabled %} · mode: {{ waf.mode }}{% endif %}
+      </span>
+    </p>
+
+    {% if waf.enabled %}
+      <form method="post" action="/modsecurity/toggle" class="inline-form"
+            onsubmit="return confirm('Turn ModSecurity off? The host will stop filtering web requests for attacks.');">
+        <input type="hidden" name="enabled" value="0">
+        <button type="submit" class="btn btn-sm btn-danger">Disable WAF</button>
+      </form>
+    {% else %}
+      <form method="post" action="/modsecurity/toggle" class="inline-form"
+            onsubmit="return confirm('Enable ModSecurity now? In Blocking mode it will reject requests that match a rule — test in Detection Only first if unsure.');">
+        <label class="small" style="margin-right:.5rem;">Mode</label>
+        <select name="mode" style="margin-right:.5rem;">
+          <option value="On">Blocking (On)</option>
+          <option value="DetectionOnly">Detection Only (log)</option>
+        </select>
+        <input type="hidden" name="enabled" value="1">
+        <button type="submit" class="btn btn-sm btn-primary">Enable WAF</button>
+      </form>
+    {% endif %}
+
+    {% if waf.enabled %}
+    <p class="muted small" style="margin-top:.75rem;">
+      Switch to log-only (Detection Only) to keep matching without blocking:
+      <form method="post" action="/modsecurity/toggle" class="inline-form" style="display:inline;">
+        <input type="hidden" name="enabled" value="1">
+        <input type="hidden" name="mode" value="{{ 'On' if waf.mode == 'DetectionOnly' else 'DetectionOnly' }}">
+        <button type="submit" class="btn btn-xs btn-secondary">
+          Switch to {{ 'Blocking' if waf.mode == 'DetectionOnly' else 'Detection Only' }}
+        </button>
+      </form>
+    </p>
+    {% endif %}
+  {% else %}
+    <p><span class="pill">ModSecurity is not configured on this server.</span></p>
+    <p class="muted small">
+      Install the nginx connector and rule set (<code>apt install libnginx-mod-http-modsecurity</code>,
+      then deploy the OWASP CRS under <code>/etc/nginx/modsec</code>) to manage the WAF from here.
+    </p>
+  {% endif %}
+</div>
+
+<!-- What it does -->
+<div class="card">
+  <h2>About the rules</h2>
+  <p class="muted small">
+    <strong>Blocking (On)</strong> rejects requests that match a rule with a 403.
+    <strong>Detection Only</strong> logs matches without blocking — use it to check
+    for false positives before enforcing. Matches are written to the nginx error
+    log and the ModSecurity audit log; view them under
+    <a href="/logs">Logs</a>.
+  </p>
+</div>
+{% endblock %}

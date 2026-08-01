@@ -1148,6 +1148,86 @@ class LinuxProvider(Provider):
             return False, (proc.stderr or proc.stdout).strip()[-500:]
         return True, f"unblocked {ip}"
 
+    # --- ModSecurity WAF --------------------------------------------------
+    # The panel owns exactly one directive: the SecRuleEngine state, written to
+    # a small file the admin Includes from their ModSecurity main config
+    # (e.g. `Include /etc/nginx/modsec/litespanel-engine.conf`). Toggling
+    # rewrites that one line, tests nginx, then reloads — rolling back the file
+    # if the test fails so a bad state can never take the web server down.
+    _MODSEC_DIR = Path("/etc/nginx/modsec")
+    _MODSEC_ENGINE_FILE = _MODSEC_DIR / "litespanel-engine.conf"
+
+    def _modsec_read_engine(self) -> str | None:
+        """Return the current SecRuleEngine value from our managed file, or None."""
+        try:
+            text = self._MODSEC_ENGINE_FILE.read_text(encoding="utf-8")
+        except (OSError, ValueError):
+            return None
+        for line in text.splitlines():
+            line = line.strip()
+            if line.lower().startswith("secruleengine"):
+                parts = line.split()
+                if len(parts) >= 2:
+                    return parts[1]
+        return None
+
+    def modsecurity_status(self) -> dict:
+        available = self._MODSEC_DIR.exists()
+        engine = self._modsec_read_engine()  # "On" / "DetectionOnly" / "Off" / None
+        val = (engine or "Off")
+        return {
+            "available": available,
+            "enabled": val.lower() != "off",
+            "mode": val if val in ("On", "DetectionOnly") else "On",
+            "engine": "ModSecurity (nginx connector)",
+            "ruleset": "OWASP CRS",
+        }
+
+    def set_modsecurity(self, enabled: bool, mode: str = "On") -> tuple[bool, str]:
+        if mode not in ("On", "DetectionOnly"):
+            return False, "invalid mode"
+        if not self._MODSEC_DIR.exists():
+            return False, "ModSecurity is not configured on this host"
+        value = mode if enabled else "Off"
+        previous = None
+        try:
+            previous = self._MODSEC_ENGINE_FILE.read_text(encoding="utf-8")
+        except (OSError, ValueError):
+            previous = None
+        body = (
+            "# Managed by LitesPanel — Include this from your ModSecurity main\n"
+            "# config. Do not edit by hand; the panel rewrites this line.\n"
+            f"SecRuleEngine {value}\n"
+        )
+        try:
+            self._MODSEC_ENGINE_FILE.write_text(body, encoding="utf-8")
+        except OSError as exc:
+            return False, f"could not write engine file: {exc}"
+
+        # Validate; roll the file back to its prior contents if nginx rejects it.
+        try:
+            test = subprocess.run(["nginx", "-t"], capture_output=True, text=True)
+        except (FileNotFoundError, OSError):
+            return False, "nginx is not installed on this host"
+        if test.returncode != 0:
+            if previous is None:
+                self._MODSEC_ENGINE_FILE.unlink(missing_ok=True)
+            else:
+                self._MODSEC_ENGINE_FILE.write_text(previous, encoding="utf-8")
+            return False, "nginx config test failed: " + (test.stderr or test.stdout).strip()[-400:]
+
+        try:
+            reload = subprocess.run(["systemctl", "reload", "nginx"],
+                                    capture_output=True, text=True)
+        except (FileNotFoundError, OSError):
+            return False, "could not reload nginx"
+        if reload.returncode != 0:
+            return False, (reload.stderr or reload.stdout).strip()[-500:]
+
+        if not enabled:
+            return True, "ModSecurity turned off"
+        return True, f"ModSecurity turned on ({mode})"
+
     # --- Logs -------------------------------------------------------------
     # Fixed allowlist of readable logs. The viewer passes back a `key` from this
     # map — never a path — so it can only ever read these specific files.

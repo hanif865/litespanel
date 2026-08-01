@@ -410,8 +410,29 @@ class Provider(ABC):
         (False, message) when the IP is not on the manual blocklist. Admin-only.
         """
 
-    # --- Logs (admin-only) ------------------------------------------------
+    # --- ModSecurity WAF (admin-only) -------------------------------------
     @abstractmethod
+    def modsecurity_status(self) -> dict:
+        """Return the ModSecurity WAF state.
+
+        Shape: {available, enabled, mode, engine, ruleset}. `available` is False
+        when the nginx ModSecurity module / config is absent; `enabled` is True
+        when the WAF is switched on; `mode` is "On" (blocking) or
+        "DetectionOnly" (log-only); `ruleset` names the active rule set (e.g.
+        OWASP CRS) when known. Admin-only at the router layer.
+        """
+
+    @abstractmethod
+    def set_modsecurity(self, enabled: bool, mode: str = "On") -> tuple[bool, str]:
+        """Turn the ModSecurity WAF on or off. Returns (ok, message).
+
+        `mode` in {On, DetectionOnly} — On blocks matching requests, DetectionOnly
+        only logs them. Toggling reloads nginx; a config-test failure leaves the
+        previous state untouched and returns (False, message). Admin-only —
+        the WAF filters every request to the host.
+        """
+
+    # --- Logs (admin-only) ------------------------------------------------
     @abstractmethod
     def log_sources(self) -> list[dict]:
         """Return the log files this host exposes to the viewer.
