@@ -27,6 +27,7 @@ SITES_DIR = DATA_DIR / "sites"          # per-domain webroots
 NGINX_DIR = DATA_DIR / "nginx"          # generated vhost configs
 CERTS_DIR = DATA_DIR / "certs"          # SSL certificates
 DB_SANDBOX_DIR = DATA_DIR / "databases"  # demo "MySQL" storage
+PG_DIR = DATA_DIR / "postgres"          # demo "PostgreSQL" storage
 
 DB_URL = _env("PANEL_DB_URL", f"sqlite:///{(DATA_DIR / 'panel.db').as_posix()}")
 
@@ -95,7 +96,7 @@ NODE_PORT_BASE = int(_env("PANEL_NODE_PORT_BASE", "3100"))
 
 def ensure_dirs() -> None:
     """Create the data directories on startup (idempotent)."""
-    for d in (DATA_DIR, SITES_DIR, NGINX_DIR, CERTS_DIR, DB_SANDBOX_DIR, DNS_DIR,
+    for d in (DATA_DIR, SITES_DIR, NGINX_DIR, CERTS_DIR, DB_SANDBOX_DIR, PG_DIR, DNS_DIR,
               MAIL_DIR, BACKUPS_DIR, HOME_DIR, PHP_DIR, NODE_DIR, FIREWALL_DIR, LOG_DIR,
               FTP_DIR, WEBDISK_DIR):
         d.mkdir(parents=True, exist_ok=True)

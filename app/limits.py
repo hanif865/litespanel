@@ -7,7 +7,7 @@ from __future__ import annotations
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from .models import Database, Domain, EmailAccount, User
+from .models import Database, Domain, EmailAccount, PgDatabase, User
 
 
 def _count(db: Session, model, owner_id: int) -> int:
@@ -24,6 +24,15 @@ def database_limit_reached(db: Session, user: User) -> bool:
     if user.unlimited or user.eff_databases == 0:
         return False
     return _count(db, Database, user.id) >= user.eff_databases
+
+
+def pg_database_limit_reached(db: Session, user: User) -> bool:
+    # PostgreSQL databases count against the same per-account database quota as
+    # MySQL, so the two engines share one total (like cPanel's account limit).
+    if user.unlimited or user.eff_databases == 0:
+        return False
+    total = _count(db, Database, user.id) + _count(db, PgDatabase, user.id)
+    return total >= user.eff_databases
 
 
 def email_limit_reached(db: Session, user: User) -> bool:

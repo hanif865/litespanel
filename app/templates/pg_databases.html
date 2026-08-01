@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}PostgreSQL Databases{% endblock %}
+{% block content %}
+<div class="breadcrumb"><a href="/">🏠 Home</a> / PostgreSQL Databases</div>
+<h1>PostgreSQL Databases</h1>
+<p class="muted">Create a PostgreSQL database with a dedicated owning role.</p>
+
+{% if not available %}
+<div class="card">
+  <p><span class="pill">PostgreSQL is not available on this server.</span></p>
+  <p class="muted small">
+    Install and start PostgreSQL (<code>apt install postgresql</code>) and allow the
+    panel to run <code>psql</code> as the <code>postgres</code> user to manage databases from here.
+  </p>
+</div>
+{% endif %}
+
+{% if new_cred %}
+<div class="card cred-card">
+  <strong>✅ Save these credentials now — the password is shown only once:</strong>
+  <table class="cred-table">
+    <tr><td>Database</td><td><code>{{ new_cred.name }}</code></td></tr>
+    <tr><td>Role</td><td><code>{{ new_cred.user }}</code></td></tr>
+    <tr><td>Password</td><td><code>{{ new_cred.password }}</code></td></tr>
+    <tr><td>Host</td><td><code>{{ new_cred.host }}:{{ new_cred.port }}</code></td></tr>
+  </table>
+</div>
+{% endif %}
+
+<div class="card">
+  <form method="post" action="/pgsql/create" class="row-form">
+    <input type="text" name="name" placeholder="myapp_db" required>
+    <button type="submit" class="btn btn-primary">+ Create database</button>
+  </form>
+</div>
+
+{% if databases %}
+<table class="table">
+  <thead><tr><th>Database</th><th>Role</th><th>Created</th><th>Actions</th></tr></thead>
+  <tbody>
+  {% for row in databases %}
+    <tr>
+      <td><strong>{{ row.name }}</strong></td>
+      <td><code>{{ row.db_user }}</code></td>
+      <td class="muted">{{ row.created_at.strftime('%Y-%m-%d') }}</td>
+      <td class="actions">
+        <form method="post" action="/pgsql/{{ row.id }}/delete"
+              onsubmit="return confirm('Drop database {{ row.name }}? This cannot be undone.')">
+          <button type="submit" class="btn btn-sm btn-danger">Drop</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="empty">No PostgreSQL databases yet.</div>
+{% endif %}
+{% endblock %}

@@ -50,6 +50,7 @@ class User(Base):
 
     domains: Mapped[list["Domain"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
     databases: Mapped[list["Database"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
+    pg_databases: Mapped[list["PgDatabase"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
     cron_jobs: Mapped[list["CronJob"]] = relationship(cascade="all, delete-orphan")
     backups: Mapped[list["Backup"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
     package: Mapped["Package | None"] = relationship(
@@ -420,6 +421,27 @@ class Database(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     owner: Mapped["User"] = relationship(back_populates="databases")
+
+
+class PgDatabase(Base):
+    """A PostgreSQL database with its own dedicated role, one per row.
+
+    Mirrors Database (MySQL) but kept in a separate table so the two engines
+    can coexist without name collisions or a shared unique constraint.
+    """
+    __tablename__ = "pg_databases"
+    __table_args__ = (UniqueConstraint("name", name="uq_pg_database_name"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(64), index=True)
+    db_user: Mapped[str] = mapped_column(String(64))
+    # The PostgreSQL role's password, encrypted at rest (see app/crypto.py).
+    # Stored only so we can show it once; null for pre-existing rows.
+    db_password_enc: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    owner: Mapped["User"] = relationship(back_populates="pg_databases")
 
 
 class Certificate(Base):

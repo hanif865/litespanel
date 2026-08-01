@@ -228,6 +228,24 @@ class Provider(ABC):
     def db_execute(self, name: str, sql: str) -> dict:
         """Run SQL. Returns {columns, rows, message, error}."""
 
+    # --- PostgreSQL databases ---------------------------------------------
+    @abstractmethod
+    def create_pg_database(self, name: str, user: str, password: str) -> DbCredentials:
+        """Create a PostgreSQL database and a dedicated owning role.
+
+        Returns DbCredentials (host/port for a Postgres connection, typically
+        port 5432). Names are validated to plain identifiers at the provider
+        layer before touching psql. Mirrors create_database for MySQL.
+        """
+
+    @abstractmethod
+    def drop_pg_database(self, name: str, user: str) -> None:
+        """Drop the PostgreSQL database and its owning role."""
+
+    @abstractmethod
+    def pg_available(self) -> bool:
+        """Whether PostgreSQL is usable on this host (server reachable / tools present)."""
+
     # --- SSL --------------------------------------------------------------
     @abstractmethod
     def issue_certificate(self, domain: str) -> CertInfo:

@@ -358,6 +358,29 @@ class DemoProvider(Provider):
             conn.close()
         return result
 
+    # --- PostgreSQL databases ---------------------------------------------
+    # The demo has no real Postgres server; it records each database as a real
+    # SQLite file (so the row is inspectable) and reports a plausible 5432
+    # connection. Kept in its own PG_DIR so it never collides with MySQL demo
+    # files above.
+    def _pg_path(self, name: str) -> Path:
+        return config.PG_DIR / f"{name}.sqlite"
+
+    def create_pg_database(self, name: str, user: str, password: str) -> DbCredentials:
+        import sqlite3
+
+        config.PG_DIR.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(self._pg_path(name))
+        conn.close()
+        return DbCredentials(name=name, user=user, password=password,
+                             host="localhost", port=5432)
+
+    def drop_pg_database(self, name: str, user: str) -> None:
+        self._pg_path(name).unlink(missing_ok=True)
+
+    def pg_available(self) -> bool:
+        return True
+
     # --- SSL --------------------------------------------------------------
     def issue_certificate(self, domain: str) -> CertInfo:
         now = datetime.now(timezone.utc)

@@ -540,6 +540,62 @@ class LinuxProvider(Provider):
         _run(["mysql", "-e",
               f"ALTER USER '{user}'@'localhost' IDENTIFIED BY '{pw}'; FLUSH PRIVILEGES;"])
 
+    # --- PostgreSQL databases ---------------------------------------------
+    # Administered as the postgres superuser over the local socket. Identifiers
+    # are validated to plain names; the role password is escaped for a
+    # single-quoted SQL literal (E'' with backslash escaping) so it can't break
+    # out of the statement. Each command is a separate psql -c to keep a failure
+    # (e.g. duplicate) from silently leaving half the objects behind.
+    def _psql(self, sql: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["sudo", "-u", "postgres", "psql", "-v", "ON_ERROR_STOP=1", "-c", sql],
+            capture_output=True, text=True,
+        )
+
+    @staticmethod
+    def _pg_lit(value: str) -> str:
+        """Escape a value for a single-quoted PostgreSQL string literal (E'...')."""
+        return value.replace("\\", "\\\\").replace("'", "\\'")
+
+    def create_pg_database(self, name: str, user: str, password: str) -> DbCredentials:
+        _ident(name, "database name")
+        _ident(user, "database user")
+        pw = self._pg_lit(password)
+        # Role first, then a database owned by it. Identifiers are quoted with
+        # double quotes; the password uses an E'' escaped literal.
+        for stmt in (
+            f"CREATE ROLE \"{user}\" LOGIN PASSWORD E'{pw}';",
+            f"CREATE DATABASE \"{name}\" OWNER \"{user}\";",
+            f"GRANT ALL PRIVILEGES ON DATABASE \"{name}\" TO \"{user}\";",
+        ):
+            proc = self._psql(stmt)
+            if proc.returncode != 0:
+                raise RuntimeError(
+                    "psql failed: " + (proc.stderr or proc.stdout).strip()[-400:]
+                )
+        return DbCredentials(name=name, user=user, password=password,
+                             host="localhost", port=5432)
+
+    def drop_pg_database(self, name: str, user: str) -> None:
+        _ident(name, "database name")
+        _ident(user, "database user")
+        # Drop the database before the role that owns it. WITH (FORCE) needs PG
+        # 13+; fall back to a plain DROP if the server rejects the option.
+        drop_db = self._psql(f"DROP DATABASE IF EXISTS \"{name}\" WITH (FORCE);")
+        if drop_db.returncode != 0:
+            self._psql(f"DROP DATABASE IF EXISTS \"{name}\";")
+        self._psql(f"DROP ROLE IF EXISTS \"{user}\";")
+
+    def pg_available(self) -> bool:
+        try:
+            proc = subprocess.run(
+                ["sudo", "-u", "postgres", "psql", "-tAc", "SELECT 1;"],
+                capture_output=True, text=True,
+            )
+        except (FileNotFoundError, OSError):
+            return False
+        return proc.returncode == 0
+
     def issue_certificate(self, domain: str) -> CertInfo:
         base = ["certbot", "--nginx", "--non-interactive", "--agree-tos",
                 "--redirect", "-m", f"admin@{domain}"]
