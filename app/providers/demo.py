@@ -797,6 +797,57 @@ class DemoProvider(Provider):
             return True, f"(demo) unbanned {ip} from {jail}"
         return False, f"(demo) {ip} not banned in {jail}"
 
+    # --- IP Blocker -------------------------------------------------------
+    # Manual, permanent blocklist. Kept in its own JSON file so it's separate
+    # from the fail2ban auto-bans above; the router shows both on one page.
+    def _blocked_file(self) -> Path:
+        return config.FIREWALL_DIR / "blocked_ips.json"
+
+    def _blocked_load(self) -> dict:
+        import json
+
+        try:
+            return json.loads(self._blocked_file().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {"blocked": []}
+
+    def _blocked_save(self, state: dict) -> None:
+        import json
+
+        config.FIREWALL_DIR.mkdir(parents=True, exist_ok=True)
+        self._blocked_file().write_text(json.dumps(state, indent=2), encoding="utf-8")
+
+    def list_blocked_ips(self) -> list[dict]:
+        state = self._blocked_load()
+        return [
+            {"ip": e["ip"], "comment": e.get("comment", ""), "num": i + 1}
+            for i, e in enumerate(state.get("blocked", []))
+        ]
+
+    def block_ip(self, ip: str, comment: str | None = None) -> tuple[bool, str]:
+        from datetime import datetime, timezone
+
+        state = self._blocked_load()
+        blocked = state.setdefault("blocked", [])
+        if any(e["ip"] == ip for e in blocked):
+            return False, f"(demo) {ip} is already blocked"
+        blocked.append(
+            {"ip": ip, "comment": comment or "",
+             "created_at": datetime.now(timezone.utc).isoformat()}
+        )
+        self._blocked_save(state)
+        return True, f"(demo) blocked {ip}"
+
+    def unblock_ip(self, ip: str) -> tuple[bool, str]:
+        state = self._blocked_load()
+        blocked = state.get("blocked", [])
+        for i, e in enumerate(blocked):
+            if e["ip"] == ip:
+                del blocked[i]
+                self._blocked_save(state)
+                return True, f"(demo) unblocked {ip}"
+        return False, f"(demo) {ip} is not blocked"
+
     # --- Logs -------------------------------------------------------------
     # The demo has no real /var/log, so it writes small, realistic sample logs
     # under LOG_DIR the first time each is requested. The viewer still only

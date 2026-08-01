@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block title %}IP Blocker{% endblock %}
+{% block content %}
+<div class="breadcrumb"><a href="/">🏠 Home</a> / Security / IP Blocker</div>
+<h1>IP Blocker</h1>
+<p class="muted">
+  Admin-only. Block a specific IP or range from reaching this server, and review
+  or lift the automatic bans fail2ban has applied. Blocks apply to the whole
+  host — deny rules are inserted ahead of any allow rules so they always win.
+</p>
+
+{% if not fw.available %}
+  <div class="card">
+    <p><span class="pill">ufw is not installed on this server.</span></p>
+    <p class="muted small">Install ufw (<code>apt install ufw</code>) to enforce IP blocks.</p>
+  </div>
+{% elif not fw.active %}
+  <div class="card">
+    <p><span class="pill">Firewall inactive</span></p>
+    <p class="muted small">
+      The firewall is off, so blocks are recorded but not enforced yet. Enable it
+      on the <a href="/firewall">Firewall</a> page (make sure SSH is allowed first).
+    </p>
+  </div>
+{% endif %}
+
+<!-- Block an IP -->
+<div class="card">
+  <h2>Block an IP</h2>
+  <form method="post" action="/ip-blocker/block">
+    <div class="ext-grid">
+      <div>
+        <label class="small" style="display:block; margin-bottom:.25rem;">IP or CIDR</label>
+        <input type="text" class="ini-value" name="ip"
+               placeholder="e.g. 203.0.113.7 or 203.0.113.0/24" required>
+      </div>
+      <div>
+        <label class="small" style="display:block; margin-bottom:.25rem;">Note (optional)</label>
+        <input type="text" class="ini-value" name="comment" maxlength="64"
+               placeholder="why you're blocking it">
+      </div>
+    </div>
+    <div class="card-actions">
+      <button type="submit" class="btn btn-sm btn-danger">Block IP</button>
+    </div>
+  </form>
+</div>
+
+<!-- Manually blocked IPs -->
+<div class="card">
+  <h2>Blocked IPs</h2>
+  {% if blocked %}
+  <table class="table">
+    <thead>
+      <tr><th>IP / Range</th><th>Note</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for b in blocked %}
+      <tr>
+        <td><code>{{ b.ip }}</code></td>
+        <td>{{ b.comment or '' }}</td>
+        <td style="white-space:nowrap;">
+          <form method="post" action="/ip-blocker/unblock" style="display:inline;"
+                onsubmit="return confirm('Unblock {{ b.ip }}?');">
+            <input type="hidden" name="ip" value="{{ b.ip }}">
+            <button type="submit" class="btn btn-xs btn-secondary">Unblock</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+    <p class="muted">No IPs are manually blocked.</p>
+  {% endif %}
+</div>
+
+<!-- Automatic bans (fail2ban) -->
+<div class="card">
+  <h2>Automatic bans (fail2ban)</h2>
+  {% if f2b.available %}
+    <p>
+      {% if f2b.active %}
+        <span class="pill pill-ok">Running</span>
+      {% else %}
+        <span class="pill">Stopped</span>
+      {% endif %}
+      <span class="muted small">jails: {{ f2b.jails|join(', ') if f2b.jails else 'none' }}</span>
+    </p>
+
+    {% if jails %}
+      {% for j in jails %}
+      <div class="ini-block">
+        <h3 style="margin:.5rem 0;"><code>{{ j.name }}</code></h3>
+        {% if j.banned %}
+        <table class="table">
+          <thead><tr><th>Banned IP</th><th></th></tr></thead>
+          <tbody>
+            {% for ip in j.banned %}
+            <tr>
+              <td><code>{{ ip }}</code></td>
+              <td style="white-space:nowrap;">
+                <form method="post" action="/ip-blocker/fail2ban/unban" style="display:inline;">
+                  <input type="hidden" name="jail" value="{{ j.name }}">
+                  <input type="hidden" name="ip" value="{{ ip }}">
+                  <button type="submit" class="btn btn-xs btn-secondary">Unban</button>
+                </form>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+          <p class="muted small">No banned IPs in this jail.</p>
+        {% endif %}
+      </div>
+      {% endfor %}
+    {% endif %}
+  {% else %}
+    <p><span class="pill">fail2ban is not installed on this server.</span></p>
+    <p class="muted small">Install fail2ban (<code>apt install fail2ban</code>) to auto-ban abusive IPs.</p>
+  {% endif %}
+</div>
+{% endblock %}

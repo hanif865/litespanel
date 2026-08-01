@@ -1080,6 +1080,74 @@ class LinuxProvider(Provider):
             return False, (proc.stderr or proc.stdout).strip()[-500:]
         return True, f"unbanned {ip} from {jail}"
 
+    # --- IP Blocker -------------------------------------------------------
+    # Manual, permanent blocks are blanket `ufw deny from <ip>` rules (no port),
+    # inserted at position 1 so they win over any allow rules below. Reported
+    # separately from fail2ban's automatic bans (list_banned_ips).
+    _BLOCK_COMMENT_RE = re.compile(r"^[\w .:\-/]{0,64}$")
+
+    def list_blocked_ips(self) -> list[dict]:
+        try:
+            out = subprocess.run(["ufw", "status", "numbered"],
+                                 capture_output=True, text=True)
+        except (FileNotFoundError, OSError):
+            return []
+        blocked: list[dict] = []
+        # A manual block is a blanket source-deny: the "to" is Anywhere and the
+        # action is DENY, e.g. "[ 4] Anywhere    DENY IN    203.0.113.7".
+        for line in (out.stdout or "").splitlines():
+            m = re.match(r"\[\s*(\d+)\]\s+(.*)", line)
+            if not m:
+                continue
+            num = int(m.group(1))
+            rest = m.group(2)
+            am = re.search(r"\b(ALLOW|DENY|REJECT|LIMIT)\b(?:\s+(IN|OUT|FWD))?", rest)
+            if not am or am.group(1) != "DENY":
+                continue
+            to = rest[:am.start()].strip()
+            source = rest[am.end():].strip()
+            # Only blanket denies (whole-host, any port) count as IP blocks; a
+            # port-scoped deny belongs to the firewall rules list, not here.
+            if to not in ("Anywhere", "Anywhere (v6)"):
+                continue
+            # ufw appends "# comment" to the source column when a rule has one.
+            comment = ""
+            if "#" in source:
+                source, comment = (p.strip() for p in source.split("#", 1))
+            if not source:
+                continue
+            blocked.append({"num": num, "ip": source, "comment": comment})
+        return blocked
+
+    def block_ip(self, ip: str, comment: str | None = None) -> tuple[bool, str]:
+        ip = (ip or "").strip()
+        if not _IP_RE.match(ip):
+            return False, "invalid IP or CIDR"
+        cmd = ["ufw", "insert", "1", "deny", "from", ip]
+        comment = (comment or "").strip()
+        if comment and self._BLOCK_COMMENT_RE.match(comment):
+            cmd += ["comment", comment]
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True)
+        except (FileNotFoundError, OSError):
+            return False, "ufw is not installed on this host"
+        if proc.returncode != 0:
+            return False, (proc.stderr or proc.stdout).strip()[-500:]
+        return True, f"blocked {ip}"
+
+    def unblock_ip(self, ip: str) -> tuple[bool, str]:
+        ip = (ip or "").strip()
+        if not _IP_RE.match(ip):
+            return False, "invalid IP or CIDR"
+        try:
+            proc = subprocess.run(["ufw", "delete", "deny", "from", ip],
+                                  capture_output=True, text=True)
+        except (FileNotFoundError, OSError):
+            return False, "ufw is not installed on this host"
+        if proc.returncode != 0:
+            return False, (proc.stderr or proc.stdout).strip()[-500:]
+        return True, f"unblocked {ip}"
+
     # --- Logs -------------------------------------------------------------
     # Fixed allowlist of readable logs. The viewer passes back a `key` from this
     # map — never a path — so it can only ever read these specific files.

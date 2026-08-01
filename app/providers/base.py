@@ -383,7 +383,35 @@ class Provider(ABC):
     def unban_ip(self, ip: str, jail: str) -> tuple[bool, str]:
         """Unban an IP from a jail via fail2ban-client. Returns (ok, message)."""
 
+    # --- IP Blocker (admin-only) ------------------------------------------
+    @abstractmethod
+    def list_blocked_ips(self) -> list[dict]:
+        """List IPs manually blocked host-wide (permanent deny rules).
+
+        Each entry: {ip, comment, num}. `num` is the backend rule index used by
+        unblock_ip on hosts that need it (ufw); the demo ignores it. This is the
+        manual blocklist only — automatic fail2ban bans are reported separately
+        by list_banned_ips. Returns [] when nothing is blocked. Admin-only.
+        """
+
+    @abstractmethod
+    def block_ip(self, ip: str, comment: str | None = None) -> tuple[bool, str]:
+        """Block an IP/CIDR host-wide with a blanket deny. Returns (ok, message).
+
+        The deny is inserted ahead of any allow rules so it always wins. On a
+        host with the firewall inactive the block is recorded but not enforced
+        until the firewall is enabled — the caller warns about this. Admin-only.
+        """
+
+    @abstractmethod
+    def unblock_ip(self, ip: str) -> tuple[bool, str]:
+        """Remove a manual block for an IP/CIDR. Returns (ok, message).
+
+        (False, message) when the IP is not on the manual blocklist. Admin-only.
+        """
+
     # --- Logs (admin-only) ------------------------------------------------
+    @abstractmethod
     @abstractmethod
     def log_sources(self) -> list[dict]:
         """Return the log files this host exposes to the viewer.
