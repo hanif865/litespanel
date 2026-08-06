@@ -1,0 +1,108 @@
+{% extends "whm_base.html" %}
+{% block title %}Create a New Account{% endblock %}
+{% block content %}
+<div class="whm-page-head">
+  <h1>Create a New Account</h1>
+  <p class="muted">Provision a new hosting account. A domain is optional — you can add one later.</p>
+</div>
+
+<form method="post" action="/whm/accounts/create" class="whm-form" onsubmit="return whmCheckPw()">
+  <fieldset class="whm-fs">
+    <legend>Domain Information</legend>
+    <div class="whm-row">
+      <label for="wa-domain">New Domain <span class="muted">(optional)</span></label>
+      <div class="whm-field">
+        <input type="text" id="wa-domain" name="domain" placeholder="example.com" autocomplete="off">
+        <p class="muted small">Leave blank to choose a domain later. Only a hosting account is created without it.</p>
+      </div>
+    </div>
+  </fieldset>
+
+  <fieldset class="whm-fs">
+    <legend>Username</legend>
+    <div class="whm-row">
+      <label for="wa-user">Username</label>
+      <div class="whm-field">
+        <input type="text" id="wa-user" name="username" placeholder="janedoe" required autocomplete="off">
+        <p class="muted small">3–32 chars, start with a letter, lowercase letters/digits/underscore.</p>
+      </div>
+    </div>
+  </fieldset>
+
+  <fieldset class="whm-fs">
+    <legend>Password</legend>
+    <div class="whm-row">
+      <label for="wa-pw">Password</label>
+      <div class="whm-field"><input type="password" id="wa-pw" name="password" placeholder="min 6 chars" required></div>
+    </div>
+    <div class="whm-row">
+      <label for="wa-pw2">Re-type Password</label>
+      <div class="whm-field">
+        <input type="password" id="wa-pw2" name="password2" required oninput="whmPwHint()">
+        <p class="muted small" id="wa-pwhint"></p>
+      </div>
+    </div>
+  </fieldset>
+
+  <fieldset class="whm-fs">
+    <legend>Account Limits</legend>
+    <div class="whm-row">
+      <label for="wa-pkg">Package</label>
+      <div class="whm-field">
+        <select id="wa-pkg" name="package_id" onchange="whmPkg()">
+          <option value="0">— custom limits →</option>
+          {% for p in packages %}<option value="{{ p.id }}">{{ p.name }} ({{ p.max_domains or '∞' }}/{{ p.max_databases or '∞' }}/{{ p.max_email or '∞' }})</option>{% endfor %}
+        </select>
+        <p class="muted small">A package overrides the custom limits below and can be changed later.</p>
+      </div>
+    </div>
+    <div class="whm-limits" id="wa-limits">
+      <div><span class="cron-lbl">Max Domains (0=∞)</span><input type="number" name="max_domains" value="5"></div>
+      <div><span class="cron-lbl">Max Databases</span><input type="number" name="max_databases" value="5"></div>
+      <div><span class="cron-lbl">Max Email</span><input type="number" name="max_email" value="10"></div>
+      <div><span class="cron-lbl">Disk Quota (MB)</span><input type="number" name="disk_quota_mb" value="1024"></div>
+    </div>
+  </fieldset>
+
+  {% if user.role == 'admin' %}
+  <fieldset class="whm-fs">
+    <legend>Role</legend>
+    <div class="whm-row">
+      <label for="wa-role">Account type</label>
+      <div class="whm-field">
+        <select id="wa-role" name="role">
+          <option value="user">User (hosting account)</option>
+          <option value="reseller">Reseller</option>
+        </select>
+        <p class="muted small">Resellers manage their own sub-accounts. Only a user gets an isolated system home + site.</p>
+      </div>
+    </div>
+  </fieldset>
+  {% endif %}
+
+  <button type="submit" class="btn btn-primary">Create</button>
+  <a href="/whm/accounts" class="btn">Cancel</a>
+</form>
+
+<script>
+function whmPwHint() {
+  var a = document.getElementById('wa-pw').value, b = document.getElementById('wa-pw2').value;
+  var h = document.getElementById('wa-pwhint');
+  if (!b) { h.textContent = ''; return; }
+  if (a === b) { h.textContent = '✓ Passwords match'; h.style.color = 'var(--ok, #2f9e44)'; }
+  else { h.textContent = '✗ Passwords do not match'; h.style.color = 'var(--danger, #e5484d)'; }
+}
+function whmCheckPw() {
+  var a = document.getElementById('wa-pw').value, b = document.getElementById('wa-pw2').value;
+  if (a !== b) { alert('The two passwords do not match.'); return false; }
+  if (a.length < 6) { alert('Password must be at least 6 characters.'); return false; }
+  return true;
+}
+function whmPkg() {
+  // Grey out custom limits when a package is chosen (the package wins server-side).
+  var custom = document.getElementById('wa-pkg').value === '0';
+  document.getElementById('wa-limits').style.opacity = custom ? '1' : '.4';
+  document.querySelectorAll('#wa-limits input').forEach(function (i) { i.disabled = !custom; });
+}
+</script>
+{% endblock %}

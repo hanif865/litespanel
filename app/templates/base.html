@@ -138,11 +138,8 @@
 
       {% if user.role in ('admin', 'reseller') %}
       <div class="jnav-section">Preferences</div>
-      <a href="/users" class="jnav-item {{ 'is-active' if active == 'users' }}" data-tip="User Manager">
-        <span class="jnav-ico">{{ icon("users", 20) }}</span><span class="jnav-label">User Manager</span>
-      </a>
-      <a href="/packages" class="jnav-item {{ 'is-active' if active == 'packages' }}" data-tip="Packages">
-        <span class="jnav-ico">{{ icon("packages", 20) }}</span><span class="jnav-label">Packages</span>
+      <a href="/whm" class="jnav-item" data-tip="WHM / Admin Area">
+        <span class="jnav-ico">{{ icon("server", 20) }}</span><span class="jnav-label">WHM / Admin Area</span>
       </a>
       {% endif %}
     </nav>

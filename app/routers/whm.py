@@ -1,0 +1,307 @@
+"""WHM — the separate admin/reseller area (WebHost-Manager style).
+
+A distinct shell from the cPanel-style user panel: admins and resellers create
+and manage hosting accounts, set limits/packages, and (later) manage the server.
+Every route is gated by require_manager (admins + resellers); resellers only see
+and act on the accounts they created.
+
+The heavy lifting is shared with the existing routers — account teardown lives in
+accounts.terminate_account, reseller scoping/validation in routers.users, and
+package visibility in routers.packages — so WHM is mostly a distinct presentation
+plus a couple of admin-only actions (create-with-domain, password modification).
+"""
+from __future__ import annotations
+
+from fastapi import APIRouter, Depends, Form, Request
+from fastapi.responses import RedirectResponse
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from ..accounts import account_home, terminate_account
+from ..db import get_db
+from ..models import Domain, Package, User
+from ..providers import get_provider
+from ..routers.domains import _DOMAIN_RE
+from ..routers.packages import _NAME_RE, visible_packages
+from ..routers.users import _USERNAME_RE, _can_manage, _owned_package, _visible_users
+from ..security import hash_password, require_manager
+from ..web import templates
+
+router = APIRouter(prefix="/whm", tags=["whm"])
+
+
+def _flash(request: Request, message: str) -> None:
+    request.session["flash"] = message
+
+
+# --- Dashboard ------------------------------------------------------------
+@router.get("")
+def dashboard(request: Request, manager: User = Depends(require_manager), db: Session = Depends(get_db)):
+    users = _visible_users(db, manager)
+    suspended = sum(1 for u in users if u.suspended)
+    counts = {
+        "total": len(users),
+        "active": len(users) - suspended,
+        "suspended": suspended,
+        "packages": len(visible_packages(db, manager)),
+    }
+    flash = request.session.pop("flash", None)
+    return templates.TemplateResponse(
+        request, "whm/home.html",
+        {"user": manager, "active": "home", "flash": flash,
+         "server": get_provider().system_stats(), "counts": counts},
+    )
+
+
+# --- Accounts -------------------------------------------------------------
+@router.get("/accounts")
+def list_accounts(request: Request, manager: User = Depends(require_manager), db: Session = Depends(get_db)):
+    users = _visible_users(db, manager)
+    packages = visible_packages(db, manager)
+    flash = request.session.pop("flash", None)
+    return templates.TemplateResponse(
+        request, "whm/accounts.html",
+        {"user": manager, "users": users, "packages": packages,
+         "active": "accounts", "flash": flash},
+    )
+
+
+@router.get("/accounts/new")
+def new_account(request: Request, manager: User = Depends(require_manager), db: Session = Depends(get_db)):
+    packages = visible_packages(db, manager)
+    flash = request.session.pop("flash", None)
+    return templates.TemplateResponse(
+        request, "whm/create_account.html",
+        {"user": manager, "packages": packages, "active": "create", "flash": flash},
+    )
+
+
+@router.post("/accounts/create")
+def create_account(
+    request: Request,
+    username: str = Form(...),
+    password: str = Form(...),
+    password2: str = Form(""),
+    role: str = Form("user"),
+    package_id: int = Form(0),
+    max_domains: int = Form(0),
+    max_databases: int = Form(0),
+    max_email: int = Form(0),
+    disk_quota_mb: int = Form(0),
+    domain: str = Form(""),
+    manager: User = Depends(require_manager),
+    db: Session = Depends(get_db),
+):
+    username = username.strip().lower()
+    if not _USERNAME_RE.match(username):
+        _flash(request, "❌ Username: 3–32 chars, start with a letter, [a-z0-9_].")
+        return RedirectResponse("/whm/accounts/new", status_code=303)
+    if len(password) < 6:
+        _flash(request, "❌ Password must be at least 6 characters.")
+        return RedirectResponse("/whm/accounts/new", status_code=303)
+    if password != password2:
+        _flash(request, "❌ The two passwords do not match.")
+        return RedirectResponse("/whm/accounts/new", status_code=303)
+    if db.scalar(select(User).where(User.username == username)):
+        _flash(request, f"❌ User '{username}' already exists.")
+        return RedirectResponse("/whm/accounts/new", status_code=303)
+
+    # Optional initial domain — validated up front so nothing is half-created.
+    domain = domain.strip().lower().removeprefix("www.")
+    if domain:
+        if not _DOMAIN_RE.match(domain):
+            _flash(request, f"❌ '{domain}' is not a valid domain name.")
+            return RedirectResponse("/whm/accounts/new", status_code=303)
+        if db.scalar(select(Domain).where(Domain.name == domain)):
+            _flash(request, f"❌ Domain {domain} already exists.")
+            return RedirectResponse("/whm/accounts/new", status_code=303)
+
+    # Resellers may only create plain users; admins may also create resellers.
+    if manager.role != "admin" or role not in ("user", "reseller"):
+        role = "user"
+
+    pkg = _owned_package(db, manager, package_id)
+    new_user = User(
+        username=username, password_hash=hash_password(password),
+        role=role, is_admin=(role == "admin"), created_by_id=manager.id,
+        package_id=pkg.id if pkg else None,
+        max_domains=max(0, max_domains), max_databases=max(0, max_databases),
+        max_email=max(0, max_email), disk_quota_mb=max(0, disk_quota_mb),
+    )
+    db.add(new_user)
+    db.commit()
+
+    # Hosting accounts get an isolated system user (their own /home + PHP pool).
+    if role == "user":
+        new_user.system_user = username
+        db.commit()
+        get_provider().ensure_account(username)
+
+    # Provision the initial site under the new account's home, if one was given.
+    provisioned = ""
+    if domain and role == "user":
+        home = account_home(db, new_user)
+        docroot = home / domain / "public_html"
+        get_provider().create_site(domain, docroot, "8.3", new_user.system_user)
+        get_provider().reload_web()
+        db.add(Domain(name=domain, owner_id=new_user.id, docroot=str(docroot), php_version="8.3"))
+        db.commit()
+        provisioned = f" with {domain}"
+
+    plan = f" on package '{pkg.name}'" if pkg else ""
+    _flash(request, f"✅ {role.capitalize()} '{username}' created{plan}{provisioned}.")
+    return RedirectResponse("/whm/accounts", status_code=303)
+
+
+@router.post("/accounts/{user_id}/password")
+def modify_password(
+    request: Request, user_id: int,
+    password: str = Form(...), password2: str = Form(""),
+    manager: User = Depends(require_manager), db: Session = Depends(get_db),
+):
+    target = db.get(User, user_id)
+    if target is None or not _can_manage(manager, target):
+        _flash(request, "❌ Not allowed.")
+        return RedirectResponse("/whm/accounts", status_code=303)
+    if len(password) < 6:
+        _flash(request, "❌ Password must be at least 6 characters.")
+        return RedirectResponse("/whm/accounts", status_code=303)
+    if password != password2:
+        _flash(request, "❌ The two passwords do not match.")
+        return RedirectResponse("/whm/accounts", status_code=303)
+    target.password_hash = hash_password(password)
+    db.commit()
+    _flash(request, f"🔒 Password updated for {target.username}.")
+    return RedirectResponse("/whm/accounts", status_code=303)
+
+
+@router.post("/accounts/{user_id}/package")
+def change_package(
+    request: Request, user_id: int, package_id: int = Form(0),
+    manager: User = Depends(require_manager), db: Session = Depends(get_db),
+):
+    target = db.get(User, user_id)
+    if target is None or not _can_manage(manager, target):
+        _flash(request, "❌ Not allowed.")
+        return RedirectResponse("/whm/accounts", status_code=303)
+    pkg = _owned_package(db, manager, package_id)
+    target.package_id = pkg.id if pkg else None
+    db.commit()
+    _flash(request, f"✅ {target.username} → {pkg.name if pkg else 'custom limits'}.")
+    return RedirectResponse("/whm/accounts", status_code=303)
+
+
+@router.post("/accounts/{user_id}/suspend")
+def suspend_account(request: Request, user_id: int,
+                    manager: User = Depends(require_manager), db: Session = Depends(get_db)):
+    return _set_suspended(request, user_id, True, manager, db)
+
+
+@router.post("/accounts/{user_id}/unsuspend")
+def unsuspend_account(request: Request, user_id: int,
+                      manager: User = Depends(require_manager), db: Session = Depends(get_db)):
+    return _set_suspended(request, user_id, False, manager, db)
+
+
+def _set_suspended(request, user_id, value, manager, db):
+    target = db.get(User, user_id)
+    if target is None or not _can_manage(manager, target):
+        _flash(request, "❌ Not allowed.")
+        return RedirectResponse("/whm/accounts", status_code=303)
+    target.suspended = value
+    db.commit()
+    _flash(request, f"{'⏸️ Suspended' if value else '▶️ Reactivated'} {target.username}.")
+    return RedirectResponse("/whm/accounts", status_code=303)
+
+
+@router.post("/accounts/{user_id}/terminate")
+def terminate(request: Request, user_id: int,
+              manager: User = Depends(require_manager), db: Session = Depends(get_db)):
+    target = db.get(User, user_id)
+    if target is None or not _can_manage(manager, target):
+        _flash(request, "❌ Not allowed.")
+        return RedirectResponse("/whm/accounts", status_code=303)
+    username = terminate_account(db, target)
+    _flash(request, f"🗑️ Account '{username}' and all its resources removed.")
+    return RedirectResponse("/whm/accounts", status_code=303)
+
+
+# --- Packages -------------------------------------------------------------
+@router.get("/packages")
+def list_packages(request: Request, manager: User = Depends(require_manager), db: Session = Depends(get_db)):
+    packages = visible_packages(db, manager)
+    flash = request.session.pop("flash", None)
+    return templates.TemplateResponse(
+        request, "whm/packages.html",
+        {"user": manager, "packages": packages, "active": "packages", "flash": flash},
+    )
+
+
+@router.post("/packages/create")
+def create_package(
+    request: Request,
+    name: str = Form(...),
+    max_domains: int = Form(0),
+    max_databases: int = Form(0),
+    max_email: int = Form(0),
+    disk_quota_mb: int = Form(0),
+    manager: User = Depends(require_manager),
+    db: Session = Depends(get_db),
+):
+    name = name.strip()
+    if not _NAME_RE.match(name):
+        _flash(request, "❌ Invalid package name.")
+        return RedirectResponse("/whm/packages", status_code=303)
+    if db.scalar(select(Package).where(Package.owner_id == manager.id, Package.name == name)):
+        _flash(request, f"❌ Package '{name}' already exists.")
+        return RedirectResponse("/whm/packages", status_code=303)
+    db.add(Package(
+        name=name, owner_id=manager.id,
+        max_domains=max(0, max_domains), max_databases=max(0, max_databases),
+        max_email=max(0, max_email), disk_quota_mb=max(0, disk_quota_mb),
+    ))
+    db.commit()
+    _flash(request, f"✅ Package '{name}' created.")
+    return RedirectResponse("/whm/packages", status_code=303)
+
+
+@router.post("/packages/{package_id}/update")
+def update_package(
+    request: Request, package_id: int,
+    max_domains: int = Form(0),
+    max_databases: int = Form(0),
+    max_email: int = Form(0),
+    disk_quota_mb: int = Form(0),
+    manager: User = Depends(require_manager),
+    db: Session = Depends(get_db),
+):
+    pkg = db.get(Package, package_id)
+    if pkg is None or (manager.role != "admin" and pkg.owner_id != manager.id):
+        _flash(request, "❌ Not allowed.")
+        return RedirectResponse("/whm/packages", status_code=303)
+    pkg.max_domains = max(0, max_domains)
+    pkg.max_databases = max(0, max_databases)
+    pkg.max_email = max(0, max_email)
+    pkg.disk_quota_mb = max(0, disk_quota_mb)
+    db.commit()
+    _flash(request, f"✅ Package '{pkg.name}' updated — all its accounts now use the new limits.")
+    return RedirectResponse("/whm/packages", status_code=303)
+
+
+@router.post("/packages/{package_id}/delete")
+def delete_package(
+    request: Request, package_id: int,
+    manager: User = Depends(require_manager), db: Session = Depends(get_db),
+):
+    pkg = db.get(Package, package_id)
+    if pkg is None or (manager.role != "admin" and pkg.owner_id != manager.id):
+        _flash(request, "❌ Not allowed.")
+        return RedirectResponse("/whm/packages", status_code=303)
+    if pkg.users:
+        _flash(request, f"❌ '{pkg.name}' is assigned to {len(pkg.users)} account(s). Reassign them first.")
+        return RedirectResponse("/whm/packages", status_code=303)
+    name = pkg.name
+    db.delete(pkg)
+    db.commit()
+    _flash(request, f"🗑️ Package '{name}' deleted.")
+    return RedirectResponse("/whm/packages", status_code=303)

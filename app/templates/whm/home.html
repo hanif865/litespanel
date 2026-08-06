@@ -1,0 +1,69 @@
+{% extends "whm_base.html" %}
+{% from "_icons.html" import icon %}
+{% block title %}Home{% endblock %}
+{% block content %}
+<div class="whm-page-head">
+  <h1>WebHost Manager</h1>
+  <p class="muted">Manage hosting accounts, packages and (soon) server configuration from one place.</p>
+</div>
+
+<div class="whm-cards">
+  <div class="whm-card">
+    <div class="whm-card-ico">{{ icon("users", 22) }}</div>
+    <div class="whm-card-num">{{ counts.total }}</div>
+    <div class="whm-card-lbl">Total accounts</div>
+  </div>
+  <div class="whm-card">
+    <div class="whm-card-ico ok">{{ icon("success", 22) }}</div>
+    <div class="whm-card-num">{{ counts.active }}</div>
+    <div class="whm-card-lbl">Active</div>
+  </div>
+  <div class="whm-card">
+    <div class="whm-card-ico warn">{{ icon("power", 22) }}</div>
+    <div class="whm-card-num">{{ counts.suspended }}</div>
+    <div class="whm-card-lbl">Suspended</div>
+  </div>
+  <div class="whm-card">
+    <div class="whm-card-ico">{{ icon("packages", 22) }}</div>
+    <div class="whm-card-num">{{ counts.packages }}</div>
+    <div class="whm-card-lbl">Packages</div>
+  </div>
+</div>
+
+<div class="whm-columns">
+  <div class="card">
+    <h2 style="margin-top:0">Quick actions</h2>
+    <div class="whm-actions">
+      <a href="/whm/accounts/new" class="whm-action">
+        <span class="whm-action-ico">{{ icon("user-plus", 20) }}</span>
+        <span><strong>Create a New Account</strong><br><span class="muted small">Provision a hosting account</span></span>
+      </a>
+      <a href="/whm/accounts" class="whm-action">
+        <span class="whm-action-ico">{{ icon("users", 20) }}</span>
+        <span><strong>List Accounts</strong><br><span class="muted small">Suspend, terminate, change plan</span></span>
+      </a>
+      <a href="/whm/packages" class="whm-action">
+        <span class="whm-action-ico">{{ icon("packages", 20) }}</span>
+        <span><strong>Packages</strong><br><span class="muted small">Reusable hosting plans</span></span>
+      </a>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">Server load</h2>
+    <div class="stat-item">
+      <div class="stat-top"><span class="s-label">CPU</span><span class="s-val">{{ server.cpu_percent }}%</span></div>
+      <div class="meter"><div class="meter-fill {{ 'hot' if server.cpu_percent > 85 }}" style="width: {{ server.cpu_percent }}%"></div></div>
+    </div>
+    <div class="stat-item">
+      <div class="stat-top"><span class="s-label">Memory</span><span class="s-val">{{ server.mem_percent }}%</span></div>
+      <div class="meter"><div class="meter-fill {{ 'hot' if server.mem_percent > 85 }}" style="width: {{ server.mem_percent }}%"></div></div>
+    </div>
+    <div class="stat-item">
+      <div class="stat-top"><span class="s-label">Disk ({{ server.disk.used_gb }} / {{ server.disk.total_gb }} GB)</span><span class="s-val">{{ server.disk.percent }}%</span></div>
+      <div class="meter"><div class="meter-fill {{ 'hot' if server.disk.percent > 85 }}" style="width: {{ server.disk.percent }}%"></div></div>
+    </div>
+    <div class="info-row"><span class="k">Provider</span><span class="v">{{ server.provider }}</span></div>
+  </div>
+</div>
+{% endblock %}

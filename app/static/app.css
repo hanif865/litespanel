@@ -372,3 +372,154 @@ label input { display: block; width: 100%; margin-top: .3rem; font-weight: 400; 
   .app.collapsed .jnav-item { justify-content: flex-start; gap: .8rem; }
   .jsearch { display: none; }
 }
+
+/* ============================================================
+   WHM (WebHost Manager) — distinct admin shell
+   ============================================================ */
+.whm-sidebar {
+  /* Distinct colour so WHM feels like a separate area */
+  --side: #1a2332;
+  --side-2: #212c3d;
+  --side-text: #b0bac9;
+  --side-active: #4dabf7;
+}
+[data-theme="dark"] .whm-sidebar {
+  --side: #0d1520;
+  --side-2: #141d2b;
+}
+
+.whm-exit {
+  display: flex; align-items: center; gap: .6rem; padding: .6rem .8rem;
+  color: var(--side-text); font-size: .85rem; text-decoration: none;
+  border-radius: var(--radius); transition: background .15s;
+}
+.whm-exit:hover { background: var(--side-2); text-decoration: none; }
+
+.whm-title {
+  font-size: 1rem; font-weight: 600; color: var(--ink);
+  margin-left: 1rem;
+}
+
+.badge-whm {
+  background: #e7f5ff; color: #1c7ed6;
+  padding: .25rem .6rem; border-radius: 12px; font-size: .7rem;
+  font-weight: 700; text-transform: uppercase; letter-spacing: .03em;
+}
+[data-theme="dark"] .badge-whm { background: #1d2a37; color: #74c0fc; }
+
+/* WHM page header */
+.whm-page-head {
+  margin-bottom: 1.5rem;
+}
+.whm-page-head h1 {
+  font-size: 1.6rem; margin-bottom: .5rem;
+}
+.whm-page-head .muted {
+  font-size: .9rem;
+}
+
+/* WHM dashboard cards */
+.whm-cards {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 1rem; margin-bottom: 1.5rem;
+}
+.whm-card {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 1.2rem; text-align: center;
+  box-shadow: var(--shadow);
+}
+.whm-card-ico {
+  width: 44px; height: 44px; margin: 0 auto .8rem;
+  background: var(--bg); border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--muted);
+}
+.whm-card-ico.ok { background: #e8f8ed; color: var(--ok); }
+.whm-card-ico.warn { background: var(--orange-soft); color: var(--orange); }
+.whm-card-num {
+  font-size: 2rem; font-weight: 700; color: var(--ink); margin-bottom: .3rem;
+}
+.whm-card-lbl {
+  font-size: .85rem; color: var(--muted); text-transform: uppercase;
+  letter-spacing: .03em; font-weight: 600;
+}
+
+/* WHM two-column layout */
+.whm-columns {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;
+}
+@media (max-width: 992px) {
+  .whm-columns { grid-template-columns: 1fr; }
+}
+
+/* WHM quick actions */
+.whm-actions {
+  display: flex; flex-direction: column; gap: .8rem;
+}
+.whm-action {
+  display: flex; align-items: center; gap: .8rem; padding: 1rem;
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: var(--radius); text-decoration: none;
+  color: var(--text); transition: all .15s;
+}
+.whm-action:hover {
+  background: var(--card); border-color: var(--orange);
+  text-decoration: none; transform: translateX(2px);
+}
+.whm-action-ico {
+  width: 40px; height: 40px; border-radius: 50%;
+  background: var(--card); display: flex; align-items: center;
+  justify-content: center; color: var(--orange); flex-shrink: 0;
+}
+.whm-action strong {
+  display: block; color: var(--ink); margin-bottom: .15rem;
+}
+
+/* WHM form (create account) */
+.whm-form {
+  max-width: 900px;
+}
+.whm-fs {
+  border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 1.2rem; margin-bottom: 1.2rem; background: var(--bg);
+}
+.whm-fs legend {
+  font-weight: 700; color: var(--ink); font-size: .95rem;
+  padding: 0 .5rem; margin-bottom: .8rem;
+}
+.whm-row {
+  display: grid; grid-template-columns: 200px 1fr; gap: 1rem;
+  align-items: start; margin-bottom: 1rem;
+}
+.whm-row:last-child { margin-bottom: 0; }
+.whm-row label {
+  font-weight: 600; color: var(--text); padding-top: .5rem;
+}
+.whm-field input, .whm-field select {
+  width: 100%; max-width: 400px;
+}
+.whm-limits {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: .8rem;
+}
+
+/* WHM table */
+.whm-table td.actions {
+  white-space: nowrap;
+}
+.whm-pwrow {
+  background: var(--bg) !important;
+}
+.whm-pwform {
+  display: flex; align-items: center; gap: .8rem; padding: .6rem 0;
+}
+.whm-pwform input {
+  flex: 1; max-width: 200px;
+}
+
+@media (max-width: 760px) {
+  .whm-row {
+    grid-template-columns: 1fr; gap: .3rem;
+  }
+  .whm-row label { padding-top: 0; }
+}

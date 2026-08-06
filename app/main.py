@@ -22,7 +22,7 @@ from .routers import (
     account, auth, autoresponders, backups, cron, dashboard, databases, dbconsole, dbwizard,
     disk_usage, dns, domains, email, files, firewall, forwarders, ftp, git, ip_blocker, logs,
     metrics, modsecurity, node,
-    packages, pg_databases, php, ssl, subdomains, users, webdisk, wordpress,
+    packages, pg_databases, php, ssl, subdomains, users, webdisk, whm, wordpress,
 )
 
 app = FastAPI(title=config.APP_NAME, docs_url=None, redoc_url=None)
@@ -77,6 +77,7 @@ app.include_router(metrics.router)
 app.include_router(backups.router)
 app.include_router(packages.router)
 app.include_router(users.router)
+app.include_router(whm.router)
 
 
 @app.on_event("startup")

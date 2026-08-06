@@ -1,0 +1,136 @@
+{% from "_icons.html" import icon %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}WHM{% endblock %} · {{ APP_NAME }} WHM</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script>
+    // Apply the saved theme before first paint to avoid a flash.
+    (function () {
+      try {
+        var t = localStorage.getItem("theme");
+        if (t) document.documentElement.setAttribute("data-theme", t);
+      } catch (e) {}
+    })();
+  </script>
+</head>
+<body>
+{% if user %}
+<div class="app whm" id="app">
+  <!-- ===== WHM left sidebar (distinct from the cPanel one) ===== -->
+  <aside class="jsidebar whm-sidebar">
+    <div class="jbrand">
+      <a href="/whm" class="jbrand-link">
+        <span class="logo">⧉</span>
+        <span class="jbrand-name">WHM · {{ APP_NAME }}</span>
+      </a>
+      <button class="jcollapse" onclick="toggleSidebar()" title="Collapse menu" aria-label="Collapse menu">‹</button>
+    </div>
+
+    <nav class="jnav">
+      <a href="/whm" class="jnav-item {{ 'is-active' if active == 'home' }}" data-tip="Home">
+        <span class="jnav-ico">{{ icon("home", 20) }}</span><span class="jnav-label">Home</span>
+      </a>
+
+      <div class="jnav-section">Account Information</div>
+      <a href="/whm/accounts" class="jnav-item {{ 'is-active' if active == 'accounts' }}" data-tip="List Accounts">
+        <span class="jnav-ico">{{ icon("users", 20) }}</span><span class="jnav-label">List Accounts</span>
+      </a>
+
+      <div class="jnav-section">Account Functions</div>
+      <a href="/whm/accounts/new" class="jnav-item {{ 'is-active' if active == 'create' }}" data-tip="Create a New Account">
+        <span class="jnav-ico">{{ icon("user-plus", 20) }}</span><span class="jnav-label">Create a New Account</span>
+      </a>
+      <a href="/whm/accounts" class="jnav-item" data-tip="Manage Suspension">
+        <span class="jnav-ico">{{ icon("power", 20) }}</span><span class="jnav-label">Manage Suspension</span>
+      </a>
+      <a href="/whm/accounts" class="jnav-item" data-tip="Password Modification">
+        <span class="jnav-ico">{{ icon("password", 20) }}</span><span class="jnav-label">Password Modification</span>
+      </a>
+      <a href="/whm/accounts" class="jnav-item" data-tip="Terminate Accounts">
+        <span class="jnav-ico">{{ icon("error", 20) }}</span><span class="jnav-label">Terminate Accounts</span>
+      </a>
+
+      <div class="jnav-section">Packages</div>
+      <a href="/whm/packages" class="jnav-item {{ 'is-active' if active == 'packages' }}" data-tip="Packages">
+        <span class="jnav-ico">{{ icon("packages", 20) }}</span><span class="jnav-label">Packages</span>
+      </a>
+    </nav>
+
+    <div class="jsidebar-foot">
+      <a href="/" class="whm-exit" data-tip="Exit to cPanel">
+        <span class="jnav-ico">{{ icon("redirects", 20) }}</span>
+        <span class="jnav-label">← Exit to cPanel</span>
+      </a>
+    </div>
+  </aside>
+
+  <!-- ===== Main column ===== -->
+  <div class="jmain">
+    <header class="jtopbar">
+      <button class="jhamburger" onclick="toggleSidebar()" aria-label="Toggle menu">☰</button>
+      <div class="whm-title">WebHost Manager</div>
+      <div class="jtopnav">
+        <span class="badge badge-whm">WHM</span>
+        <button class="jicon-btn" id="theme-btn" onclick="toggleTheme()" title="Toggle dark mode">🌙</button>
+        <div class="juser">
+          <span class="juser-avatar">{{ user.username[0]|upper }}</span>
+          <span class="juser-name">{{ user.username }}</span>
+          <a href="/logout" class="juser-logout" title="Logout">⎋</a>
+        </div>
+      </div>
+    </header>
+
+    <div class="jcontent">
+      {% if flash %}
+        {% set fkind, fmsg = flash | flash_kind %}
+        <div class="flash flash-{{ fkind }}" role="status">
+          <span class="flash-ico">{{ icon(fkind, 18) }}</span>
+          <span class="flash-msg">{{ fmsg }}</span>
+          <button type="button" class="flash-x" aria-label="Dismiss" onclick="this.parentElement.remove()">&times;</button>
+        </div>
+      {% endif %}
+      {% block content %}{% endblock %}
+    </div>
+  </div>
+</div>
+
+<script>
+function applyThemeIcon() {
+  var dark = document.documentElement.getAttribute("data-theme") === "dark";
+  var btn = document.getElementById("theme-btn");
+  if (btn) btn.textContent = dark ? "☀️" : "🌙";
+}
+function toggleTheme() {
+  var dark = document.documentElement.getAttribute("data-theme") === "dark";
+  var next = dark ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", next);
+  try { localStorage.setItem("theme", next); } catch (e) {}
+  applyThemeIcon();
+}
+applyThemeIcon();
+function toggleSidebar() {
+  var app = document.getElementById("app");
+  app.classList.toggle("collapsed");
+  try { localStorage.setItem("sbCollapsed", app.classList.contains("collapsed") ? "1" : "0"); } catch (e) {}
+}
+(function () {
+  try { if (localStorage.getItem("sbCollapsed") === "1") document.getElementById("app").classList.add("collapsed"); } catch (e) {}
+})();
+// Auto-dismiss the flash banner after a few seconds (× dismisses immediately).
+(function () {
+  var f = document.querySelector(".flash");
+  if (!f) return;
+  setTimeout(function () {
+    f.classList.add("flash-hide");
+    setTimeout(function () { if (f.parentElement) f.remove(); }, 400);
+  }, 6000);
+})();
+</script>
+{% else %}
+  {% block bare %}{% endblock %}
+{% endif %}
+</body>
+</html>

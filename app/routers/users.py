@@ -7,17 +7,15 @@
 from __future__ import annotations
 
 import re
-import shutil
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .. import config
+from ..accounts import terminate_account
 from ..db import get_db
-from ..models import CronJob, Database, Domain, Package, User
+from ..models import Package, User
 from ..providers import get_provider
 from ..routers.packages import visible_packages
 from ..security import current_user, hash_password, require_manager
@@ -177,29 +175,7 @@ def delete_user(
         _flash(request, "❌ Not allowed.")
         return RedirectResponse("/users", status_code=303)
 
-    provider = get_provider()
-    # Tear down the target's system artifacts before removing DB rows.
-    for domain in list(target.domains):
-        for sub in list(domain.subdomains):
-            provider.remove_subdomain(sub.fqdn)
-        provider.remove_site(domain.name)
-    for database in list(target.databases):
-        provider.drop_database(database.name, database.db_user)
-    for backup in list(target.backups):
-        (config.BACKUPS_DIR / backup.filename).unlink(missing_ok=True)
-    # Remove the whole isolated account (system user, /home, PHP-FPM pool).
-    if target.system_user:
-        provider.remove_account(target.system_user)
-    else:
-        for domain in list(target.domains):
-            shutil.rmtree(Path(domain.docroot).parent, ignore_errors=True)
-
-    username = target.username
-    db.delete(target)          # cascades domains/databases/cron/backups + nested rows
-    db.commit()
-    provider.reload_web()
-    # Re-sync the crontab now that this user's jobs are gone.
-    remaining = db.scalars(select(CronJob).order_by(CronJob.id)).all()
-    provider.sync_cron([f"{j.schedule} {j.command}" for j in remaining])
+    # One vetted teardown path, shared with the WHM area (see accounts.py).
+    username = terminate_account(db, target)
     _flash(request, f"🗑️ Account '{username}' and all its resources removed.")
     return RedirectResponse("/users", status_code=303)

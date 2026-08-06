@@ -1,0 +1,85 @@
+{% extends "whm_base.html" %}
+{% block title %}List Accounts{% endblock %}
+{% block content %}
+<div class="whm-page-head">
+  <h1>List Accounts</h1>
+  <p class="muted">All hosting accounts you manage. <a href="/whm/accounts/new">Create a New Account →</a></p>
+</div>
+
+{% if users %}
+<table class="table whm-table">
+  <thead><tr><th>Username</th><th>Role</th><th>Status</th><th>Package / Limits</th><th>Actions</th></tr></thead>
+  <tbody>
+  {% for u in users %}
+    <tr>
+      <td><strong>{{ u.username }}</strong></td>
+      <td>
+        {% if u.role == 'admin' %}<span class="pill" style="background:#e7ecff;color:#3b5bdb">admin</span>
+        {% elif u.role == 'reseller' %}<span class="pill" style="background:#fff2eb;color:#e85b1b">reseller</span>
+        {% else %}<span class="pill">user</span>{% endif %}
+      </td>
+      <td>
+        {% if u.suspended %}<span class="pill" style="background:#fdecec;color:#e5484d">suspended</span>
+        {% else %}<span class="pill pill-ok">active</span>{% endif %}
+      </td>
+      <td>
+        {% if u.id != user.id and u.role != 'admin' %}
+        <form method="post" action="/whm/accounts/{{ u.id }}/package" class="inline-form">
+          <select name="package_id" onchange="this.form.submit()" style="max-width:150px">
+            <option value="0" {{ 'selected' if not u.package_id }}>Custom</option>
+            {% for p in packages %}<option value="{{ p.id }}" {{ 'selected' if u.package_id == p.id }}>{{ p.name }}</option>{% endfor %}
+          </select>
+        </form>
+        {% elif u.package %}<span class="pill">{{ u.package.name }}</span>{% endif %}
+        <div class="muted small">{{ u.eff_domains or '∞' }} dom / {{ u.eff_databases or '∞' }} db / {{ u.eff_email or '∞' }} mail</div>
+      </td>
+      <td class="actions">
+        {% if u.id == user.id %}
+          <span class="muted small">you</span>
+        {% elif u.role == 'admin' %}
+          <span class="muted small">—</span>
+        {% else %}
+          {% if u.suspended %}
+            <form method="post" action="/whm/accounts/{{ u.id }}/unsuspend"><button class="btn btn-sm">Reactivate</button></form>
+          {% else %}
+            <form method="post" action="/whm/accounts/{{ u.id }}/suspend"><button class="btn btn-sm">Suspend</button></form>
+          {% endif %}
+          <button type="button" class="btn btn-sm" onclick="whmTogglePw({{ u.id }})">Password</button>
+          <form method="post" action="/whm/accounts/{{ u.id }}/terminate"
+                onsubmit="return confirm('Terminate {{ u.username }} and ALL their sites, databases and email? This cannot be undone.')">
+            <button class="btn btn-sm btn-danger">Terminate</button>
+          </form>
+        {% endif %}
+      </td>
+    </tr>
+    {% if u.id != user.id and u.role != 'admin' %}
+    <tr id="pwrow-{{ u.id }}" class="whm-pwrow" hidden>
+      <td colspan="5">
+        <form method="post" action="/whm/accounts/{{ u.id }}/password" class="whm-pwform" onsubmit="return whmPwMatch(this)">
+          <span class="cron-lbl">New password for <strong>{{ u.username }}</strong></span>
+          <input type="password" name="password" placeholder="min 6 chars" required>
+          <input type="password" name="password2" placeholder="re-type" required>
+          <button class="btn btn-sm btn-primary">Change password</button>
+        </form>
+      </td>
+    </tr>
+    {% endif %}
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="empty">No accounts yet. <a href="/whm/accounts/new">Create the first one →</a></div>
+{% endif %}
+
+<script>
+function whmTogglePw(id) {
+  var row = document.getElementById('pwrow-' + id);
+  if (row) row.hidden = !row.hidden;
+}
+function whmPwMatch(f) {
+  if (f.password.value !== f.password2.value) { alert('The two passwords do not match.'); return false; }
+  if (f.password.value.length < 6) { alert('Password must be at least 6 characters.'); return false; }
+  return true;
+}
+</script>
+{% endblock %}
