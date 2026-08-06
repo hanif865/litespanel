@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .. import config
-from .base import CertInfo, DbCredentials, Provider
+from .base import CertInfo, DbCredentials, Provider, node_env_lines, node_exec_start
 
 # On Debian/Ubuntu these are the conventional locations.
 NGINX_SITES = Path("/etc/nginx/sites-enabled")
@@ -362,8 +362,25 @@ class LinuxProvider(Provider):
             f"    }}\n}}\n"
         )
 
+    def _node_work_dir(self, app_dir: Path, app_root: str) -> Path:
+        """Working dir = app_dir/app_root, kept safely inside app_dir.
+
+        A crafted app_root ("../etc", "/abs") is rejected back to app_dir so the
+        unit's WorkingDirectory can never escape the account's app directory.
+        """
+        app_dir = Path(app_dir).resolve()
+        root = (app_root or "").strip().strip("/")
+        if not root:
+            return app_dir
+        target = (app_dir / root).resolve()
+        if target == app_dir or app_dir in target.parents:
+            return target
+        return app_dir
+
     def deploy_node_app(self, name: str, domain: str, app_dir: Path, port: int,
-                        entrypoint: str, system_user: str, node_version: str) -> tuple[bool, str]:
+                        entrypoint: str, system_user: str, node_version: str,
+                        start_command: str = "", env_vars: str = "",
+                        app_root: str = "") -> tuple[bool, str]:
         _ident(system_user, "account username")
         try:
             unit = self._node_unit_path(name)
@@ -379,7 +396,12 @@ class LinuxProvider(Provider):
 
         app_dir = Path(app_dir)
         app_dir.mkdir(parents=True, exist_ok=True)
+        work_dir = self._node_work_dir(app_dir, app_root)
+        work_dir.mkdir(parents=True, exist_ok=True)
         _run(["chown", "-R", f"{system_user}:{system_user}", str(app_dir)])
+
+        env_block = "".join(line + "\n" for line in node_env_lines(env_vars))
+        exec_start = node_exec_start(node_bin, entrypoint, start_command)
 
         unit.write_text(
             "[Unit]\n"
@@ -388,10 +410,11 @@ class LinuxProvider(Provider):
             "[Service]\n"
             "Type=simple\n"
             f"User={system_user}\n"
-            f"WorkingDirectory={app_dir}\n"
+            f"WorkingDirectory={work_dir}\n"
             "Environment=NODE_ENV=production\n"
             f"Environment=PORT={int(port)}\n"
-            f"ExecStart={node_bin} {entrypoint}\n"
+            f"{env_block}"
+            f"ExecStart={exec_start}\n"
             "Restart=on-failure\n"
             "RestartSec=5\n\n"
             "[Install]\n"
@@ -462,6 +485,46 @@ class LinuxProvider(Provider):
         if state in ("inactive", "failed", "deactivating"):
             return "stopped"
         return "unknown"
+
+    def npm_install(self, app, system_user: str) -> tuple[bool, str]:
+        _ident(system_user, "account username")
+        work_dir = self._node_work_dir(Path(app.app_dir), app.app_root or "")
+        if not work_dir.exists():
+            return False, f"App directory does not exist: {work_dir}"
+        # Dev deps included so `npm run build` steps work. Put the Node bin dir on
+        # PATH in case the runtime lives outside the default login PATH for sudo.
+        import os
+
+        env = {**os.environ, "PATH": f"/usr/bin:/usr/local/bin:{os.environ.get('PATH', '')}"}
+        try:
+            proc = subprocess.run(
+                ["sudo", "-u", system_user, "npm", "install", "--no-fund", "--no-audit"],
+                capture_output=True, text=True, cwd=str(work_dir), env=env, timeout=300,
+            )
+        except (FileNotFoundError, OSError) as exc:
+            return False, f"npm unavailable: {exc}"
+        except subprocess.TimeoutExpired:
+            return False, "npm install timed out after 300s."
+        out = (proc.stdout + "\n" + proc.stderr).strip()[-500:]
+        if proc.returncode != 0:
+            return False, out or "npm install failed."
+        return True, out or "Dependencies installed."
+
+    def node_app_logs(self, name: str, lines: int = 200) -> str:
+        try:
+            self._node_unit_path(name)  # validates the slug
+        except ValueError as exc:
+            return str(exc)
+        lines = max(1, min(int(lines), 2000))
+        try:
+            proc = subprocess.run(
+                ["journalctl", "-u", f"litespanel-node-{name}", "-n", str(lines),
+                 "--no-pager"],
+                capture_output=True, text=True,
+            )
+        except (FileNotFoundError, OSError):
+            return "logs unavailable (journalctl not found)"
+        return (proc.stdout or proc.stderr).strip() or "(no log output yet)"
 
     def remove_subdomain(self, fqdn: str) -> None:
         (NGINX_SITES / f"{fqdn}.conf").unlink(missing_ok=True)

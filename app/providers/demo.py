@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .. import config
-from .base import CertInfo, DbCredentials, Provider
+from .base import CertInfo, DbCredentials, Provider, node_env_lines, node_exec_start
 
 _NGINX_TEMPLATE = """# Managed by {app} — do not edit by hand.
 server {{
@@ -232,10 +232,26 @@ class DemoProvider(Provider):
         f = self._node_state_file()
         return f.read_text(encoding="utf-8").strip() if f.exists() else None
 
+    def _node_work_dir(self, app_dir: Path, app_root: str) -> Path:
+        app_dir = Path(app_dir).resolve()
+        root = (app_root or "").strip().strip("/")
+        if not root:
+            return app_dir
+        target = (app_dir / root).resolve()
+        if target == app_dir or app_dir in target.parents:
+            return target
+        return app_dir
+
     def deploy_node_app(self, name: str, domain: str, app_dir: Path, port: int,
-                        entrypoint: str, system_user: str, node_version: str) -> tuple[bool, str]:
+                        entrypoint: str, system_user: str, node_version: str,
+                        start_command: str = "", env_vars: str = "",
+                        app_root: str = "") -> tuple[bool, str]:
         app_dir = Path(app_dir)
         app_dir.mkdir(parents=True, exist_ok=True)
+        work_dir = self._node_work_dir(app_dir, app_root)
+        work_dir.mkdir(parents=True, exist_ok=True)
+        env_block = "".join(line + "\n" for line in node_env_lines(env_vars))
+        exec_start = node_exec_start("/usr/bin/node", entrypoint, start_command)
         # Write an inspectable systemd unit so the demo shows what Linux would do.
         unit = config.NODE_DIR / f"litespanel-node-{name}.service"
         unit.write_text(
@@ -245,12 +261,20 @@ class DemoProvider(Provider):
             "[Service]\n"
             "Type=simple\n"
             f"User={system_user}\n"
-            f"WorkingDirectory={app_dir.as_posix()}\n"
+            f"WorkingDirectory={work_dir.as_posix()}\n"
             "Environment=NODE_ENV=production\n"
             f"Environment=PORT={port}\n"
-            f"ExecStart=/usr/bin/node {entrypoint}\n"
+            f"{env_block}"
+            f"ExecStart={exec_start}\n"
             "Restart=on-failure\nRestartSec=5\n\n"
             "[Install]\nWantedBy=multi-user.target\n",
+            encoding="utf-8",
+        )
+        # Seed a couple of log lines so the demo log viewer has something to show.
+        (config.NODE_DIR / f"{name}.log").write_text(
+            f"[demo] deployed litespanel-node-{name} serving {domain} on port {port}\n"
+            f"[demo] ExecStart={exec_start}\n"
+            "[demo] Listening — (simulated runtime, no real process)\n",
             encoding="utf-8",
         )
         # And the reverse-proxy vhost that replaces the domain's PHP vhost.
@@ -278,11 +302,31 @@ class DemoProvider(Provider):
     def remove_node_app(self, name: str, domain: str) -> None:
         (config.NODE_DIR / f"litespanel-node-{name}.service").unlink(missing_ok=True)
         self._node_status_file(name).unlink(missing_ok=True)
+        (config.NODE_DIR / f"{name}.log").unlink(missing_ok=True)
         (config.NGINX_DIR / f"{domain}.conf").unlink(missing_ok=True)
 
     def node_app_status(self, name: str) -> str:
         f = self._node_status_file(name)
         return f.read_text(encoding="utf-8").strip() if f.exists() else "unknown"
+
+    def npm_install(self, app, system_user: str) -> tuple[bool, str]:
+        work_dir = self._node_work_dir(Path(app.app_dir), app.app_root or "")
+        work_dir.mkdir(parents=True, exist_ok=True)
+        (config.NODE_DIR / f"{app.name}.npm-install").write_text(
+            f"(demo) npm install in {work_dir.as_posix()} as {system_user}\n",
+            encoding="utf-8",
+        )
+        log = config.NODE_DIR / f"{app.name}.log"
+        with log.open("a", encoding="utf-8") as fh:
+            fh.write("[demo] npm install --no-fund --no-audit → up to date\n")
+        return True, f"(demo) npm install completed in {work_dir.as_posix()}"
+
+    def node_app_logs(self, name: str, lines: int = 200) -> str:
+        f = config.NODE_DIR / f"{name}.log"
+        if not f.exists():
+            return "(demo) no logs"
+        tail = f.read_text(encoding="utf-8").splitlines()[-max(1, int(lines)):]
+        return "\n".join(tail)
 
     def set_owner(self, path: Path, system_user: str) -> None:
         # No POSIX ownership on the Windows demo box — nothing to do.

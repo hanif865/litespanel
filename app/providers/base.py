@@ -10,6 +10,55 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
+import re
+
+if TYPE_CHECKING:
+    from ..models import NodeApp
+
+
+# Node app runtime helpers, shared by the demo + linux providers so the two
+# generate byte-identical systemd units.
+_ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_NPM_SCRIPT_RE = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
+
+
+def node_env_lines(env_vars: str) -> list[str]:
+    """Parse newline-delimited KEY=VALUE text into safe systemd Environment= lines.
+
+    Each line must be `KEY=VALUE` with KEY matching a shell-safe identifier and
+    VALUE free of newlines/double-quotes (which would break the quoted form or
+    inject extra directives). Malformed lines are skipped, not raised on.
+    """
+    lines: list[str] = []
+    for raw in (env_vars or "").splitlines():
+        raw = raw.strip()
+        if not raw or raw.startswith("#") or "=" not in raw:
+            continue
+        key, _, value = raw.partition("=")
+        key = key.strip()
+        if not _ENV_KEY_RE.match(key):
+            continue
+        if '"' in value or "\n" in value or "\r" in value:
+            continue
+        lines.append(f'Environment="{key}={value}"')
+    return lines
+
+
+def node_exec_start(node_bin: str, entrypoint: str, start_command: str) -> str:
+    """Build the ExecStart line body for a Node app.
+
+    With a start_command set, run it via npm (`npm start` for the conventional
+    "start" script, else `npm run <script>`); otherwise `node <entrypoint>`.
+    An unsafe start_command falls back to node <entrypoint>.
+    """
+    cmd = (start_command or "").strip()
+    if cmd and _NPM_SCRIPT_RE.match(cmd):
+        npm = "/usr/bin/npm"
+        if cmd == "start":
+            return f"{npm} start"
+        return f"{npm} run {cmd}"
+    return f"{node_bin} {entrypoint}"
 
 
 def safe_extract_path(base: Path, relative: str) -> Path | None:
@@ -164,13 +213,35 @@ class Provider(ABC):
 
     @abstractmethod
     def deploy_node_app(self, name: str, domain: str, app_dir: Path, port: int,
-                        entrypoint: str, system_user: str, node_version: str) -> tuple[bool, str]:
+                        entrypoint: str, system_user: str, node_version: str,
+                        start_command: str = "", env_vars: str = "",
+                        app_root: str = "") -> tuple[bool, str]:
         """Create/refresh a Node app's systemd unit + nginx reverse proxy and start it.
 
-        Admin-only at the router layer. Writes a per-app systemd service that
-        runs `node <entrypoint>` in `app_dir` as `system_user` on `port`,
-        rewrites the domain's vhost to proxy_pass to that port, then reloads.
-        Returns (ok, message).
+        Admin-only at the router layer. Writes a per-app systemd service whose
+        working dir is `app_dir/app_root` and runs, as `system_user` on `port`:
+        `npm run <start_command>` (or `npm start` when start_command == "start")
+        when start_command is set, else `node <entrypoint>` (back-compat).
+        `env_vars` is newline-delimited KEY=VALUE text; each valid pair becomes
+        its own systemd Environment= line (alongside NODE_ENV/PORT). Rewrites the
+        domain's vhost to proxy_pass to that port, then reloads. Returns (ok, message).
+        """
+
+    @abstractmethod
+    def npm_install(self, app: "NodeApp", system_user: str) -> tuple[bool, str]:
+        """Run `npm install` in the app's working dir as the account user.
+
+        Admin-only at the router layer. Installs the project's dependencies
+        (dev deps included, so build steps work). Returns (ok, message) with a
+        tail of npm's output. Long-running — the caller uses a generous timeout.
+        """
+
+    @abstractmethod
+    def node_app_logs(self, name: str, lines: int = 200) -> str:
+        """Return recent stdout/stderr for a Node app's service.
+
+        Reads the last `lines` from the app's journal/log. Never accepts a raw
+        path — `name` is the app's slug, validated to the unit name. Admin-only.
         """
 
     @abstractmethod

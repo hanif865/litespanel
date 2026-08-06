@@ -65,6 +65,21 @@
         <input type="number" class="ini-value" name="port" value="{{ suggested_port }}"
                min="1024" max="65535">
       </div>
+      <div>
+        <label class="small" style="display:block; margin-bottom:.25rem;">App root <span class="muted">(optional)</span></label>
+        <input type="text" class="ini-value" name="app_root" value=""
+               placeholder="e.g. app  (blank = document root)">
+      </div>
+      <div>
+        <label class="small" style="display:block; margin-bottom:.25rem;">Start command <span class="muted">(optional)</span></label>
+        <input type="text" class="ini-value" name="start_command" value=""
+               placeholder="start  →  npm start · blank = node server.js">
+      </div>
+    </div>
+    <div style="margin-top:.75rem;">
+      <label class="small" style="display:block; margin-bottom:.25rem;">Environment variables <span class="muted">(one KEY=VALUE per line)</span></label>
+      <textarea name="env_vars" rows="4" class="ini-value" style="width:100%; font-family:monospace;"
+                placeholder="DATABASE_URL=postgres://user:pass@localhost/db&#10;API_KEY=secret"></textarea>
     </div>
     <div class="card-actions">
       <button type="submit" class="btn btn-sm btn-primary"
@@ -113,8 +128,30 @@
             <button type="button" class="btn btn-xs btn-secondary"
                     onclick="nodeAct('/node/control', {{ row.app.id }}, 'start')">Start</button>
           {% endif %}
+          <button type="button" class="btn btn-xs btn-secondary"
+                  onclick="nodeInstall({{ row.app.id }})">npm install</button>
+          <button type="button" class="btn btn-xs btn-secondary"
+                  onclick="nodeLogs({{ row.app.id }}, '{{ row.app.name }}')">Logs</button>
+          <button type="button" class="btn btn-xs btn-secondary"
+                  onclick="nodeToggleEnv({{ row.app.id }})">Env</button>
           <button type="button" class="btn btn-xs btn-danger"
                   onclick="nodeRemove({{ row.app.id }}, '{{ row.app.domain.name }}')">Remove</button>
+        </td>
+      </tr>
+      <tr id="env-row-{{ row.app.id }}" style="display:none;">
+        <td colspan="7">
+          <form method="post" action="/node/update-env" style="margin:0;">
+            <input type="hidden" name="app_id" value="{{ row.app.id }}">
+            <label class="small" style="display:block; margin-bottom:.25rem;">
+              Environment variables for <code>{{ row.app.name }}</code>
+              <span class="muted">(one KEY=VALUE per line — saving restarts the app)</span>
+            </label>
+            <textarea name="env_vars" rows="4" class="ini-value"
+                      style="width:100%; font-family:monospace;">{{ row.app.env_vars or '' }}</textarea>
+            <div class="card-actions" style="margin-top:.5rem;">
+              <button type="submit" class="btn btn-xs btn-primary">Save &amp; restart</button>
+            </div>
+          </form>
         </td>
       </tr>
       {% endfor %}
@@ -141,10 +178,50 @@
     f.appendChild(hidden('app_id', appId));
     document.body.appendChild(f); f.submit();
   }
+  // Kick off npm install (may take a while) via a throwaway form POST.
+  function nodeInstall(appId) {
+    if (!confirm('Run npm install for this app? This can take a minute.')) return;
+    var f = document.createElement('form');
+    f.method = 'post'; f.action = '/node/npm-install';
+    f.appendChild(hidden('app_id', appId));
+    document.body.appendChild(f); f.submit();
+  }
+  // Fetch recent logs and show them in the modal.
+  function nodeLogs(appId, name) {
+    var box = document.getElementById('log-modal');
+    var pre = document.getElementById('log-body');
+    document.getElementById('log-title').textContent = 'Logs — ' + name;
+    pre.textContent = 'Loading…';
+    box.style.display = 'flex';
+    fetch('/node/logs/' + appId)
+      .then(function (r) { return r.text(); })
+      .then(function (t) { pre.textContent = t || '(no logs)'; })
+      .catch(function () { pre.textContent = 'Could not load logs.'; });
+  }
+  function nodeCloseLogs() { document.getElementById('log-modal').style.display = 'none'; }
+  function nodeToggleEnv(appId) {
+    var row = document.getElementById('env-row-' + appId);
+    row.style.display = row.style.display === 'none' ? '' : 'none';
+  }
   function hidden(name, value) {
     var i = document.createElement('input');
     i.type = 'hidden'; i.name = name; i.value = value;
     return i;
   }
 </script>
+
+<!-- Logs modal -->
+<div id="log-modal" onclick="if(event.target===this)nodeCloseLogs()"
+     style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.5);
+            align-items:center; justify-content:center; z-index:1000;">
+  <div style="background:var(--panel,#1e1e1e); color:inherit; width:min(90vw,860px);
+              max-height:80vh; border-radius:8px; padding:1rem; display:flex; flex-direction:column;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:.5rem;">
+      <strong id="log-title">Logs</strong>
+      <button type="button" class="btn btn-xs btn-secondary" onclick="nodeCloseLogs()">Close</button>
+    </div>
+    <pre id="log-body" style="overflow:auto; margin:0; padding:.75rem; background:#000;
+         color:#0f0; font-size:.8rem; border-radius:4px; flex:1; white-space:pre-wrap;">Loading…</pre>
+  </div>
+</div>
 {% endblock %}

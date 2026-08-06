@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, ForeignKey, JSON, String, UniqueConstraint
+from sqlalchemy import DateTime, ForeignKey, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -309,6 +309,14 @@ class NodeApp(Base):
     entrypoint: Mapped[str] = mapped_column(String(255), default="server.js")
     # Directory the app lives in (its docroot / working dir).
     app_dir: Mapped[str] = mapped_column(String(500))
+    # Subdir under app_dir where package.json lives ("" = app_dir itself). Keeps
+    # the Node project separable from the web docroot.
+    app_root: Mapped[str] = mapped_column(String(255), default="", server_default="")
+    # Custom start command run via `npm run <cmd>` (or `npm start` when "start").
+    # Empty = fall back to `node <entrypoint>` (back-compat).
+    start_command: Mapped[str] = mapped_column(String(128), default="", server_default="")
+    # Newline-delimited KEY=VALUE pairs injected as systemd Environment= lines.
+    env_vars: Mapped[str] = mapped_column(Text, default="", server_default="")
     active: Mapped[bool] = mapped_column(default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 

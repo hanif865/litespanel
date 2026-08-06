@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import PlainTextResponse, RedirectResponse
 from starlette.concurrency import run_in_threadpool
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -29,6 +29,21 @@ router = APIRouter(prefix="/node", tags=["node"])
 
 NODE_VERSIONS = config.NODE_VERSIONS
 _ENTRY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/ -]{0,254}$")
+# App root: a relative subdir under docroot; no leading slash, no traversal.
+_APP_ROOT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,254}$")
+# npm script name accepted for a custom start command.
+_START_CMD_RE = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
+
+
+def _clean_app_root(raw: str) -> str | None:
+    """Validate an optional relative app-root subdir. Returns "" for empty,
+    the cleaned value if safe, or None if invalid."""
+    root = (raw or "").strip().strip("/")
+    if not root:
+        return ""
+    if ".." in root.split("/") or not _APP_ROOT_RE.match(root):
+        return None
+    return root
 
 
 def _flash(request: Request, message: str) -> None:
@@ -134,6 +149,8 @@ async def deploy(
     entrypoint = (form.get("entrypoint") or "server.js").strip()
     node_version = (form.get("node_version") or NODE_VERSIONS[0]).strip()
     port_raw = (form.get("port") or "").strip()
+    start_command = (form.get("start_command") or "").strip()
+    env_vars = (form.get("env_vars") or "").strip()
 
     domain = db.get(Domain, int(domain_id)) if domain_id else None
     if domain is None or domain.owner_id != user.id:
@@ -147,6 +164,13 @@ async def deploy(
         return _redirect()
     if not _ENTRY_RE.match(entrypoint):
         _flash(request, "❌ Invalid entrypoint file name.")
+        return _redirect()
+    app_root = _clean_app_root(form.get("app_root"))
+    if app_root is None:
+        _flash(request, "❌ App root must be a relative path (no leading / or '..').")
+        return _redirect()
+    if start_command and not _START_CMD_RE.match(start_command):
+        _flash(request, "❌ Start command must be a valid npm script name.")
         return _redirect()
     try:
         port = int(port_raw) if port_raw else _next_port(db)
@@ -171,18 +195,30 @@ async def deploy(
         node_version=node_version,
         entrypoint=entrypoint,
         app_dir=app_dir,
+        app_root=app_root,
+        start_command=start_command,
+        env_vars=env_vars,
         active=True,
     )
     db.add(node_app)
     db.flush()
 
+    provider = get_provider()
     ok, message = await run_in_threadpool(
-        get_provider().deploy_node_app,
+        provider.deploy_node_app,
         name, domain.name, Path(app_dir), port, entrypoint,
-        _account_user(user), node_version,
+        _account_user(user), node_version, start_command, env_vars, app_root,
     )
     node_app.active = ok
     db.commit()
+
+    # Install dependencies so the project can actually run. Keep the app row
+    # even if install fails — the admin can retry from the apps table.
+    if ok:
+        i_ok, i_msg = await run_in_threadpool(
+            provider.npm_install, node_app, _account_user(user)
+        )
+        message += "\n" + ("✅ " if i_ok else "⚠️ ") + i_msg
     _flash(request, ("✅ " if ok else "⚠️ ") + message)
     return _redirect()
 
@@ -242,4 +278,71 @@ async def remove(
     db.delete(app)
     db.commit()
     _flash(request, f"🗑️ Node.js app removed; {domain.name if domain else 'domain'} restored to PHP.")
+    return _redirect()
+
+
+@router.post("/npm-install")
+async def npm_install(
+    request: Request,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    if user.role != "admin":
+        _flash(request, "❌ Only an admin can run npm install.")
+        return _redirect()
+    form = await request.form()
+    app_id = form.get("app_id")
+    app = db.get(NodeApp, int(app_id)) if app_id else None
+    if app is None or app.owner_id != user.id:
+        _flash(request, "❌ Unknown app.")
+        return _redirect()
+    ok, message = await run_in_threadpool(
+        get_provider().npm_install, app, _account_user(user)
+    )
+    _flash(request, ("✅ " if ok else "❌ ") + message)
+    return _redirect()
+
+
+@router.get("/logs/{app_id}")
+def logs(
+    app_id: int,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    if user.role != "admin":
+        return PlainTextResponse("Node.js is an admin-only feature.", status_code=403)
+    app = db.get(NodeApp, app_id)
+    if app is None or app.owner_id != user.id:
+        return PlainTextResponse("Unknown app.", status_code=404)
+    text = get_provider().node_app_logs(app.name, 200)
+    return PlainTextResponse(text or "(no logs)")
+
+
+@router.post("/update-env")
+async def update_env(
+    request: Request,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    if user.role != "admin":
+        _flash(request, "❌ Only an admin can update app environment.")
+        return _redirect()
+    form = await request.form()
+    app_id = form.get("app_id")
+    app = db.get(NodeApp, int(app_id)) if app_id else None
+    if app is None or app.owner_id != user.id:
+        _flash(request, "❌ Unknown app.")
+        return _redirect()
+
+    app.env_vars = (form.get("env_vars") or "").strip()
+    db.flush()
+    domain = db.get(Domain, app.domain_id)
+    ok, message = await run_in_threadpool(
+        get_provider().deploy_node_app,
+        app.name, domain.name if domain else app.name, Path(app.app_dir),
+        app.port, app.entrypoint, _account_user(user), app.node_version,
+        app.start_command, app.env_vars, app.app_root,
+    )
+    db.commit()
+    _flash(request, ("✅ Environment updated. " if ok else "⚠️ ") + message)
     return _redirect()
