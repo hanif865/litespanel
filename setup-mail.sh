@@ -119,6 +119,61 @@ systemctl restart postfix
 ok "Postfix configured"
 
 # --------------------------------------------------------------------------
+step "Installing OpenDKIM (signs outgoing mail)"
+# OpenDKIM signs every outbound message with the per-domain key the panel
+# generates in Email Deliverability. Without it the published DKIM DNS record
+# is inert and Gmail/Outlook mark the mail unsigned. The panel appends each
+# domain to KeyTable/SigningTable when its DKIM record is created; here we lay
+# down the daemon, its tables and the Postfix milter wiring once.
+apt-get install -y -qq opendkim opendkim-tools >/dev/null
+mkdir -p /etc/opendkim/keys
+# The keys the panel writes live under /etc/opendkim/keys/<domain>/ — opendkim
+# runs as its own user, so it must own that tree to read the private keys.
+chown -R opendkim:opendkim /etc/opendkim 2>/dev/null || true
+chmod 750 /etc/opendkim /etc/opendkim/keys 2>/dev/null || true
+
+# TrustedHosts: hosts opendkim signs *for* (and won't verify). Localhost only —
+# this box relays its own domains' mail, nothing external.
+[ -f /etc/opendkim/TrustedHosts ] || cat > /etc/opendkim/TrustedHosts <<'EOF'
+127.0.0.1
+localhost
+::1
+EOF
+# KeyTable / SigningTable start empty; the panel appends one line per domain.
+touch /etc/opendkim/KeyTable /etc/opendkim/SigningTable
+chown opendkim:opendkim /etc/opendkim/TrustedHosts /etc/opendkim/KeyTable /etc/opendkim/SigningTable 2>/dev/null || true
+
+cat > /etc/opendkim.conf <<'EOF'
+# Managed by LitesPanel setup-mail.sh
+Syslog                  yes
+UMask                   007
+Mode                    sv
+Canonicalization        relaxed/simple
+SubDomains              no
+OversignHeaders         From
+AutoRestart             yes
+AutoRestartRate         10/1M
+Socket                  inet:8891@localhost
+PidFile                 /run/opendkim/opendkim.pid
+UserID                  opendkim
+KeyTable                refile:/etc/opendkim/KeyTable
+SigningTable            refile:/etc/opendkim/SigningTable
+ExternalIgnoreList      refile:/etc/opendkim/TrustedHosts
+InternalHosts           refile:/etc/opendkim/TrustedHosts
+EOF
+
+systemctl enable opendkim >/dev/null 2>&1 || true
+systemctl restart opendkim || warn "opendkim did not start — check 'journalctl -u opendkim'"
+
+# Wire OpenDKIM into Postfix as a milter (both SMTP and internal/submission).
+postconf -e "milter_default_action = accept"
+postconf -e "milter_protocol = 6"
+postconf -e "smtpd_milters = inet:localhost:8891"
+postconf -e "non_smtpd_milters = inet:localhost:8891"
+systemctl restart postfix
+ok "OpenDKIM signing enabled"
+
+# --------------------------------------------------------------------------
 step "Installing Roundcube ${RC_VERSION}"
 if [ ! -f "$RC_DIR/index.php" ]; then
     tmp="$(mktemp -d)"

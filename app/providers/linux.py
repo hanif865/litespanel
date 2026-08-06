@@ -63,6 +63,10 @@ _SERVICE_UNITS: dict[str, list[str]] = {
     "dovecot": ["dovecot"],
 }
 
+# OpenDKIM's config dir (setup-mail.sh lays it down). Overridable so the
+# key-registration logic can be exercised against a temp dir in tests.
+_OPENDKIM_DIR = Path("/etc/opendkim")
+
 
 def _ident(value: str, what: str) -> str:
     if not _IDENT_RE.match(value):
@@ -728,14 +732,57 @@ class LinuxProvider(Provider):
             pass
 
     def generate_dkim(self, domain: str, selector: str = "default") -> tuple[str, str]:
-        # Store keys at the conventional opendkim path so a future signer finds
+        # Store keys at the conventional opendkim path so the signer finds
         # them, falling back to DKIM_DIR when /etc/opendkim isn't writable.
-        key_dir = Path("/etc/opendkim/keys") / domain
+        key_dir = _OPENDKIM_DIR / "keys" / domain
         try:
             key_dir.mkdir(parents=True, exist_ok=True)
         except (OSError, PermissionError):
             key_dir = config.DKIM_DIR / domain
-        return dkim_generate(key_dir, domain, selector)
+        selector, txt_value = dkim_generate(key_dir, domain, selector)
+        # Wire the key into opendkim's signing tables (only when the mail stack
+        # is installed — setup-mail.sh lays down these files). This makes the
+        # published DKIM TXT record *actually sign* outgoing mail.
+        self._register_opendkim(domain, selector, key_dir / f"{domain}.{selector}.private")
+        return selector, txt_value
+
+    def _register_opendkim(self, domain: str, selector: str, priv_path: Path) -> None:
+        """Register a DKIM key with opendkim's KeyTable and SigningTable.
+        Idempotent: if the domain already has an entry, don't duplicate it.
+        Guard: if /etc/opendkim doesn't exist, the mail stack isn't installed — no-op.
+        """
+        if not _OPENDKIM_DIR.is_dir():
+            return  # mail stack not installed
+        key_table = _OPENDKIM_DIR / "KeyTable"
+        signing_table = _OPENDKIM_DIR / "SigningTable"
+        # KeyTable line:  <selector>._domainkey.<domain> <domain>:<selector>:<priv_path>
+        # SigningTable:    *@<domain> <selector>._domainkey.<domain>
+        key_line = f"{selector}._domainkey.{domain} {domain}:{selector}:{priv_path}"
+        sign_line = f"*@{domain} {selector}._domainkey.{domain}"
+        # Append if not already present (idempotent).
+        if key_table.exists():
+            existing = key_table.read_text()
+            if f"{selector}._domainkey.{domain}" not in existing:
+                key_table.write_text(existing.rstrip() + "\n" + key_line + "\n")
+        else:
+            key_table.write_text(key_line + "\n")
+        if signing_table.exists():
+            existing = signing_table.read_text()
+            if f"*@{domain} " not in existing and not existing.rstrip().endswith(f"*@{domain}"):
+                signing_table.write_text(existing.rstrip() + "\n" + sign_line + "\n")
+        else:
+            signing_table.write_text(sign_line + "\n")
+        # opendkim runs as its own user — must own the key dir to read private keys.
+        try:
+            subprocess.run(["chown", "-R", "opendkim:opendkim", str(priv_path.parent)],
+                           capture_output=True, check=False)
+        except (OSError, RuntimeError):
+            pass
+        # Reload opendkim so it picks up the new key.
+        try:
+            subprocess.run(["systemctl", "reload", "opendkim"], capture_output=True, check=False)
+        except (OSError, RuntimeError):
+            pass
 
     def create_mailbox(self, address: str, password: str, quota_mb: int) -> None:
         # Postfix/Dovecot virtual-mailbox setup (see setup-mail.sh):

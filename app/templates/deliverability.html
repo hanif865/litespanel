@@ -66,8 +66,8 @@
 
     {% if key == 'dkim' %}
       <p class="muted" style="margin:.5rem 0 0; font-size:.85rem">
-        Publishing the DKIM record is safe right away. Your mail is only signed
-        with it once the server's DKIM signer (opendkim) is enabled — a later step.
+        Once published, this key signs your outgoing mail automatically — the
+        server's DKIM signer (opendkim) picks it up as soon as the record is added.
       </p>
     {% endif %}
   </div>

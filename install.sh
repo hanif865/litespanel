@@ -9,6 +9,8 @@
 #
 # It installs and wires up everything a control panel needs:
 #   nginx · MySQL · PHP-FPM · certbot · phpMyAdmin · the panel · a systemd service.
+# It also sets up a small self-hosted mail server (Postfix + Dovecot + OpenDKIM
+#   + Roundcube webmail) so panel users can send, receive and read email.
 #
 set -euo pipefail
 
@@ -280,11 +282,15 @@ ok "nginx serving the panel"
 # runtime, but the host needs both installed, configured and ENABLED first so
 # that page shows an active firewall out of the box. SSH is allowed *before*
 # enabling ufw so this can never lock out the current session.
-step "Enabling the firewall (OpenSSH, HTTP, HTTPS)"
+step "Enabling the firewall (OpenSSH, HTTP, HTTPS, mail)"
 ufw allow OpenSSH >/dev/null 2>&1 || true
 ufw allow 'Nginx Full' >/dev/null 2>&1 || true
+# Mail ports so this box can send and receive as a small self-hosted SMTP:
+#   25  — receive mail from other servers    587 — authenticated submission (webmail/clients)
+ufw allow 25/tcp  >/dev/null 2>&1 || true
+ufw allow 587/tcp >/dev/null 2>&1 || true
 # --force skips the interactive "proceed?" prompt; SSH is already allowed above.
-ufw --force enable >/dev/null 2>&1 && ok "ufw enabled (OpenSSH, Nginx Full allowed)" \
+ufw --force enable >/dev/null 2>&1 && ok "ufw enabled (OpenSSH, Nginx Full, SMTP 25, submission 587)" \
     || warn "Could not enable ufw automatically — run 'ufw --force enable' manually"
 
 step "Configuring fail2ban (sshd jail)"
@@ -329,6 +335,26 @@ else
 fi
 
 # --------------------------------------------------------------------------
+# 9. Mail stack (Postfix + Dovecot + OpenDKIM + Roundcube)
+# --------------------------------------------------------------------------
+# One command sets up everything, including a small self-hosted mail server:
+# users create mailboxes in the panel and send/receive/read mail via webmail.
+# Best-effort — a mail failure must not abort an otherwise-good panel install.
+if [ -f "$SRC_DIR/setup-mail.sh" ]; then
+    step "Setting up the mail server (Postfix, Dovecot, OpenDKIM, Roundcube)"
+    if PANEL_PHP_FPM_VERSION="$PHP_VER" bash "$SRC_DIR/setup-mail.sh"; then
+        ok "Mail server ready — webmail at ${URL}/webmail"
+        MAIL_READY=1
+    else
+        warn "Mail setup did not fully complete — you can re-run it later:"
+        warn "  sudo bash setup-mail.sh"
+        MAIL_READY=0
+    fi
+else
+    MAIL_READY=0
+fi
+
+# --------------------------------------------------------------------------
 # Done
 # --------------------------------------------------------------------------
 sleep 1
@@ -338,4 +364,12 @@ echo -e "  health: ${HEALTH:-<no response>}\n"
 echo -e "  ${BOLD}Panel URL:${RESET}  ${URL}"
 echo -e "  ${BOLD}Username: ${RESET}  ${ADMIN_USER}"
 echo -e "  ${BOLD}Password: ${RESET}  ${ADMIN_PASS}"
+if [ "${MAIL_READY:-0}" = "1" ]; then
+    echo -e "\n  ${BOLD}Webmail:${RESET}   ${URL}/webmail"
+    echo -e "  Create mailboxes in the panel (Email Accounts), then log into webmail"
+    echo -e "  with the full address + password to send and receive mail."
+    echo -e "  ${YELLOW}For internet delivery: point each domain's MX at this server, click${RESET}"
+    echo -e "  ${YELLOW}Repair in Email Deliverability (SPF/DKIM/DMARC), and make sure your${RESET}"
+    echo -e "  ${YELLOW}host allows outbound port 25 and has a matching PTR record.${RESET}"
+fi
 echo -e "\n  ${YELLOW}Log in and change the admin password. Keep ${ENV_FILE} private.${RESET}\n"

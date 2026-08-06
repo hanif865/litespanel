@@ -87,7 +87,7 @@ def create_email(
     except Exception as exc:  # noqa: BLE001 — surface a friendly reason, not a 500
         msg = str(exc)
         if "doveadm" in msg or "No such file" in msg:
-            msg = "Mail server not installed. Run setup-mail.sh on the server first."
+            msg = "Mail server isn't set up on this host yet."
         _flash(request, f"❌ Could not create mailbox: {msg}")
         return RedirectResponse(f"/email?domain_id={domain_id}", status_code=303)
     db.add(EmailAccount(domain_id=domain.id, local_part=local_part, quota_mb=quota_mb))
@@ -120,7 +120,7 @@ def delete_email(
 def _mail_err(exc: Exception) -> str:
     msg = str(exc)
     if "doveadm" in msg or "No such file" in msg:
-        return "Mail server not installed. Run setup-mail.sh on the server first."
+        return "Mail server isn't set up on this host yet."
     return msg
 
 

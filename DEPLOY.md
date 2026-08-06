@@ -145,23 +145,33 @@ cd ~ && curl -fsSL https://raw.githubusercontent.com/hanif865/litespanel/main/in
 
 ---
 
-## ধাপ ৪ — ইমেইল / Webmail (ঐচ্ছিক)
+## ধাপ ৪ — ইমেইল / Webmail
 
-মেইল সার্ভার + Roundcube webmail চাই হলে, প্যানেল ইনস্টলের পর:
-```bash
-curl -fsSL https://raw.githubusercontent.com/hanif865/litespanel/main/setup-mail.sh | sudo bash
-```
-এটা Postfix + Dovecot + Roundcube বসায়, webmail থাকে `/webmail`-এ।
+মেইল সার্ভার এখন **`install.sh`-এর অংশ** — আলাদা কিছু চালাতে হয় না। `install.sh`
+চললেই Postfix (SMTP) + Dovecot (IMAP) + OpenDKIM (মেইল সাইনিং) + Roundcube
+webmail বসে যায়, webmail থাকে `/webmail`-এ।
 
-**ইমেইল কাজ করতে DNS রেকর্ড** (registrar-এ):
+> শুধু মেইল অংশটা আলাদা করে আবার বসাতে/মেরামত করতে চাইলে:
+> ```bash
+> curl -fsSL https://raw.githubusercontent.com/hanif865/litespanel/main/setup-mail.sh | sudo bash
+> ```
+
+প্যানেলে (Email Accounts) মেইলবক্স বানাও → `/webmail`-এ full address + password দিয়ে
+লগইন করে মেইল পাঠাও-পড়ো। একই সার্ভারের অ্যাকাউন্টগুলোর মধ্যে মেইল সাথে সাথে কাজ করে।
+
+**ইন্টারনেটে মেইল আদান-প্রদানে DNS রেকর্ড** — প্যানেলের **Email Deliverability**
+পেজে এক ক্লিকে SPF/DKIM/DMARC বসাও, আর registrar-এ MX/A ঠিক করো:
 
 | Type | Name | Value |
 |------|------|-------|
-| MX | `@` | `panel.example.com` (priority 10) |
+| MX | `@` | `mail.example.com` (priority 10) |
 | A | `mail` | `YOUR_SERVER_IP` |
 | TXT (SPF) | `@` | `v=spf1 a mx ~all` |
+| TXT (DKIM) | `default._domainkey` | Email Deliverability → Repair বসিয়ে দেয় |
+| TXT (DMARC) | `_dmarc` | Email Deliverability → Repair বসিয়ে দেয় |
 
-> ⚠️ Gmail-এ ইনবক্সে যেতে DKIM + PTR (reverse DNS) + port 25 আনব্লকড লাগবে — এগুলো হোস্ট ও DNS-এর ব্যাপার।
+> ⚠️ Gmail-এ ইনবক্সে যেতে PTR (reverse DNS) + outbound port 25 আনব্লকড লাগবে — এ দুটো
+> হোস্টিং প্রোভাইডারের ব্যাপার, প্যানেলের বাইরে। DKIM সাইনিং প্যানেলই করে দেয়।
 
 ---
 
@@ -234,7 +244,7 @@ sudo systemctl restart litespanel     # তারপর রিস্টার্
 | `PANEL_ADMIN_USER` / `PANEL_ADMIN_PASSWORD` | admin লগইন |
 | `PANEL_HTTPS` | `true` — HTTPS-এ থাকলে Secure cookie (SSL সেটআপে অটো হয়) |
 | `PANEL_PHPMYADMIN_URL` | `/phpmyadmin` |
-| `PANEL_WEBMAIL_URL` | `/webmail` (setup-mail.sh দিলে) |
+| `PANEL_WEBMAIL_URL` | `/webmail` (install.sh মেইল সেটআপ করলে) |
 | `PANEL_SERVER_IP` | DNS ডিফল্ট রেকর্ডের IP |
 
 ---
