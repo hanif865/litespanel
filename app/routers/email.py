@@ -114,3 +114,66 @@ def delete_email(
     db.commit()
     _flash(request, f"🗑️ Mailbox {address} deleted.")
     return RedirectResponse(f"/email?domain_id={domain_id}", status_code=303)
+
+
+# Friendly message when the mail stack isn't installed on the host yet.
+def _mail_err(exc: Exception) -> str:
+    msg = str(exc)
+    if "doveadm" in msg or "No such file" in msg:
+        return "Mail server not installed. Run setup-mail.sh on the server first."
+    return msg
+
+
+@router.post("/{account_id}/password")
+def change_email_password(
+    request: Request,
+    account_id: int,
+    password: str = Form(...),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    account = db.get(EmailAccount, account_id)
+    if account is None or account.domain.owner_id != user.id:
+        _flash(request, "❌ Mailbox not found.")
+        return RedirectResponse("/email", status_code=303)
+    domain_id = account.domain_id
+    if len(password) < 6:
+        _flash(request, "❌ Password must be at least 6 characters.")
+        return RedirectResponse(f"/email?domain_id={domain_id}", status_code=303)
+    address = account.address
+    try:
+        get_provider().set_mailbox_password(address, password)
+    except Exception as exc:  # noqa: BLE001 — surface a friendly reason, not a 500
+        _flash(request, f"❌ Could not change password: {_mail_err(exc)}")
+        return RedirectResponse(f"/email?domain_id={domain_id}", status_code=303)
+    _flash(request, f"🔑 Password changed for {address}.")
+    return RedirectResponse(f"/email?domain_id={domain_id}", status_code=303)
+
+
+@router.post("/{account_id}/quota")
+def change_email_quota(
+    request: Request,
+    account_id: int,
+    quota_mb: int = Form(...),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    account = db.get(EmailAccount, account_id)
+    if account is None or account.domain.owner_id != user.id:
+        _flash(request, "❌ Mailbox not found.")
+        return RedirectResponse("/email", status_code=303)
+    domain_id = account.domain_id
+    address = account.address
+    try:
+        quota_mb = max(1, int(quota_mb))
+    except (TypeError, ValueError):
+        quota_mb = account.quota_mb
+    try:
+        get_provider().set_mailbox_quota(address, quota_mb)
+    except Exception as exc:  # noqa: BLE001 — surface a friendly reason, not a 500
+        _flash(request, f"❌ Could not update quota: {_mail_err(exc)}")
+        return RedirectResponse(f"/email?domain_id={domain_id}", status_code=303)
+    account.quota_mb = quota_mb
+    db.commit()
+    _flash(request, f"✅ Quota for {address} set to {quota_mb} MB.")
+    return RedirectResponse(f"/email?domain_id={domain_id}", status_code=303)

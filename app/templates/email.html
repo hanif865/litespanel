@@ -41,6 +41,21 @@
       <td class="muted">{{ a.quota_mb }} MB</td>
       <td class="muted">{{ a.created_at.strftime('%Y-%m-%d') }}</td>
       <td class="actions">
+        <details>
+          <summary class="btn btn-sm">Manage ▾</summary>
+          <div style="margin-top:.4rem; display:flex; flex-direction:column; gap:.4rem; align-items:flex-start">
+            <form method="post" action="/email/{{ a.id }}/quota" class="row-form">
+              <label class="chk" style="margin:0">Quota
+                <input type="number" name="quota_mb" value="{{ a.quota_mb }}" min="1" style="max-width:90px"> MB
+              </label>
+              <button type="submit" class="btn btn-sm">Save</button>
+            </form>
+            <form method="post" action="/email/{{ a.id }}/password" class="row-form">
+              <input type="password" name="password" placeholder="new password (min 6)" required style="max-width:190px">
+              <button type="submit" class="btn btn-sm">Change Password</button>
+            </form>
+          </div>
+        </details>
         <form method="post" action="/email/{{ a.id }}/delete" onsubmit="return confirm('Delete {{ a.local_part }}@{{ selected.name }}?')">
           <button type="submit" class="btn btn-sm btn-danger">Delete</button>
         </form>

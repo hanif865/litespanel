@@ -755,6 +755,38 @@ class LinuxProvider(Provider):
             kept = [ln for ln in users.read_text().splitlines() if not ln.startswith(f"{address}:")]
             users.write_text("\n".join(kept) + "\n")
 
+    def set_mailbox_password(self, address: str, password: str) -> None:
+        # Recompute the Dovecot hash and swap only the password field of the
+        # mailbox's line, leaving the quota tail untouched. The users-file line
+        # is  address:hash::::::userdb_quota_rule=*:storage=NM  and the
+        # SHA512-CRYPT hash never contains ':', so split(':', 2) is safe.
+        users = Path("/etc/dovecot/users")
+        if not users.exists():
+            return
+        hashed = _run(["doveadm", "pw", "-s", "SHA512-CRYPT", "-p", password]).strip()
+        out = []
+        for line in users.read_text().splitlines():
+            if line.startswith(f"{address}:"):
+                _addr, _hash, tail = line.split(":", 2)
+                out.append(f"{address}:{hashed}:{tail}")
+            elif line:
+                out.append(line)
+        users.write_text("\n".join(out) + "\n")
+
+    def set_mailbox_quota(self, address: str, quota_mb: int) -> None:
+        # Keep the existing password hash, regenerate the standard quota tail.
+        users = Path("/etc/dovecot/users")
+        if not users.exists():
+            return
+        out = []
+        for line in users.read_text().splitlines():
+            if line.startswith(f"{address}:"):
+                _addr, hashed, _tail = line.split(":", 2)
+                out.append(f"{address}:{hashed}::::::userdb_quota_rule=*:storage={quota_mb}M")
+            elif line:
+                out.append(line)
+        users.write_text("\n".join(out) + "\n")
+
     def _register_mail_domain(self, domain: str) -> None:
         """Add the domain to Postfix's virtual-mailbox domain list and reload."""
         vdomains = Path("/etc/postfix/vhost_domains")

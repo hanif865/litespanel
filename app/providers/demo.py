@@ -502,6 +502,38 @@ class DemoProvider(Provider):
             ]
             passwd.write_text("\n".join(kept) + ("\n" if kept else ""), encoding="utf-8")
 
+    def set_mailbox_password(self, address: str, password: str) -> None:
+        # Swap only the {SHA256}hash field, preserving the quota field. Line is
+        # "address:{SHA256}hash:quota=NM" — split(':', 2) keeps quota intact.
+        local, _, domain = address.partition("@")
+        passwd = config.MAIL_DIR / domain / "passwd"
+        if not passwd.exists():
+            return
+        pwhash = hashlib.sha256(password.encode()).hexdigest()
+        out = []
+        for line in passwd.read_text(encoding="utf-8").splitlines():
+            if line.startswith(f"{address}:"):
+                _addr, _hash, quota = line.split(":", 2)
+                out.append(f"{address}:{{SHA256}}{pwhash}:{quota}")
+            elif line:
+                out.append(line)
+        passwd.write_text("\n".join(out) + "\n", encoding="utf-8")
+
+    def set_mailbox_quota(self, address: str, quota_mb: int) -> None:
+        # Keep the password hash, replace the quota field.
+        local, _, domain = address.partition("@")
+        passwd = config.MAIL_DIR / domain / "passwd"
+        if not passwd.exists():
+            return
+        out = []
+        for line in passwd.read_text(encoding="utf-8").splitlines():
+            if line.startswith(f"{address}:"):
+                _addr, pwhash, _quota = line.split(":", 2)
+                out.append(f"{address}:{pwhash}:quota={quota_mb}M")
+            elif line:
+                out.append(line)
+        passwd.write_text("\n".join(out) + "\n", encoding="utf-8")
+
     def sync_forwarders(self, domain: str, pairs: list[tuple[str, str]]) -> None:
         # Postfix-style virtual alias lines: "source@domain  destination".
         maildir = config.MAIL_DIR / domain

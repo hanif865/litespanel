@@ -344,6 +344,14 @@ class Provider(ABC):
         ...
 
     @abstractmethod
+    def set_mailbox_password(self, address: str, password: str) -> None:
+        """Reset an existing mailbox's password, preserving its quota."""
+
+    @abstractmethod
+    def set_mailbox_quota(self, address: str, quota_mb: int) -> None:
+        """Change an existing mailbox's storage quota, preserving its password."""
+
+    @abstractmethod
     def sync_forwarders(self, domain: str, pairs: list[tuple[str, str]]) -> None:
         """Rewrite the domain's forwarders from (source_local, destination) pairs."""
 
