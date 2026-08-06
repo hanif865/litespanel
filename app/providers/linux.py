@@ -139,6 +139,7 @@ class LinuxProvider(Provider):
             f"    root {docroot};\n    index index.php index.html;\n"
             f"    access_log /var/log/litespanel/{server_name}.access.log;\n"
             f"    error_log /var/log/litespanel/{server_name}.error.log;\n"
+            f"    location /lpanel {{ return 301 {config.PANEL_URL}/login; }}\n"
             f"    location ~ \\.php$ {{ fastcgi_pass unix:{self._php_sock(username)};"
             f" include fastcgi_params; fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name; }}\n}}\n"
         )
@@ -275,6 +276,7 @@ class LinuxProvider(Provider):
                 f" error_log /var/log/litespanel/{domain}.error.log;")
         php = (f"location ~ \\.php$ {{ fastcgi_pass unix:{self._php_sock(system_user)};"
                f" include fastcgi_params; fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name; }}")
+        lpanel = f"location /lpanel {{ return 301 {config.PANEL_URL}/login; }}"
         blocks = []
         if has_ssl:
             cert = f"/etc/letsencrypt/live/{domain}"
@@ -283,13 +285,13 @@ class LinuxProvider(Provider):
                               f"{logs} return 301 https://$host$request_uri; }}")
             else:
                 blocks.append(f"server {{ listen 80; server_name {names}; root {docroot};"
-                              f" index index.php index.html;{logs} {php} }}")
+                              f" index index.php index.html;{logs} {lpanel} {php} }}")
             blocks.append(f"server {{ listen 443 ssl; server_name {names};"
                           f" ssl_certificate {cert}/fullchain.pem; ssl_certificate_key {cert}/privkey.pem;"
-                          f" root {docroot}; index index.php index.html;{logs} {php} }}")
+                          f" root {docroot}; index index.php index.html;{logs} {lpanel} {php} }}")
         else:
             blocks.append(f"server {{ listen 80; server_name {names}; root {docroot};"
-                          f" index index.php index.html;{logs} {php} }}")
+                          f" index index.php index.html;{logs} {lpanel} {php} }}")
         (NGINX_SITES / f"{domain}.conf").write_text("\n".join(blocks) + "\n")
         self.reload_web()
 

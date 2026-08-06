@@ -57,6 +57,13 @@
       <a href="/whm/packages" class="jnav-item {{ 'is-active' if active == 'packages' }}" data-tip="Packages">
         <span class="jnav-ico">{{ icon("packages", 20) }}</span><span class="jnav-label">Packages</span>
       </a>
+
+      {% if user.role == 'admin' %}
+      <div class="jnav-section">Server Configuration</div>
+      <a href="/whm/software" class="jnav-item {{ 'is-active' if active == 'software' }}" data-tip="Server Software">
+        <span class="jnav-ico">{{ icon("server", 20) }}</span><span class="jnav-label">Server Software</span>
+      </a>
+      {% endif %}
     </nav>
 
     <div class="jsidebar-foot">

@@ -14,9 +14,11 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
+from starlette.concurrency import run_in_threadpool
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from .. import config, php_catalog
 from ..accounts import account_home, terminate_account
 from ..db import get_db
 from ..models import Domain, Package, User
@@ -24,7 +26,7 @@ from ..providers import get_provider
 from ..routers.domains import _DOMAIN_RE
 from ..routers.packages import _NAME_RE, visible_packages
 from ..routers.users import _USERNAME_RE, _can_manage, _owned_package, _visible_users
-from ..security import hash_password, require_manager
+from ..security import hash_password, require_admin, require_manager
 from ..web import templates
 
 router = APIRouter(prefix="/whm", tags=["whm"])
@@ -305,3 +307,80 @@ def delete_package(
     db.commit()
     _flash(request, f"🗑️ Package '{name}' deleted.")
     return RedirectResponse("/whm/packages", status_code=303)
+
+
+# --- Server Software (system installs — admin only) -----------------------
+# These shell out as root (apt-get / NodeSource), so they live in WHM and are
+# gated by require_admin — never a reseller. The user panel keeps only the
+# per-account settings (PHP version, extension toggles, Node app deploy).
+_SOFTWARE_PHP = php_catalog.DEFAULT_PHP_VERSION
+
+
+@router.get("/software")
+def software(request: Request, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    provider = get_provider()
+    php_version = _SOFTWARE_PHP
+    installed = provider.list_installed_extensions(php_version)
+    # Only extensions that ship as an apt package can be installed/removed here.
+    ext_rows = [
+        {"name": ext, "installed": ext in installed}
+        for ext in php_catalog.AVAILABLE_EXTENSIONS
+        if php_catalog.apt_package(ext, php_version) is not None
+    ]
+    flash = request.session.pop("flash", None)
+    return templates.TemplateResponse(
+        request, "whm/software.html",
+        {"user": admin, "active": "software", "flash": flash,
+         "php_version": php_version, "php_versions": php_catalog.PHP_VERSIONS,
+         "ext_rows": ext_rows,
+         "node_runtime": provider.node_installed_version(),
+         "node_versions": config.NODE_VERSIONS},
+    )
+
+
+@router.post("/software/php/install")
+async def software_php_install(
+    request: Request, extension: str = Form(...), php_version: str = Form(_SOFTWARE_PHP),
+    admin: User = Depends(require_admin), db: Session = Depends(get_db),
+):
+    return await _software_php(request, extension, php_version, install=True)
+
+
+@router.post("/software/php/uninstall")
+async def software_php_uninstall(
+    request: Request, extension: str = Form(...), php_version: str = Form(_SOFTWARE_PHP),
+    admin: User = Depends(require_admin), db: Session = Depends(get_db),
+):
+    return await _software_php(request, extension, php_version, install=False)
+
+
+async def _software_php(request: Request, extension: str, php_version: str, install: bool):
+    extension = (extension or "").strip()
+    if php_version not in php_catalog.PHP_VERSIONS:
+        _flash(request, "❌ Unsupported PHP version.")
+        return RedirectResponse("/whm/software", status_code=303)
+    if extension not in php_catalog.AVAILABLE_EXTENSIONS:
+        _flash(request, "❌ Unknown extension.")
+        return RedirectResponse("/whm/software", status_code=303)
+    if php_catalog.apt_package(extension, php_version) is None:
+        _flash(request, f"❌ {extension} is not installable via a package.")
+        return RedirectResponse("/whm/software", status_code=303)
+    provider = get_provider()
+    fn = provider.install_extension if install else provider.uninstall_extension
+    ok, message = await run_in_threadpool(fn, extension, php_version)
+    _flash(request, ("✅ " if ok else "❌ ") + message)
+    return RedirectResponse("/whm/software", status_code=303)
+
+
+@router.post("/software/node/install")
+async def software_node_install(
+    request: Request, version: str = Form(...),
+    admin: User = Depends(require_admin), db: Session = Depends(get_db),
+):
+    version = (version or "").strip()
+    if version not in config.NODE_VERSIONS:
+        _flash(request, "❌ Unsupported Node.js version.")
+        return RedirectResponse("/whm/software", status_code=303)
+    ok, message = await run_in_threadpool(get_provider().install_node, version)
+    _flash(request, ("✅ " if ok else "❌ ") + message)
+    return RedirectResponse("/whm/software", status_code=303)

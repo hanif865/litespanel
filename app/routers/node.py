@@ -115,25 +115,6 @@ def node_home(
     )
 
 
-@router.post("/install-runtime")
-async def install_runtime(
-    request: Request,
-    user: User = Depends(current_user),
-    db: Session = Depends(get_db),
-):
-    if user.role != "admin":
-        _flash(request, "❌ Only an admin can install the Node.js runtime.")
-        return _redirect()
-    form = await request.form()
-    version = (form.get("version") or "").strip()
-    if version not in NODE_VERSIONS:
-        _flash(request, "❌ Unsupported Node.js version.")
-        return _redirect()
-    ok, message = await run_in_threadpool(get_provider().install_node, version)
-    _flash(request, ("✅ " if ok else "❌ ") + message)
-    return _redirect()
-
-
 @router.post("/deploy")
 async def deploy(
     request: Request,

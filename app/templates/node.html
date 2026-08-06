@@ -14,19 +14,10 @@
   <h2>Runtime</h2>
   {% if runtime %}
     <p><span class="pill pill-ok">Installed: Node.js {{ runtime }}</span></p>
-    <p class="muted small">Re-run an install below to add or upgrade a major version.</p>
   {% else %}
     <p><span class="pill">Node.js is not installed on this server.</span></p>
+    <p class="muted small">Contact your admin to install the runtime via WHM.</p>
   {% endif %}
-  <form method="post" action="/node/install-runtime" class="inline-form"
-        onsubmit="return confirm('Install the Node.js runtime via NodeSource now? This runs as root.');">
-    <select name="version">
-      {% for v in node_versions %}
-        <option value="{{ v }}">Node.js {{ v }}.x</option>
-      {% endfor %}
-    </select>
-    <button type="submit" class="btn btn-sm btn-primary">Install runtime</button>
-  </form>
 </div>
 
 <!-- Deploy a new app -->

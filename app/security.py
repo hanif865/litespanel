@@ -112,6 +112,14 @@ def require_manager(user: User = Depends(current_user)) -> User:
     return user
 
 
+def require_admin(user: User = Depends(current_user)) -> User:
+    """Dependency: only full admins. For system-level actions (installing apt
+    packages, the Node.js runtime) that shell out as root — never resellers."""
+    if user.role != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admins only.")
+    return user
+
+
 def authenticate(db: Session, username: str, password: str) -> User | None:
     user = db.scalar(select(User).where(User.username == username))
     if user and verify_password(password, user.password_hash):

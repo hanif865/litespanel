@@ -55,6 +55,11 @@ HTTPS_ONLY = _env("PANEL_HTTPS", "false").lower() in ("1", "true", "yes")
 # Base domain used to build demo URLs and default nginx server_name hints.
 PANEL_HOST = _env("PANEL_HOST", "localhost")
 
+# The panel's own public base URL. Every hosted site gets a `/lpanel` location
+# (like cPanel's /cpanel) that 301-redirects here to the panel login. Defaults
+# from PANEL_HOST + scheme, but set PANEL_URL explicitly in production.
+PANEL_URL = _env("PANEL_URL", ("https://" if HTTPS_ONLY else "http://") + PANEL_HOST).rstrip("/")
+
 # If set (e.g. https://server/phpmyadmin), the Database Manager embeds the real
 # phpMyAdmin in an iframe. If empty, the built-in SQLite-backed SQL console is
 # used — which actually works in the demo without a MySQL server.

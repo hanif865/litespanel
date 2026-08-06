@@ -21,6 +21,10 @@ server {{
     root {docroot};
     index index.html index.php;
 
+    location /lpanel {{
+        return 301 {panel_url}/login;
+    }}
+
     location / {{
         try_files $uri $uri/ /index.php?$query_string;
     }}
@@ -124,7 +128,8 @@ class DemoProvider(Provider):
         # In the demo the PHP socket name shows the per-user pool for clarity.
         vhost = config.NGINX_DIR / f"{domain}.conf"
         text = _NGINX_TEMPLATE.format(
-            app=config.APP_NAME, domain=domain, docroot=Path(docroot).as_posix(), php=php_version
+            app=config.APP_NAME, domain=domain, docroot=Path(docroot).as_posix(),
+            php=php_version, panel_url=config.PANEL_URL,
         )
         text = f"# account: {system_user}\n" + text
         vhost.write_text(text, encoding="utf-8")
@@ -195,7 +200,8 @@ class DemoProvider(Provider):
                            system_user: str, enabled: bool, has_ssl: bool) -> None:
         vhost = config.NGINX_DIR / f"{domain}.conf"
         body = _NGINX_TEMPLATE.format(
-            app=config.APP_NAME, domain=domain, docroot=Path(docroot).as_posix(), php=php_version
+            app=config.APP_NAME, domain=domain, docroot=Path(docroot).as_posix(),
+            php=php_version, panel_url=config.PANEL_URL,
         )
         header = f"# account: {system_user}\n"
         if enabled:

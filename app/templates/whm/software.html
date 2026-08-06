@@ -1,0 +1,83 @@
+{% extends "whm_base.html" %}
+{% block title %}Server Software{% endblock %}
+{% block content %}
+<div class="whm-page-head">
+  <h1>Server Software</h1>
+  <p class="muted">Install system-wide software: PHP extensions and the Node.js
+    runtime. These run as root on the server and affect every account — so they
+    live here in WHM, not in the user panel.</p>
+</div>
+
+<!-- PHP extensions -->
+<div class="card">
+  <h2>PHP Extensions <span class="pill pill-ok">PHP {{ php_version }}</span></h2>
+  <p class="muted small">
+    Installing an extension adds its apt package server-wide. Accounts then enable
+    or disable it per site from the panel's PHP Selector.
+  </p>
+
+  <div class="php-toolbar">
+    <input type="text" id="extSearch" class="php-search" placeholder="🔍 Search extensions…"
+           oninput="filterSoftware(this.value)" autocomplete="off">
+    <span class="count-badge">{{ ext_rows | selectattr('installed') | list | length }} / {{ ext_rows | length }} installed</span>
+  </div>
+
+  <div class="ext-grid" id="swGrid">
+    {% for row in ext_rows %}
+      <div class="ext-item {{ 'on' if row.installed }}" data-name="{{ row.name }}">
+        <div class="ext-name"><strong>{{ row.name }}</strong></div>
+        <div class="ext-meta">
+          {% if row.installed %}
+            <span class="pill pill-ok">Installed</span>
+            <form method="post" action="/whm/software/php/uninstall" class="inline-form"
+                  onsubmit="return confirm('Remove the php{{ php_version }}-{{ row.name }} package server-wide?')">
+              <input type="hidden" name="extension" value="{{ row.name }}">
+              <input type="hidden" name="php_version" value="{{ php_version }}">
+              <button class="btn btn-xs btn-danger">Remove</button>
+            </form>
+          {% else %}
+            <span class="pill">Not installed</span>
+            <form method="post" action="/whm/software/php/install" class="inline-form"
+                  onsubmit="return confirm('Install the php{{ php_version }}-{{ row.name }} package now? This runs apt as root.')">
+              <input type="hidden" name="extension" value="{{ row.name }}">
+              <input type="hidden" name="php_version" value="{{ php_version }}">
+              <button class="btn btn-xs btn-primary">Install</button>
+            </form>
+          {% endif %}
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+</div>
+
+<!-- Node.js runtime -->
+<div class="card">
+  <h2>Node.js Runtime</h2>
+  {% if node_runtime %}
+    <p><span class="pill pill-ok">Installed: Node.js {{ node_runtime }}</span></p>
+    <p class="muted small">Install a different major below to add or upgrade it.</p>
+  {% else %}
+    <p><span class="pill">Node.js is not installed on this server.</span></p>
+    <p class="muted small">Install it here, then admins can deploy Node apps per domain from the panel.</p>
+  {% endif %}
+  <form method="post" action="/whm/software/node/install" class="inline-form"
+        onsubmit="return confirm('Install the Node.js runtime via NodeSource now? This runs as root.');">
+    <select name="version">
+      {% for v in node_versions %}
+        <option value="{{ v }}">Node.js {{ v }}.x</option>
+      {% endfor %}
+    </select>
+    <button type="submit" class="btn btn-sm btn-primary">Install runtime</button>
+  </form>
+</div>
+
+<script>
+  function filterSoftware(q) {
+    q = q.trim().toLowerCase();
+    document.querySelectorAll('#swGrid .ext-item').forEach(function (item) {
+      var match = item.getAttribute('data-name').indexOf(q) !== -1;
+      item.style.display = match ? '' : 'none';
+    });
+  }
+</script>
+{% endblock %}

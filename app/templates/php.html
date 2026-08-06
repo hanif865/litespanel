@@ -84,15 +84,6 @@
                   {% else %}
                     <span class="pill">Built-in</span>
                   {% endif %}
-                  {% if is_admin and installable[ext] %}
-                    {% if ext in installed %}
-                      <button type="button" class="btn btn-xs btn-danger"
-                              onclick="extPkg('/php/uninstall', '{{ ext }}', 'Remove {{ ext }} system package?')">Remove</button>
-                    {% else %}
-                      <button type="button" class="btn btn-xs btn-primary"
-                              onclick="extPkg('/php/install', '{{ ext }}', 'Install {{ ext }} system package now?')">Install</button>
-                    {% endif %}
-                  {% endif %}
                 </div>
               </div>
             {% endfor %}
@@ -146,23 +137,6 @@
       item.classList.toggle('on', state);
     });
     countExts();
-  }
-  // Install / remove a system package. The extension checkboxes live inside the
-  // Save-Extensions form, and HTML forms can't nest, so post via a throwaway form.
-  function extPkg(action, ext, confirmMsg) {
-    if (!confirm(confirmMsg)) return;
-    var f = document.createElement('form');
-    f.method = 'post';
-    f.action = action;
-    var scope = document.querySelector('#scope');
-    var did = document.createElement('input');
-    did.type = 'hidden'; did.name = 'domain_id';
-    did.value = scope ? scope.value : '';
-    var name = document.createElement('input');
-    name.type = 'hidden'; name.name = 'extension'; name.value = ext;
-    f.appendChild(did); f.appendChild(name);
-    document.body.appendChild(f);
-    f.submit();
   }
   function filterExts(q) {
     q = q.trim().toLowerCase();
