@@ -6,9 +6,10 @@ On a VPS, keep it to a single worker for the smallest footprint.
 from __future__ import annotations
 
 from fastapi import FastAPI, Request
-from fastapi.exceptions import HTTPException
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import config
@@ -118,6 +119,46 @@ async def auth_redirect(request: Request, exc: HTTPException):
     return templates.TemplateResponse(
         request, "error.html", {"status": exc.status_code, "detail": exc.detail},
         status_code=exc.status_code,
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error(request: Request, exc: RequestValidationError):
+    """Turn a raw 422 JSON body into a friendly page naming the bad fields."""
+    fields: list[str] = []
+    for err in exc.errors():
+        # loc is like ("body", "port") — take the last human-meaningful part.
+        loc = [str(p) for p in err.get("loc", ()) if p not in ("body", "query", "path")]
+        if loc:
+            name = loc[-1].replace("_", " ")
+            if name not in fields:
+                fields.append(name)
+    if fields:
+        detail = "Please check these fields: " + ", ".join(fields) + "."
+    else:
+        detail = "Some of the submitted values were invalid. Please review the form."
+    return templates.TemplateResponse(
+        request, "error.html", {"status": 422, "detail": detail},
+        status_code=422,
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_error(request: Request, exc: Exception):
+    """Catch-all so an unexpected error never leaks a traceback or raw JSON.
+
+    The full exception is logged server-side (visible via journalctl) while the
+    browser only sees a clean, generic page.
+    """
+    import logging
+
+    logging.getLogger("litespanel").exception(
+        "Unhandled error on %s %s", request.method, request.url.path
+    )
+    return templates.TemplateResponse(
+        request, "error.html",
+        {"status": 500, "detail": "Something went wrong on our end. The issue has been logged."},
+        status_code=500,
     )
 
 

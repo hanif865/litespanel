@@ -1,14 +1,30 @@
 {% extends "base.html" %}
+{% from "_icons.html" import icon %}
 {% block title %}Error {{ status }}{% endblock %}
+
+{# Map a status code to an icon kind, headline and severity class. #}
+{% set _titles = {403: "Access denied", 404: "Page not found", 401: "Please sign in", 422: "Check your input", 500: "Something went wrong", 502: "Service unavailable", 503: "Service unavailable"} %}
+{% set headline = _titles.get(status, "Something went wrong") %}
+{% if status >= 500 %}{% set kind = "error" %}{% elif status >= 400 %}{% set kind = "warning" %}{% else %}{% set kind = "info" %}{% endif %}
+
+{% macro error_body() %}
+  <div class="error-ico error-ico-{{ kind }}">{{ icon(kind, 34) }}</div>
+  <div class="error-code">Error {{ status }}</div>
+  <div class="error-title">{{ headline }}</div>
+  <p class="error-detail">{{ detail }}</p>
+  <a href="/" class="btn btn-primary">← Back to dashboard</a>
+{% endmacro %}
+
 {% block bare %}
 <div class="login-wrap">
-  <div class="login-card">
-    <h1>{{ status }}</h1>
-    <p class="muted">{{ detail }}</p>
-    <a href="/" class="btn btn-primary btn-block">← Back to dashboard</a>
+  <div class="login-card error-card">
+    {{ error_body() }}
   </div>
 </div>
 {% endblock %}
+
 {% block content %}
-<div class="empty"><h2>{{ status }}</h2><p>{{ detail }}</p><a href="/">← Back</a></div>
+<div class="panel error-card" style="max-width:460px;margin:2rem auto;text-align:center;">
+  {{ error_body() }}
+</div>
 {% endblock %}

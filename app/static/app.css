@@ -264,7 +264,17 @@ label input { display: block; width: 100%; margin-top: .3rem; font-weight: 400; 
 .muted { color: var(--muted); }
 .small { font-size: .78rem; }
 .empty { padding: 2.5rem; text-align: center; color: var(--muted); background: var(--card); border: 1px dashed var(--border); border-radius: var(--radius); }
-.flash { background: var(--orange-soft); border: 1px solid #ffd9c4; color: var(--orange-dark); padding: .7rem 1rem; border-radius: 8px; margin-bottom: 1.25rem; }
+/* ---------- Flash banners (typed) ---------- */
+.flash { display: flex; align-items: flex-start; gap: .6rem; padding: .7rem .9rem; border-radius: 8px; margin-bottom: 1.25rem; border: 1px solid transparent; transition: opacity .35s ease, transform .35s ease; }
+.flash-ico { display: flex; flex: 0 0 auto; margin-top: 1px; }
+.flash-msg { flex: 1 1 auto; line-height: 1.4; word-break: break-word; }
+.flash-x { flex: 0 0 auto; background: none; border: none; cursor: pointer; font-size: 1.15rem; line-height: 1; padding: 0 .1rem; color: inherit; opacity: .55; margin: 0; }
+.flash-x:hover { opacity: 1; }
+.flash-hide { opacity: 0; transform: translateY(-6px); }
+.flash-success { background: #e6f6e9; border-color: #b7e3c0; color: #1e6b34; }
+.flash-error { background: #fdf3f3; border-color: #f6cccc; color: var(--danger); }
+.flash-warning { background: var(--orange-soft); border-color: #ffd9c4; color: var(--orange-dark); }
+.flash-info { background: #eef5fb; border-color: #cfe3f4; color: #1d5a8a; }
 .alert-error { background: #fdf3f3; border: 1px solid #f6cccc; color: var(--danger); padding: .6rem .8rem; border-radius: 8px; margin-bottom: 1rem; font-size: .85rem; }
 .cred-card { background: #fffbeb; border-color: #fde68a; }
 .cred-table { margin-top: .6rem; border-collapse: collapse; }
@@ -279,6 +289,20 @@ label input { display: block; width: 100%; margin-top: .3rem; font-weight: 400; 
 .login-sub { color: var(--muted); margin: .3rem 0 1.5rem; }
 .login-hint { text-align: center; color: var(--muted); font-size: .78rem; margin-top: 1rem; }
 .login-card label { margin-bottom: 1rem; }
+
+/* ---------- Error page ---------- */
+.error-card { text-align: center; }
+.error-ico { width: 64px; height: 64px; border-radius: 50%; display: grid; place-items: center; margin: 0 auto 1.1rem; }
+.error-ico-warning { background: var(--orange-soft); color: var(--orange-dark); }
+.error-ico-error { background: #fdf3f3; color: var(--danger); }
+.error-ico-info { background: #eef5fb; color: #1d5a8a; }
+.error-code { font-size: .8rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.error-title { font-size: 1.35rem; font-weight: 700; color: var(--ink); margin: .2rem 0 .5rem; }
+.error-detail { color: var(--muted); font-size: .9rem; line-height: 1.5; margin-bottom: 1.4rem; }
+.error-card .btn { display: inline-flex; }
+[data-theme="dark"] .error-ico-warning { background: #33220f; color: #ffab73; }
+[data-theme="dark"] .error-ico-error { background: #2a1516; color: #ff9b9d; }
+[data-theme="dark"] .error-ico-info { background: #1d2a37; color: #9fd0ef; }
 
 /* ---------- Editor ---------- */
 .code-editor { width: 100%; min-height: 55vh; font-family: "Consolas", "Menlo", monospace; font-size: .85rem; line-height: 1.5; padding: 1rem; border-radius: var(--radius); resize: vertical; }
@@ -319,7 +343,10 @@ label input { display: block; width: 100%; margin-top: .3rem; font-weight: 400; 
 [data-theme="dark"] .jhamburger:hover, [data-theme="dark"] .jicon-btn:hover { background: #222b36; }
 [data-theme="dark"] .pill { background: #222b36; }
 [data-theme="dark"] .empty { background: var(--card); }
-[data-theme="dark"] .flash { background: #1d2a37; border-color: #2f4a5f; color: #9fd0ef; }
+[data-theme="dark"] .flash-success { background: #14271a; border-color: #2c5138; color: #86e0a0; }
+[data-theme="dark"] .flash-error { background: #2a1516; border-color: #5a2a2c; color: #ff9b9d; }
+[data-theme="dark"] .flash-warning { background: #33220f; border-color: #514420; color: #ffab73; }
+[data-theme="dark"] .flash-info { background: #1d2a37; border-color: #2f4a5f; color: #9fd0ef; }
 [data-theme="dark"] .cred-card { background: #2a2410; border-color: #514420; }
 [data-theme="dark"] .badge-demo { background: #33220f; color: #ffab73; }
 [data-theme="dark"] .ext-item { background: #141a21; color: var(--side-text); border-color: #232c36; }

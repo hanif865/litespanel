@@ -174,7 +174,14 @@
     </header>
 
     <div class="jcontent">
-      {% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
+      {% if flash %}
+        {% set fkind, fmsg = flash | flash_kind %}
+        <div class="flash flash-{{ fkind }}" role="status">
+          <span class="flash-ico">{{ icon(fkind, 18) }}</span>
+          <span class="flash-msg">{{ fmsg }}</span>
+          <button type="button" class="flash-x" aria-label="Dismiss" onclick="this.parentElement.remove()">&times;</button>
+        </div>
+      {% endif %}
       {% block content %}{% endblock %}
     </div>
   </div>
@@ -214,6 +221,15 @@ function filterTools(q) {
     g.style.display = any ? "" : "none";
   });
 }
+// Auto-dismiss the flash banner after a few seconds (× dismisses immediately).
+(function () {
+  var f = document.querySelector(".flash");
+  if (!f) return;
+  setTimeout(function () {
+    f.classList.add("flash-hide");
+    setTimeout(function () { if (f.parentElement) f.remove(); }, 400);
+  }, 6000);
+})();
 </script>
 {% else %}
   {% block bare %}{% endblock %}
