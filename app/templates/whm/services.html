@@ -1,0 +1,86 @@
+{% extends "whm_base.html" %}
+{% from "_icons.html" import icon %}
+{% block title %}Service Manager{% endblock %}
+{% block content %}
+<div class="whm-page-head">
+  <h1>Service Manager</h1>
+  <p class="muted">Start, stop and restart the core system services. These run
+    <code>systemctl</code> as root and affect the whole server — so they live
+    here in WHM, admin-only.</p>
+</div>
+
+{% set running = services | selectattr('status', 'equalto', 'running') | list | length %}
+{% set stopped = services | selectattr('status', 'equalto', 'stopped') | list | length %}
+{% set missing = services | rejectattr('available') | list | length %}
+
+<div class="whm-cards">
+  <div class="whm-card">
+    <div class="whm-card-ico">{{ icon("server", 22) }}</div>
+    <div class="whm-card-num">{{ services | length }}</div>
+    <div class="whm-card-lbl">Services</div>
+  </div>
+  <div class="whm-card">
+    <div class="whm-card-ico ok">{{ icon("success", 22) }}</div>
+    <div class="whm-card-num">{{ running }}</div>
+    <div class="whm-card-lbl">Running</div>
+  </div>
+  <div class="whm-card">
+    <div class="whm-card-ico warn">{{ icon("power", 22) }}</div>
+    <div class="whm-card-num">{{ stopped }}</div>
+    <div class="whm-card-lbl">Stopped</div>
+  </div>
+  {% if missing %}
+  <div class="whm-card">
+    <div class="whm-card-ico">{{ icon("warning", 22) }}</div>
+    <div class="whm-card-num">{{ missing }}</div>
+    <div class="whm-card-lbl">Not installed</div>
+  </div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0">Services</h2>
+  <div class="ext-grid">
+    {% for s in services %}
+      <div class="ext-item {{ 'on' if s.status == 'running' }}" data-name="{{ s.key }}">
+        <div class="ext-name"><strong>{{ s.label }}</strong></div>
+        <div class="ext-meta">
+          {% if not s.available %}
+            <span class="pill">not installed</span>
+          {% elif s.status == 'running' %}
+            <span class="pill pill-ok">running</span>
+          {% elif s.status == 'stopped' %}
+            <span class="pill" style="background:#fdecec;color:#e5484d">stopped</span>
+          {% else %}
+            <span class="pill">unknown</span>
+          {% endif %}
+
+          {% if s.available %}
+            {% if s.status != 'running' %}
+            <form method="post" action="/whm/services/control" class="inline-form">
+              <input type="hidden" name="service" value="{{ s.key }}">
+              <input type="hidden" name="action" value="start">
+              <button class="btn btn-xs">Start</button>
+            </form>
+            {% endif %}
+            <form method="post" action="/whm/services/control" class="inline-form"
+                  onsubmit="return confirm('Restart {{ s.label }} now? Active connections may briefly drop.');">
+              <input type="hidden" name="service" value="{{ s.key }}">
+              <input type="hidden" name="action" value="restart">
+              <button class="btn btn-xs btn-primary">Restart</button>
+            </form>
+            {% if s.status == 'running' %}
+            <form method="post" action="/whm/services/control" class="inline-form"
+                  onsubmit="return confirm('Stop {{ s.label }}? This takes it fully offline host-wide.');">
+              <input type="hidden" name="service" value="{{ s.key }}">
+              <input type="hidden" name="action" value="stop">
+              <button class="btn btn-xs btn-danger">Stop</button>
+            </form>
+            {% endif %}
+          {% endif %}
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

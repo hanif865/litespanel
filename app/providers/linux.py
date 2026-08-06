@@ -46,6 +46,20 @@ _IP_RE = re.compile(
     r"|^([0-9a-fA-F:]+)(/\d{1,3})?$"                  # IPv6 or IPv6/CIDR
 )
 
+# Service Manager: map each catalog key (config.MANAGED_SERVICES) to candidate
+# systemd units, most-preferred first. Names differ across distros (MySQL ships
+# as either mariadb or mysql), so list every plausible unit and resolve to the
+# first one that's actually loaded. The client only ever sends a key from this
+# map — never a unit name — so it can't ask systemctl to touch anything else.
+_SERVICE_UNITS: dict[str, list[str]] = {
+    "nginx": ["nginx"],
+    "php-fpm": [f"php{config.PHP_FPM_VERSION}-fpm"],
+    "mysql": ["mariadb", "mysql"],
+    "postgresql": ["postgresql"],
+    "postfix": ["postfix"],
+    "dovecot": ["dovecot"],
+}
+
 
 def _ident(value: str, what: str) -> str:
     if not _IDENT_RE.match(value):
@@ -1348,6 +1362,91 @@ class LinuxProvider(Provider):
         if not enabled:
             return True, "ModSecurity turned off"
         return True, f"ModSecurity turned on ({mode})"
+
+    # --- Service Manager --------------------------------------------------
+    def _resolve_unit(self, key: str) -> tuple[str | None, str]:
+        """Return (unit, load_state) for a catalog key.
+
+        Picks the first candidate unit that is `loaded`; if none is loaded,
+        returns (None, "not-found"). Uses `systemctl show` — one cheap,
+        machine-readable call per candidate.
+        """
+        candidates = _SERVICE_UNITS.get(key)
+        if not candidates:
+            return None, "unknown-key"
+        first = candidates[0]
+        for unit in candidates:
+            try:
+                proc = subprocess.run(
+                    ["systemctl", "show", f"{unit}.service",
+                     "--property=LoadState", "--no-pager"],
+                    capture_output=True, text=True,
+                )
+            except (FileNotFoundError, OSError):
+                return None, "no-systemctl"
+            state = ""
+            for line in (proc.stdout or "").splitlines():
+                if line.startswith("LoadState="):
+                    state = line.split("=", 1)[1].strip()
+            if state == "loaded":
+                return unit, "loaded"
+        return None, "not-found"
+
+    def list_services(self) -> list[dict]:
+        rows: list[dict] = []
+        for key, label in config.MANAGED_SERVICES:
+            unit, load = self._resolve_unit(key)
+            if unit is None:
+                # Not installed here, or systemctl itself is unavailable.
+                rows.append({"key": key, "label": label,
+                             "status": "unknown", "available": False})
+                continue
+            try:
+                proc = subprocess.run(
+                    ["systemctl", "show", f"{unit}.service",
+                     "--property=ActiveState", "--no-pager"],
+                    capture_output=True, text=True,
+                )
+            except (FileNotFoundError, OSError):
+                rows.append({"key": key, "label": label,
+                             "status": "unknown", "available": False})
+                continue
+            active = ""
+            for line in (proc.stdout or "").splitlines():
+                if line.startswith("ActiveState="):
+                    active = line.split("=", 1)[1].strip()
+            if active == "active":
+                status = "running"
+            elif active in ("inactive", "failed", "deactivating", "activating"):
+                status = "stopped"
+            else:
+                status = "unknown"
+            rows.append({"key": key, "label": label,
+                         "status": status, "available": True})
+        return rows
+
+    def control_service(self, key: str, action: str) -> tuple[bool, str]:
+        if action not in ("start", "stop", "restart"):
+            return False, f"Unknown action: {action}"
+        label = dict(config.MANAGED_SERVICES).get(key)
+        if label is None:
+            return False, f"Unknown service: {key}"
+        unit, _load = self._resolve_unit(key)
+        if unit is None:
+            return False, f"{label} is not installed on this server."
+        # A broken nginx config must never let us take the web server fully
+        # down — validate before touching it (start/restart both re-read config).
+        if key == "nginx" and action in ("start", "restart"):
+            try:
+                _run(["nginx", "-t"])
+            except RuntimeError as exc:
+                return False, f"nginx config test failed: {exc}"
+        try:
+            _run(["systemctl", action, f"{unit}.service"])
+        except RuntimeError as exc:
+            return False, str(exc)
+        past = {"start": "Started", "stop": "Stopped", "restart": "Restarted"}[action]
+        return True, f"{past} {label}."
 
     # --- Logs -------------------------------------------------------------
     # Fixed allowlist of readable logs. The viewer passes back a `key` from this

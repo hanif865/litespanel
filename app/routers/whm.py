@@ -467,3 +467,31 @@ async def software_node_install(
     ok, message = await run_in_threadpool(get_provider().install_node, version)
     _flash(request, ("✅ " if ok else "❌ ") + message)
     return RedirectResponse("/whm/software", status_code=303)
+
+
+# --- Service Manager (systemctl — admin only) -----------------------------
+# Start/stop/restart the core system services. Runs systemctl as root, so it's
+# admin-only (never a reseller). The client only ever sends a service `key` from
+# the fixed catalog (config.MANAGED_SERVICES) — the provider maps it to the real
+# unit, so a request can never target an arbitrary unit.
+@router.get("/services")
+def services(request: Request, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    rows = get_provider().list_services()
+    flash = request.session.pop("flash", None)
+    return templates.TemplateResponse(
+        request, "whm/services.html",
+        {"user": admin, "active": "services", "flash": flash, "services": rows},
+    )
+
+
+@router.post("/services/control")
+async def services_control(
+    request: Request, service: str = Form(...), action: str = Form(...),
+    admin: User = Depends(require_admin), db: Session = Depends(get_db),
+):
+    if action not in ("start", "stop", "restart"):
+        _flash(request, "❌ Unknown action.")
+        return RedirectResponse("/whm/services", status_code=303)
+    ok, message = await run_in_threadpool(get_provider().control_service, service, action)
+    _flash(request, ("✅ " if ok else "❌ ") + message)
+    return RedirectResponse("/whm/services", status_code=303)

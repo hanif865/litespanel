@@ -98,6 +98,20 @@ PHP_FPM_VERSION = _env("PANEL_PHP_FPM_VERSION", "8.3")
 NODE_VERSIONS = ("22", "20", "18")
 NODE_PORT_BASE = int(_env("PANEL_NODE_PORT_BASE", "3100"))
 
+# Service Manager (admin-only). The core system services WHM can start/stop/
+# restart, as (key, label) pairs. `key` is the opaque catalog id the router and
+# templates use — the provider maps it to the real systemd unit, so a client can
+# never target an arbitrary unit. Shared here so the demo and linux providers
+# stay in lock-step on keys/labels/order.
+MANAGED_SERVICES = (
+    ("nginx",      "Nginx — web server"),
+    ("php-fpm",    "PHP-FPM"),
+    ("mysql",      "MySQL / MariaDB"),
+    ("postgresql", "PostgreSQL"),
+    ("postfix",    "Postfix — SMTP"),
+    ("dovecot",    "Dovecot — IMAP/POP3"),
+)
+
 
 def ensure_dirs() -> None:
     """Create the data directories on startup (idempotent)."""

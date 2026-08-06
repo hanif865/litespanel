@@ -521,6 +521,29 @@ class Provider(ABC):
         the WAF filters every request to the host.
         """
 
+    # --- Service Manager (admin-only) -------------------------------------
+    @abstractmethod
+    def list_services(self) -> list[dict]:
+        """Return the status of the core managed services (admin-only).
+
+        Each entry: {key, label, status, available}. `key` is an opaque
+        catalog id (from config.MANAGED_SERVICES) the router passes back to
+        control_service — the raw systemd unit name is NEVER accepted from the
+        client, so the manager can only ever act on this fixed set. `status`
+        is "running", "stopped" or "unknown"; `available` is False when the
+        unit isn't installed on this host. Order follows the catalog.
+        """
+
+    @abstractmethod
+    def control_service(self, key: str, action: str) -> tuple[bool, str]:
+        """Start/stop/restart one managed service. Returns (ok, message).
+
+        `action` in {start, stop, restart}; `key` must be in the service
+        catalog (both rejected otherwise, before anything is run, so a client
+        can never target an arbitrary unit or action). Shells out to systemctl
+        as root — admin-only at the router layer.
+        """
+
     # --- Logs (admin-only) ------------------------------------------------
     @abstractmethod
     def log_sources(self) -> list[dict]:

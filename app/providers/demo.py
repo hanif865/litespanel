@@ -959,6 +959,49 @@ class DemoProvider(Provider):
             return True, "(demo) ModSecurity turned off"
         return True, f"(demo) ModSecurity turned on ({mode})"
 
+    # --- Service Manager --------------------------------------------------
+    # No real systemd here, so a small JSON file records each managed service's
+    # running/stopped state (defaulting to running). Inspectable and survives a
+    # restart, like the other demo toggles.
+    def _services_file(self) -> Path:
+        return config.FIREWALL_DIR / "services.json"
+
+    def _services_load(self) -> dict:
+        import json
+
+        try:
+            state = json.loads(self._services_file().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            state = {}
+        return state if isinstance(state, dict) else {}
+
+    def _services_save(self, state: dict) -> None:
+        import json
+
+        config.FIREWALL_DIR.mkdir(parents=True, exist_ok=True)
+        self._services_file().write_text(json.dumps(state, indent=2), encoding="utf-8")
+
+    def list_services(self) -> list[dict]:
+        state = self._services_load()
+        rows = []
+        for key, label in config.MANAGED_SERVICES:
+            status = state.get(key, "running")  # demo services are up by default
+            rows.append({"key": key, "label": label,
+                         "status": status, "available": True})
+        return rows
+
+    def control_service(self, key: str, action: str) -> tuple[bool, str]:
+        if action not in ("start", "stop", "restart"):
+            return False, f"Unknown action: {action}"
+        label = dict(config.MANAGED_SERVICES).get(key)
+        if label is None:
+            return False, f"Unknown service: {key}"
+        state = self._services_load()
+        state[key] = "stopped" if action == "stop" else "running"
+        self._services_save(state)
+        past = {"start": "started", "stop": "stopped", "restart": "restarted"}[action]
+        return True, f"(demo) {past} {label}."
+
     # --- Logs -------------------------------------------------------------
     # The demo has no real /var/log, so it writes small, realistic sample logs
     # under LOG_DIR the first time each is requested. The viewer still only
