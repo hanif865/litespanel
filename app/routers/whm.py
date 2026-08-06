@@ -12,17 +12,22 @@ plus a couple of admin-only actions (create-with-domain, password modification).
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
 from starlette.concurrency import run_in_threadpool
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from .. import config, php_catalog
+from .. import config, php_catalog, weblog
 from ..accounts import account_home, terminate_account
 from ..db import get_db
-from ..models import Domain, Package, User
+from ..limits import _count
+from ..models import Database, Domain, EmailAccount, Package, PgDatabase, Subdomain, User
 from ..providers import get_provider
+from ..routers.dashboard import _meter
+from ..routers.disk_usage import _dir_size
 from ..routers.domains import _DOMAIN_RE
 from ..routers.packages import _NAME_RE, visible_packages
 from ..routers.users import _USERNAME_RE, _can_manage, _owned_package, _visible_users
@@ -153,6 +158,84 @@ def create_account(
     plan = f" on package '{pkg.name}'" if pkg else ""
     _flash(request, f"✅ {role.capitalize()} '{username}' created{plan} with primary domain {domain}.")
     return RedirectResponse("/whm/accounts", status_code=303)
+
+
+# --- Account Information (per-account detail) ------------------------------
+# Read-only WHM view of one account: disk vs quota, recent traffic (parsed live
+# from web logs — no persistent bandwidth counter exists yet), and how many
+# domains / databases / email accounts it has vs its limits. Declared AFTER the
+# static /accounts/new and /accounts/create so those aren't captured as an id.
+@router.get("/accounts/{user_id}")
+def account_detail(request: Request, user_id: int,
+                   manager: User = Depends(require_manager), db: Session = Depends(get_db)):
+    target = db.get(User, user_id)
+    # Admins may open any account; resellers only the ones they created.
+    if target is None or (manager.role != "admin" and target.created_by_id != manager.id):
+        _flash(request, "❌ Account not found.")
+        return RedirectResponse("/whm/accounts", status_code=303)
+
+    provider = get_provider()
+    domains = list(target.domains)
+    primary = next((d for d in domains if d.is_primary), domains[0] if domains else None)
+
+    # Per-domain disk footprint + recent traffic. Disk uses the bounded walk;
+    # bandwidth is summed from the tail of each domain's access log (capped) so
+    # a busy account can't stall the single worker.
+    disk_bytes = 0
+    bw_bytes = 0
+    domain_rows = []
+    for d in sorted(domains, key=lambda x: (not x.is_primary, x.name)):
+        site = Path(d.docroot).parent  # /home/<user>/<domain>
+        d_disk = _dir_size(site) if site.exists() else 0
+        d_bw = weblog.parse_access_log(provider.read_access_log(d.name, max_lines=8000))["bandwidth_bytes"]
+        disk_bytes += d_disk
+        bw_bytes += d_bw
+        domain_rows.append({
+            "name": d.name, "is_primary": d.is_primary,
+            "disk_display": weblog.human_bytes(d_disk),
+            "bw_display": weblog.human_bytes(d_bw),
+        })
+
+    disk_used_mb = round(disk_bytes / (1024 * 1024), 1)
+
+    # Resource counts. MySQL + PostgreSQL share one database quota (like cPanel).
+    n_domains = len(domains)
+    n_databases = _count(db, Database, target.id) + _count(db, PgDatabase, target.id)
+    n_subdomains = db.scalar(
+        select(func.count()).select_from(Subdomain).join(Domain).where(Domain.owner_id == target.id)
+    ) or 0
+    owned = select(Domain.id).where(Domain.owner_id == target.id).scalar_subquery()
+    n_email = db.scalar(
+        select(func.count()).select_from(EmailAccount).where(EmailAccount.domain_id.in_(owned))
+    ) or 0
+
+    unlimited = target.unlimited
+    usage = {
+        "disk": _meter(disk_used_mb, 0 if unlimited else target.eff_disk_mb),
+        "domains": _meter(n_domains, 0 if unlimited else target.eff_domains),
+        "databases": _meter(n_databases, 0 if unlimited else target.eff_databases),
+        "email": _meter(n_email, 0 if unlimited else target.eff_email),
+    }
+
+    if primary:
+        home_dir = str(Path(primary.docroot).parent.parent)  # /home/<user>
+    elif target.system_user:
+        home_dir = f"/home/{target.system_user}"
+    else:
+        home_dir = "—"
+
+    flash = request.session.pop("flash", None)
+    return templates.TemplateResponse(
+        request, "whm/account_detail.html",
+        {"user": manager, "target": target, "active": "accounts", "flash": flash,
+         "primary_domain": primary.name if primary else None,
+         "usage": usage, "disk_used_mb": disk_used_mb,
+         "bandwidth_display": weblog.human_bytes(bw_bytes),
+         "counts": {"domains": n_domains, "databases": n_databases,
+                    "subdomains": n_subdomains, "email": n_email},
+         "home_dir": home_dir, "domain_rows": domain_rows,
+         "package_name": target.package.name if target.package else None},
+    )
 
 
 @router.post("/accounts/{user_id}/password")

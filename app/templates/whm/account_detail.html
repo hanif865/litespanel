@@ -1,0 +1,165 @@
+{% extends "whm_base.html" %}
+{% from "_icons.html" import icon %}
+{% block title %}Account Information{% endblock %}
+{% block content %}
+<div class="whm-page-head">
+  <h1>Account Information</h1>
+  <p class="muted">{{ target.username }}{% if primary_domain %} · {{ primary_domain }}{% endif %}</p>
+  <a href="/whm/accounts" class="btn btn-sm">← Back to accounts</a>
+</div>
+
+<!-- Quick stats tiles -->
+<div class="whm-cards">
+  <div class="whm-card">
+    <div class="whm-card-ico">{{ icon("disk-usage", 22) }}</div>
+    <div class="whm-card-num">{{ disk_used_mb }} MB</div>
+    <div class="whm-card-lbl">Disk used</div>
+  </div>
+  <div class="whm-card">
+    <div class="whm-card-ico">{{ icon("bandwidth", 22) }}</div>
+    <div class="whm-card-num">{{ bandwidth_display }}</div>
+    <div class="whm-card-lbl">Recent traffic</div>
+  </div>
+  <div class="whm-card">
+    <div class="whm-card-ico">{{ icon("domains", 22) }}</div>
+    <div class="whm-card-num">{{ counts.domains }}</div>
+    <div class="whm-card-lbl">Domains</div>
+  </div>
+  <div class="whm-card">
+    <div class="whm-card-ico">{{ icon("databases", 22) }}</div>
+    <div class="whm-card-num">{{ counts.databases }}</div>
+    <div class="whm-card-lbl">Databases</div>
+  </div>
+  <div class="whm-card">
+    <div class="whm-card-ico">{{ icon("email", 22) }}</div>
+    <div class="whm-card-num">{{ counts.email }}</div>
+    <div class="whm-card-lbl">Email accounts</div>
+  </div>
+</div>
+
+<div class="whm-columns">
+  <!-- Resource usage with meters -->
+  <div class="card">
+    <h2 style="margin-top:0">Resource Usage</h2>
+
+    <div class="stat-item">
+      <div class="stat-top">
+        <span class="s-label">Disk ({{ usage.disk.display }})</span>
+        <span class="s-val">{{ usage.disk.percent }}%</span>
+      </div>
+      <div class="meter">
+        <div class="meter-fill {{ 'hot' if usage.disk.percent > 85 }}" style="width: {{ usage.disk.percent }}%"></div>
+      </div>
+    </div>
+
+    <div class="stat-item">
+      <div class="stat-top">
+        <span class="s-label">Domains ({{ usage.domains.display }})</span>
+        <span class="s-val">{{ usage.domains.percent }}%</span>
+      </div>
+      <div class="meter">
+        <div class="meter-fill {{ 'hot' if usage.domains.percent > 85 }}" style="width: {{ usage.domains.percent }}%"></div>
+      </div>
+    </div>
+
+    <div class="stat-item">
+      <div class="stat-top">
+        <span class="s-label">Databases ({{ usage.databases.display }})</span>
+        <span class="s-val">{{ usage.databases.percent }}%</span>
+      </div>
+      <div class="meter">
+        <div class="meter-fill {{ 'hot' if usage.databases.percent > 85 }}" style="width: {{ usage.databases.percent }}%"></div>
+      </div>
+    </div>
+
+    <div class="stat-item">
+      <div class="stat-top">
+        <span class="s-label">Email ({{ usage.email.display }})</span>
+        <span class="s-val">{{ usage.email.percent }}%</span>
+      </div>
+      <div class="meter">
+        <div class="meter-fill {{ 'hot' if usage.email.percent > 85 }}" style="width: {{ usage.email.percent }}%"></div>
+      </div>
+    </div>
+
+    <div class="info-row">
+      <span class="k">Recent traffic (from web logs)</span>
+      <span class="v">{{ bandwidth_display }}</span>
+    </div>
+    <div class="info-row">
+      <span class="k">Subdomains</span>
+      <span class="v">{{ counts.subdomains }}</span>
+    </div>
+  </div>
+
+  <!-- Account details -->
+  <div class="card">
+    <h2 style="margin-top:0">Account Details</h2>
+    <div class="info-row">
+      <span class="k">Username</span>
+      <span class="v">{{ target.username }}</span>
+    </div>
+    <div class="info-row">
+      <span class="k">Primary domain</span>
+      <span class="v">{{ primary_domain if primary_domain else '—' }}</span>
+    </div>
+    <div class="info-row">
+      <span class="k">Role</span>
+      <span class="v">
+        {% if target.role == 'admin' %}<span class="pill" style="background:#e7ecff;color:#3b5bdb">admin</span>
+        {% elif target.role == 'reseller' %}<span class="pill" style="background:#fff2eb;color:#e85b1b">reseller</span>
+        {% else %}<span class="pill">user</span>{% endif %}
+      </span>
+    </div>
+    <div class="info-row">
+      <span class="k">Status</span>
+      <span class="v">
+        {% if target.suspended %}<span class="pill" style="background:#fdecec;color:#e5484d">suspended</span>
+        {% else %}<span class="pill pill-ok">active</span>{% endif %}
+      </span>
+    </div>
+    <div class="info-row">
+      <span class="k">Package</span>
+      <span class="v">{{ package_name if package_name else 'custom limits' }}</span>
+    </div>
+    <div class="info-row">
+      <span class="k">System user</span>
+      <span class="v">{{ target.system_user if target.system_user else '—' }}</span>
+    </div>
+    <div class="info-row">
+      <span class="k">Home directory</span>
+      <span class="v">{{ home_dir }}</span>
+    </div>
+    <div class="info-row">
+      <span class="k">Created</span>
+      <span class="v">{{ target.created_at.strftime('%Y-%m-%d') }}</span>
+    </div>
+  </div>
+</div>
+
+<!-- Per-domain breakdown -->
+{% if domain_rows %}
+<div class="card">
+  <h2>Domains</h2>
+  <table class="table">
+    <thead><tr><th>Domain</th><th>Disk</th><th>Recent traffic</th></tr></thead>
+    <tbody>
+    {% for row in domain_rows %}
+      <tr>
+        <td>
+          <strong>{{ row.name }}</strong>
+          {% if row.is_primary %}<span class="pill pill-ok">primary</span>{% endif %}
+        </td>
+        <td>{{ row.disk_display }}</td>
+        <td>{{ row.bw_display }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="card">
+  <div class="empty">This account has no domains yet.</div>
+</div>
+{% endif %}
+{% endblock %}

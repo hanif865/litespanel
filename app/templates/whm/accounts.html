@@ -39,6 +39,7 @@
         <div class="muted small">{{ u.eff_domains or '∞' }} dom / {{ u.eff_databases or '∞' }} db / {{ u.eff_email or '∞' }} mail</div>
       </td>
       <td class="actions">
+        <a href="/whm/accounts/{{ u.id }}" class="btn btn-sm">Details</a>
         {% if u.id == user.id %}
           <span class="muted small">you</span>
         {% elif u.role == 'admin' %}
