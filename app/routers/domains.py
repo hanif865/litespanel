@@ -118,6 +118,12 @@ def delete_domain(
         _flash(request, "❌ Domain not found.")
         return RedirectResponse("/domains", status_code=303)
 
+    # The primary domain is the account's main domain — like cPanel, it can't be
+    # removed on its own; the account must be terminated instead.
+    if domain.is_primary:
+        _flash(request, "❌ This is the account's primary domain and can't be removed.")
+        return RedirectResponse("/domains", status_code=303)
+
     get_provider().remove_site(domain.name)
     get_provider().reload_web()
     # Only wipe files if the user explicitly opted in.

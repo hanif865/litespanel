@@ -3,17 +3,17 @@
 {% block content %}
 <div class="whm-page-head">
   <h1>Create a New Account</h1>
-  <p class="muted">Provision a new hosting account. A domain is optional — you can add one later.</p>
+  <p class="muted">Provision a new hosting account. Every account is created around its primary domain.</p>
 </div>
 
 <form method="post" action="/whm/accounts/create" class="whm-form" onsubmit="return whmCheckPw()">
   <fieldset class="whm-fs">
     <legend>Domain Information</legend>
     <div class="whm-row">
-      <label for="wa-domain">New Domain <span class="muted">(optional)</span></label>
+      <label for="wa-domain">Primary Domain</label>
       <div class="whm-field">
-        <input type="text" id="wa-domain" name="domain" placeholder="example.com" autocomplete="off">
-        <p class="muted small">Leave blank to choose a domain later. Only a hosting account is created without it.</p>
+        <input type="text" id="wa-domain" name="domain" placeholder="example.com" required autocomplete="off">
+        <p class="muted small">The account's main domain. It's created as a live site and, like cPanel, can't be removed without terminating the account.</p>
       </div>
     </div>
   </fieldset>

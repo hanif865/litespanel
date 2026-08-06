@@ -8,11 +8,16 @@
 
 {% if users %}
 <table class="table whm-table">
-  <thead><tr><th>Username</th><th>Role</th><th>Status</th><th>Package / Limits</th><th>Actions</th></tr></thead>
+  <thead><tr><th>Username</th><th>Primary Domain</th><th>Role</th><th>Status</th><th>Package / Limits</th><th>Actions</th></tr></thead>
   <tbody>
   {% for u in users %}
+    {% set primary = u.domains | selectattr('is_primary') | first %}
     <tr>
       <td><strong>{{ u.username }}</strong></td>
+      <td>
+        {% if primary %}<a href="//{{ primary.name }}" target="_blank" rel="noopener">{{ primary.name }}</a>
+        {% else %}<span class="muted small">—</span>{% endif %}
+      </td>
       <td>
         {% if u.role == 'admin' %}<span class="pill" style="background:#e7ecff;color:#3b5bdb">admin</span>
         {% elif u.role == 'reseller' %}<span class="pill" style="background:#fff2eb;color:#e85b1b">reseller</span>
@@ -54,7 +59,7 @@
     </tr>
     {% if u.id != user.id and u.role != 'admin' %}
     <tr id="pwrow-{{ u.id }}" class="whm-pwrow" hidden>
-      <td colspan="5">
+      <td colspan="6">
         <form method="post" action="/whm/accounts/{{ u.id }}/password" class="whm-pwform" onsubmit="return whmPwMatch(this)">
           <span class="cron-lbl">New password for <strong>{{ u.username }}</strong></span>
           <input type="password" name="password" placeholder="min 6 chars" required>

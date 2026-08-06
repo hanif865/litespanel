@@ -106,15 +106,18 @@ def create_account(
         _flash(request, f"❌ User '{username}' already exists.")
         return RedirectResponse("/whm/accounts/new", status_code=303)
 
-    # Optional initial domain — validated up front so nothing is half-created.
+    # The primary domain is required — like WHM/cPanel, every hosting account is
+    # created around its main domain. Validated up front so nothing is half-made.
     domain = domain.strip().lower().removeprefix("www.")
-    if domain:
-        if not _DOMAIN_RE.match(domain):
-            _flash(request, f"❌ '{domain}' is not a valid domain name.")
-            return RedirectResponse("/whm/accounts/new", status_code=303)
-        if db.scalar(select(Domain).where(Domain.name == domain)):
-            _flash(request, f"❌ Domain {domain} already exists.")
-            return RedirectResponse("/whm/accounts/new", status_code=303)
+    if not domain:
+        _flash(request, "❌ A primary domain is required to create an account.")
+        return RedirectResponse("/whm/accounts/new", status_code=303)
+    if not _DOMAIN_RE.match(domain):
+        _flash(request, f"❌ '{domain}' is not a valid domain name.")
+        return RedirectResponse("/whm/accounts/new", status_code=303)
+    if db.scalar(select(Domain).where(Domain.name == domain)):
+        _flash(request, f"❌ Domain {domain} already exists.")
+        return RedirectResponse("/whm/accounts/new", status_code=303)
 
     # Resellers may only create plain users; admins may also create resellers.
     if manager.role != "admin" or role not in ("user", "reseller"):
@@ -131,25 +134,22 @@ def create_account(
     db.add(new_user)
     db.commit()
 
-    # Hosting accounts get an isolated system user (their own /home + PHP pool).
-    if role == "user":
-        new_user.system_user = username
-        db.commit()
-        get_provider().ensure_account(username)
+    # Every account created here gets an isolated system user (own /home + PHP
+    # pool) and its primary domain provisioned as a live site.
+    new_user.system_user = username
+    db.commit()
+    get_provider().ensure_account(username)
 
-    # Provision the initial site under the new account's home, if one was given.
-    provisioned = ""
-    if domain and role == "user":
-        home = account_home(db, new_user)
-        docroot = home / domain / "public_html"
-        get_provider().create_site(domain, docroot, "8.3", new_user.system_user)
-        get_provider().reload_web()
-        db.add(Domain(name=domain, owner_id=new_user.id, docroot=str(docroot), php_version="8.3"))
-        db.commit()
-        provisioned = f" with {domain}"
+    home = account_home(db, new_user)
+    docroot = home / domain / "public_html"
+    get_provider().create_site(domain, docroot, "8.3", new_user.system_user)
+    get_provider().reload_web()
+    db.add(Domain(name=domain, owner_id=new_user.id, docroot=str(docroot),
+                  php_version="8.3", is_primary=True))
+    db.commit()
 
     plan = f" on package '{pkg.name}'" if pkg else ""
-    _flash(request, f"✅ {role.capitalize()} '{username}' created{plan}{provisioned}.")
+    _flash(request, f"✅ {role.capitalize()} '{username}' created{plan} with primary domain {domain}.")
     return RedirectResponse("/whm/accounts", status_code=303)
 
 

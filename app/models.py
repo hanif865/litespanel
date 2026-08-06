@@ -110,6 +110,9 @@ class Domain(Base):
     php_version: Mapped[str] = mapped_column(String(16), default="8.3")
     active: Mapped[bool] = mapped_column(default=True)
     force_https: Mapped[bool] = mapped_column(default=False)
+    # The account's main domain (WHM/cPanel-style). Set at account creation and
+    # protected from deletion — you terminate the account to remove it.
+    is_primary: Mapped[bool] = mapped_column(default=False, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     owner: Mapped["User"] = relationship(back_populates="domains")
