@@ -8,11 +8,15 @@ from __future__ import annotations
 
 import hashlib
 import secrets
+import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .. import config
-from .base import CertInfo, DbCredentials, Provider, node_env_lines, node_exec_start
+from .base import (
+    CertInfo, DbCredentials, Provider, dkim_generate, node_env_lines,
+    node_exec_start, txt_record_chunks,
+)
 
 _NGINX_TEMPLATE = """# Managed by {app} — do not edit by hand.
 server {{
@@ -467,10 +471,20 @@ class DemoProvider(Provider):
                 prio = r.get("priority") or 10
                 lines.append(f"{name}\t{ttl}\tIN\tMX\t{prio} {r['value']}")
             elif r["type"] == "TXT":
-                lines.append(f'{name}\t{ttl}\tIN\tTXT\t"{r["value"]}"')
+                lines.append(f'{name}\t{ttl}\tIN\tTXT\t{txt_record_chunks(r["value"])}')
             else:
                 lines.append(f"{name}\t{ttl}\tIN\t{r['type']}\t{r['value']}")
         (config.DNS_DIR / f"{domain}.zone").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    def generate_dkim(self, domain: str, selector: str = "default") -> tuple[str, str]:
+        # Real openssl keypair when available (it usually is, even on the demo
+        # box); on a host without openssl fall back to a well-formed placeholder
+        # so the tool still renders and the record can be inspected offline.
+        try:
+            return dkim_generate(config.DKIM_DIR, domain, selector)
+        except (OSError, RuntimeError, subprocess.CalledProcessError):
+            fake = "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8" + "A" * 360 + "IDAQAB"
+            return selector, f"v=DKIM1; k=rsa; p={fake}"
 
     # --- Email ------------------------------------------------------------
     def create_mailbox(self, address: str, password: str, quota_mb: int) -> None:

@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Email Deliverability{% endblock %}
+{% block content %}
+<div class="breadcrumb"><a href="/">🏠 Home</a> / Email / Email Deliverability</div>
+<h1>Email Deliverability</h1>
+<p class="muted">Check the DNS records that keep your outgoing mail out of spam — SPF, DKIM and DMARC — and install any that are missing.</p>
+
+{% if not domains %}
+<div class="empty">Add a domain first to manage its email deliverability.</div>
+{% else %}
+
+<form method="get" action="/deliverability" class="row-form" style="margin-bottom:1rem">
+  <select name="domain_id" onchange="this.form.submit()">
+    {% for d in domains %}
+      <option value="{{ d.id }}" {{ 'selected' if selected and d.id == selected.id }}>{{ d.name }}</option>
+    {% endfor %}
+  </select>
+  <span class="muted">Records for <strong>{{ selected.name }}</strong></span>
+</form>
+
+{%- macro statuspill(s) -%}
+  {%- if s == 'valid' -%}<span class="pill pill-ok">valid</span>
+  {%- elif s == 'warning' -%}<span class="pill" style="background:#fff4e5;color:#b26a00">needs review</span>
+  {%- else -%}<span class="pill" style="background:#fdecec;color:#e5484d">missing</span>{%- endif -%}
+{%- endmacro %}
+
+{%- set val_style = "background:var(--bg,#f6f8fa);border:1px solid var(--border);border-radius:6px;padding:.5rem .6rem;margin:.15rem 0 .5rem;overflow-x:auto;white-space:pre-wrap;word-break:break-all;font-family:Consolas,Menlo,monospace;font-size:.8rem" -%}
+{%- set label_style = "font-weight:600;font-size:.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.03em" -%}
+
+<div class="card">
+  <div style="display:flex; justify-content:space-between; align-items:center; gap:1rem; flex-wrap:wrap">
+    <div>
+      {% if all_valid %}
+        <strong>✅ All set.</strong> <span class="muted">SPF, DKIM and DMARC are all present for {{ selected.name }}.</span>
+      {% else %}
+        <strong>Some records are missing.</strong> <span class="muted">Install the recommended records with one click.</span>
+      {% endif %}
+    </div>
+    <form method="post" action="/deliverability/{{ selected.id }}/repair">
+      <button type="submit" class="btn btn-primary">{{ 'Re-check &amp; repair' | safe if all_valid else 'Install recommended records' }}</button>
+    </form>
+  </div>
+</div>
+
+{% for key, label, desc in [
+     ('spf', 'SPF', 'Lists which servers are allowed to send mail for your domain.'),
+     ('dkim', 'DKIM', 'Publishes the public key used to cryptographically sign your mail.'),
+     ('dmarc', 'DMARC', 'Tells receiving servers what to do with mail that fails SPF or DKIM.')] %}
+  {% set a = audit[key] %}
+  <div class="card">
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:.6rem; flex-wrap:wrap">
+      <h2 style="margin:0; font-size:1.05rem">{{ label }} {{ statuspill(a.status) }}</h2>
+      <code class="muted" style="font-size:.8rem">{{ a.host }} &middot; TXT</code>
+    </div>
+    <p class="muted" style="margin:.35rem 0 .6rem">{{ desc }}</p>
+    {% if a.note %}<p style="color:#b26a00; margin:.2rem 0">⚠️ {{ a.note }}</p>{% endif %}
+
+    {% if a.current %}
+      <div style="{{ label_style }}">Current value</div>
+      <div style="{{ val_style }}">{{ a.current }}</div>
+    {% endif %}
+    {% if a.status != 'valid' %}
+      <div style="{{ label_style }}">Recommended value</div>
+      <div style="{{ val_style }}">{{ a.recommended }}</div>
+    {% endif %}
+
+    {% if key == 'dkim' %}
+      <p class="muted" style="margin:.5rem 0 0; font-size:.85rem">
+        Publishing the DKIM record is safe right away. Your mail is only signed
+        with it once the server's DKIM signer (opendkim) is enabled — a later step.
+      </p>
+    {% endif %}
+  </div>
+{% endfor %}
+
+{% endif %}
+{% endblock %}

@@ -79,6 +79,7 @@ SERVER_IP = _env("PANEL_SERVER_IP", "203.0.113.10")
 # Additional data directories.
 DNS_DIR = DATA_DIR / "dns"          # generated zone files
 MAIL_DIR = DATA_DIR / "mail"        # virtual mailbox store
+DKIM_DIR = DATA_DIR / "dkim"        # per-domain DKIM private keys (0600)
 BACKUPS_DIR = DATA_DIR / "backups"  # account backup archives
 PHP_DIR = DATA_DIR / "php"          # generated php.ini / pool overrides
 NODE_DIR = DATA_DIR / "node"        # generated systemd units + reverse-proxy conf
@@ -116,6 +117,6 @@ MANAGED_SERVICES = (
 def ensure_dirs() -> None:
     """Create the data directories on startup (idempotent)."""
     for d in (DATA_DIR, SITES_DIR, NGINX_DIR, CERTS_DIR, DB_SANDBOX_DIR, PG_DIR, DNS_DIR,
-              MAIL_DIR, BACKUPS_DIR, HOME_DIR, PHP_DIR, NODE_DIR, FIREWALL_DIR, LOG_DIR,
+              MAIL_DIR, DKIM_DIR, BACKUPS_DIR, HOME_DIR, PHP_DIR, NODE_DIR, FIREWALL_DIR, LOG_DIR,
               FTP_DIR, WEBDISK_DIR):
         d.mkdir(parents=True, exist_ok=True)

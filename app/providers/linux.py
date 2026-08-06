@@ -17,7 +17,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .. import config
-from .base import CertInfo, DbCredentials, Provider, node_env_lines, node_exec_start
+from .base import (
+    CertInfo, DbCredentials, Provider, dkim_generate, node_env_lines,
+    node_exec_start, txt_record_chunks,
+)
 
 # On Debian/Ubuntu these are the conventional locations.
 NGINX_SITES = Path("/etc/nginx/sites-enabled")
@@ -713,7 +716,7 @@ class LinuxProvider(Provider):
             if r["type"] == "MX":
                 lines.append(f"{name} IN MX {r.get('priority', 10)} {r['value']}")
             elif r["type"] == "TXT":
-                lines.append(f'{name} IN TXT "{r["value"]}"')
+                lines.append(f'{name} IN TXT {txt_record_chunks(r["value"])}')
             else:
                 lines.append(f"{name} IN {r['type']} {r['value']}")
         zone_path.write_text("\n".join(lines) + "\n")
@@ -723,6 +726,16 @@ class LinuxProvider(Provider):
             _run(["rndc", "reload", domain])
         except (RuntimeError, FileNotFoundError, OSError):
             pass
+
+    def generate_dkim(self, domain: str, selector: str = "default") -> tuple[str, str]:
+        # Store keys at the conventional opendkim path so a future signer finds
+        # them, falling back to DKIM_DIR when /etc/opendkim isn't writable.
+        key_dir = Path("/etc/opendkim/keys") / domain
+        try:
+            key_dir.mkdir(parents=True, exist_ok=True)
+        except (OSError, PermissionError):
+            key_dir = config.DKIM_DIR / domain
+        return dkim_generate(key_dir, domain, selector)
 
     def create_mailbox(self, address: str, password: str, quota_mb: int) -> None:
         # Postfix/Dovecot virtual-mailbox setup (see setup-mail.sh):

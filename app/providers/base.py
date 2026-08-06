@@ -11,7 +11,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
+import os
 import re
+import subprocess
 
 if TYPE_CHECKING:
     from ..models import NodeApp
@@ -106,6 +108,69 @@ def tail_file(path: Path, lines: int = 200, grep: str | None = None) -> str:
         result = [ln for ln in result if needle in ln.lower()]
     return "\n".join(result[-lines:])
 
+
+
+def txt_record_chunks(value: str) -> str:
+    """Format a TXT record value for a zone file, splitting long strings.
+
+    A single DNS character-string is capped at 255 bytes, so a 2048-bit DKIM
+    public key (~400 chars) must be published as several quoted strings the
+    resolver concatenates. Short values return one quoted string; long ones
+    return space-separated 255-char quoted chunks. The caller writes the
+    result verbatim after the TXT type in the zone line.
+    """
+    if len(value) <= 255:
+        return f'"{value}"'
+    chunks = [value[i:i + 255] for i in range(0, len(value), 255)]
+    return " ".join(f'"{c}"' for c in chunks)
+
+
+def dkim_public_txt(pem_public: str) -> str:
+    """Build a DKIM TXT record value from an RSA public key in PEM form.
+
+    Strips the PEM header/footer and newlines to the raw base64 body and wraps
+    it as `v=DKIM1; k=rsa; p=<base64>` — the value published at
+    <selector>._domainkey. Returns "" if the PEM looks malformed.
+    """
+    body = []
+    for line in pem_public.splitlines():
+        line = line.strip()
+        if not line or line.startswith("-----"):
+            continue
+        body.append(line)
+    p = "".join(body)
+    if not p:
+        return ""
+    return f"v=DKIM1; k=rsa; p={p}"
+
+
+def dkim_generate(key_dir: Path, domain: str, selector: str = "default") -> tuple[str, str]:
+    """Generate (or reuse) a 2048-bit DKIM keypair for a domain via openssl.
+
+    The private key is written to `key_dir/<domain>.<selector>.private` (0600)
+    and reused on subsequent calls so the published record stays stable. The
+    public key is derived from it. Returns (selector, txt_value) where
+    txt_value is the `v=DKIM1; k=rsa; p=...` string to publish at
+    <selector>._domainkey. Raises RuntimeError/OSError if openssl is missing or
+    fails — callers that must not hard-fail (the demo) catch and fall back.
+    """
+    key_dir.mkdir(parents=True, exist_ok=True)
+    priv = key_dir / f"{domain}.{selector}.private"
+    if not priv.exists():
+        pem = subprocess.run(
+            ["openssl", "genrsa", "2048"],
+            capture_output=True, text=True, check=True,
+        ).stdout
+        priv.write_text(pem, encoding="utf-8")
+        try:
+            os.chmod(priv, 0o600)
+        except OSError:
+            pass  # best-effort on filesystems without POSIX perms (demo/Windows)
+    pub = subprocess.run(
+        ["openssl", "rsa", "-in", str(priv), "-pubout"],
+        capture_output=True, text=True, check=True,
+    ).stdout
+    return selector, dkim_public_txt(pub)
 
 
 @dataclass
@@ -332,6 +397,17 @@ class Provider(ABC):
         """Write/reload the DNS zone for a domain from the given records.
 
         Each record: {type, name, value, ttl, priority}.
+        """
+
+    @abstractmethod
+    def generate_dkim(self, domain: str, selector: str = "default") -> tuple[str, str]:
+        """Generate (or reuse) a DKIM keypair for a domain. Returns (selector, txt).
+
+        `txt` is the `v=DKIM1; k=rsa; p=...` value to publish at
+        <selector>._domainkey. The private key is stored on the host so the
+        published record stays stable and a future signer (opendkim) can use
+        it. NOTE: this only publishes the key — outbound mail is not actually
+        DKIM-signed until a signer is wired up. Admin/owner-gated at the router.
         """
 
     # --- Email ------------------------------------------------------------
