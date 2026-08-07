@@ -220,7 +220,67 @@ class LinuxProvider(Provider):
         change made on the PHP Selector page takes effect across the account's
         vhosts immediately (they all include this one file)."""
         self._write_limits(username, mb)
+        # Sites created before the include existed still carry a hardcoded cap
+        # and would ignore the file we just wrote (silent 413). Migrate them to
+        # the include first, so this and every future cap change reaches them.
+        self._adopt_limits_include(username)
         self.reload_web()
+
+    def _adopt_limits_include(self, username: str) -> None:
+        """One-time migration: make every existing vhost of this account use the
+        per-account limits include, so a cap change on the PHP page reaches sites
+        created before the include mechanism existed.
+
+        Idempotent (skips vhosts already on the include) and surgical: it strips
+        any hardcoded `client_max_body_size` and adds the include to each server
+        block — never touching certbot's listen/ssl_certificate lines. If the
+        rewrite makes `nginx -t` unhappy for any reason, every file touched here
+        is restored, so a save can never leave the web server unable to reload.
+        """
+        _ident(username, "account username")
+        if not NGINX_SITES.is_dir():
+            return
+        include_path = str(self._limits_conf(username))
+        marker = f"unix:{self._php_sock(username)}"   # this account's FPM socket
+        # Strip the hardcoded directive together with its leading indent/space so
+        # neither a blank-but-harmless line (multi-line vhost) nor a token merge
+        # like `index.html;access_log` (inline SSL vhost) can result.
+        cmb_re = re.compile(r"[ \t]*client_max_body_size[^;\n]*;")
+        sn_re = re.compile(r"(server_name[^;\n]*;)")
+        changed: dict[Path, str] = {}                 # path -> original, for rollback
+        for conf in NGINX_SITES.glob("*.conf"):
+            try:
+                text = conf.read_text()
+            except OSError:
+                continue
+            # Only this account's PHP vhosts, and only those not already migrated.
+            if marker not in text or include_path in text:
+                continue
+            stripped = cmb_re.sub("", text)
+            # Add the include to every server block (each has exactly one
+            # server_name), so certbot's :443 block gets the cap too. A lambda
+            # replacement avoids backslash/group escaping in the path.
+            new = sn_re.sub(
+                lambda m: f"{m.group(1)}\n    include {include_path};", stripped
+            )
+            if new == text:
+                continue
+            try:
+                conf.write_text(new)
+                changed[conf] = text
+            except OSError:
+                pass
+        if not changed:
+            return
+        try:
+            subprocess.run(["nginx", "-t"], capture_output=True, text=True, check=True)
+        except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+            # Roll back every file we rewrote; leave the server as it was.
+            for conf, original in changed.items():
+                try:
+                    conf.write_text(original)
+                except OSError:
+                    pass
 
     def _vhost(self, server_name: str, extra_names: str, docroot: Path, username: str) -> str:
         return (
