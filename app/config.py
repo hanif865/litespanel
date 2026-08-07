@@ -100,6 +100,12 @@ HOME_DIR = DATA_DIR / "home"
 # PHP-FPM version used for per-account pools (linux provider).
 PHP_FPM_VERSION = _env("PANEL_PHP_FPM_VERSION", "8.3")
 
+# Max upload size for hosted sites. cPanel-style: large enough for WordPress
+# theme/plugin zips and media. Applied at BOTH layers that can reject a big
+# body — nginx (client_max_body_size) and PHP-FPM (upload_max_filesize /
+# post_max_size). Keep them in lock-step so neither becomes the silent 413/error.
+MAX_UPLOAD_MB = int(_env("PANEL_MAX_UPLOAD_MB", "128"))
+
 # --- Panel self-update (admin-only) ----------------------------------------
 # Where the panel is installed on the VPS (the git working tree the updater
 # pulls into) and how to reach it. BASE_DIR is the real runtime directory, so

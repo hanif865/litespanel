@@ -161,8 +161,20 @@ class LinuxProvider(Provider):
         # Per-account php.ini overrides live in the pool as php_admin_value /
         # php_admin_flag — this is the only place PHP-FPM honours that syntax.
         # (A conf.d .ini file is plain php.ini and ignores it entirely.)
-        for key in sorted(directives or {}):
-            value = str(directives[key]).replace("\n", " ").strip()
+        #
+        # Ship generous upload/runtime defaults so plugin/theme zips and media
+        # uploads work out of the box (cPanel-style); nginx allows the body via
+        # client_max_body_size, and these let PHP actually accept it. A per-account
+        # PHP config (from the PHP page) overrides any of these.
+        effective = {
+            "upload_max_filesize": f"{config.MAX_UPLOAD_MB}M",
+            "post_max_size": f"{config.MAX_UPLOAD_MB}M",
+            "memory_limit": "256M",
+            "max_execution_time": "300",
+            **(directives or {}),
+        }
+        for key in sorted(effective):
+            value = str(effective[key]).replace("\n", " ").strip()
             if value in ("On", "Off", "on", "off", "1", "0"):
                 lines.append(f"php_admin_flag[{key}] = {value}")
             else:
@@ -182,6 +194,7 @@ class LinuxProvider(Provider):
         return (
             f"server {{\n    listen 80;\n    server_name {server_name}{extra_names};\n"
             f"    root {docroot};\n    index index.php index.html;\n"
+            f"    client_max_body_size {config.MAX_UPLOAD_MB}M;\n"
             f"    access_log /var/log/litespanel/{server_name}.access.log;\n"
             f"    error_log /var/log/litespanel/{server_name}.error.log;\n"
             f"    location /lpanel {{ return 301 {config.PANEL_URL}/login; }}\n"
@@ -321,6 +334,7 @@ class LinuxProvider(Provider):
         names = f"{domain} www.{domain}"
         logs = (f" access_log /var/log/litespanel/{domain}.access.log;"
                 f" error_log /var/log/litespanel/{domain}.error.log;")
+        body = f" client_max_body_size {config.MAX_UPLOAD_MB}M;"
         php = (f"location ~ \\.php$ {{ fastcgi_pass unix:{self._php_sock(system_user)};"
                f" include fastcgi_params; fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name; }}")
         lpanel = f"location /lpanel {{ return 301 {config.PANEL_URL}/login; }}"
@@ -332,13 +346,13 @@ class LinuxProvider(Provider):
                               f"{logs} return 301 https://$host$request_uri; }}")
             else:
                 blocks.append(f"server {{ listen 80; server_name {names}; root {docroot};"
-                              f" index index.php index.html;{logs} {lpanel} {php} }}")
+                              f" index index.php index.html;{body}{logs} {lpanel} {php} }}")
             blocks.append(f"server {{ listen 443 ssl; server_name {names};"
                           f" ssl_certificate {cert}/fullchain.pem; ssl_certificate_key {cert}/privkey.pem;"
-                          f" root {docroot}; index index.php index.html;{logs} {lpanel} {php} }}")
+                          f" root {docroot}; index index.php index.html;{body}{logs} {lpanel} {php} }}")
         else:
             blocks.append(f"server {{ listen 80; server_name {names}; root {docroot};"
-                          f" index index.php index.html;{logs} {lpanel} {php} }}")
+                          f" index index.php index.html;{body}{logs} {lpanel} {php} }}")
         (NGINX_SITES / f"{domain}.conf").write_text("\n".join(blocks) + "\n")
         self.reload_web()
 
@@ -399,6 +413,7 @@ class LinuxProvider(Provider):
         names = f"{domain} www.{domain}"
         return (
             f"server {{\n    listen 80;\n    server_name {names};\n"
+            f"    client_max_body_size {config.MAX_UPLOAD_MB}M;\n"
             f"    location / {{\n"
             f"        proxy_pass http://127.0.0.1:{port};\n"
             f"        proxy_http_version 1.1;\n"

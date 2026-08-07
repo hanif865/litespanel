@@ -220,7 +220,7 @@ cat > /etc/nginx/sites-available/litespanel <<EOF
 server {
     listen 80;
     server_name ${SERVER_NAME};
-    client_max_body_size 100M;
+    client_max_body_size 128M;
 
     location /phpmyadmin {
         root /usr/share/;
