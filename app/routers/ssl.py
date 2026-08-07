@@ -19,6 +19,22 @@ def _flash(request: Request, message: str) -> None:
     request.session["flash"] = message
 
 
+def _ssl_error_reason(exc: Exception) -> str:
+    """Condense a certificate-issue failure into one short, actionable line.
+
+    The linux provider raises RuntimeError("<certbot cmd> failed: <stderr>"); the
+    part after "failed:" is certbot's own diagnostic (DNS not pointing here, port
+    80 unreachable, Let's Encrypt rate limit) and is what the operator needs — so
+    surface that, collapsed to a single trimmed line, instead of 500-ing the route
+    or dumping the whole certbot command line into the flash.
+    """
+    text = str(exc).strip()
+    _, sep, tail = text.partition("failed:")
+    reason = (tail if sep else text).strip()
+    reason = " ".join(reason.split())          # collapse newlines/indentation
+    return reason[:300] or "certificate issuance failed"
+
+
 @router.get("")
 def list_ssl(request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
     domains = db.scalars(
@@ -42,7 +58,11 @@ def issue(
         _flash(request, "❌ Domain not found.")
         return RedirectResponse("/ssl", status_code=303)
 
-    info = get_provider().issue_certificate(domain.name)
+    try:
+        info = get_provider().issue_certificate(domain.name)
+    except Exception as exc:  # noqa: BLE001 — certbot failed; show why, don't 500.
+        _flash(request, f"❌ SSL for {domain.name} failed: {_ssl_error_reason(exc)}")
+        return RedirectResponse("/ssl", status_code=303)
     # Replace any existing cert record for this domain.
     existing = db.scalar(select(Certificate).where(Certificate.domain_id == domain.id))
     if existing:
@@ -104,7 +124,11 @@ def issue_sub(
         _flash(request, "❌ Subdomain not found.")
         return RedirectResponse("/ssl", status_code=303)
 
-    info = get_provider().issue_certificate(sub.fqdn)
+    try:
+        info = get_provider().issue_certificate(sub.fqdn)
+    except Exception as exc:  # noqa: BLE001 — certbot failed; show why, don't 500.
+        _flash(request, f"❌ SSL for {sub.fqdn} failed: {_ssl_error_reason(exc)}")
+        return RedirectResponse("/ssl", status_code=303)
     # Replace any existing cert record for this subdomain.
     existing = db.scalar(select(Certificate).where(Certificate.subdomain_id == sub.id))
     if existing:
