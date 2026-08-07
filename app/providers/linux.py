@@ -19,7 +19,7 @@ from pathlib import Path
 from .. import config
 from .base import (
     CertInfo, DbCredentials, Provider, dkim_generate, node_env_lines,
-    node_exec_start, txt_record_chunks, upload_cap_mb,
+    node_exec_start, tail_file, txt_record_chunks, upload_cap_mb,
 )
 
 # On Debian/Ubuntu these are the conventional locations.
@@ -377,9 +377,16 @@ class LinuxProvider(Provider):
         # `php -m` lists the modules loaded for the CLI SAPI; close enough to
         # what FPM loads for the UI's "installed?" indicator. Names are
         # lowercased to match the catalog.
-        proc = subprocess.run(
-            [f"php{php_version}", "-m"], capture_output=True, text=True
-        )
+        try:
+            proc = subprocess.run(
+                [f"php{php_version}", "-m"], capture_output=True, text=True
+            )
+        except (FileNotFoundError, OSError):
+            # The phpX.Y CLI isn't installed on this host (FPM can still be
+            # present). We can't enumerate loaded modules, so report none —
+            # the same signal as a non-zero exit. Callers treat this as
+            # best-effort, so saving PHP config never 500s over a missing CLI.
+            return set()
         if proc.returncode != 0:
             return set()
         return {
@@ -1912,7 +1919,6 @@ say "=== panel update finished successfully (now at $NEW) ==="
         entry = self._LOG_FILES.get(key)
         if entry is None:
             return False, "unknown log source"
-        from .base import tail_file
 
         text = tail_file(Path(entry[2]), lines=lines, grep=grep)
         return True, text
