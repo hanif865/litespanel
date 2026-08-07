@@ -125,3 +125,26 @@ def authenticate(db: Session, username: str, password: str) -> User | None:
     if user and verify_password(password, user.password_hash):
         return user
     return None
+
+
+# --- Webmail single sign-on ------------------------------------------------
+# The "Check Email" button opens a mailbox in Roundcube without asking for the
+# password again. The panel never stores the mailbox password, so instead of
+# handing one over it signs a short-lived token naming the mailbox; a Roundcube
+# plugin verifies the signature with the same shared secret and logs the user in
+# through a Dovecot master user. Secret unset (mail stack not installed) -> the
+# caller falls back to the plain webmail login page.
+_SSO_TTL_SECONDS = 60
+
+
+def make_webmail_sso_token(address: str, secret: str, ttl: int = _SSO_TTL_SECONDS) -> str:
+    """Sign `<address>|<expiry>` so Roundcube's panel_sso plugin can trust it.
+
+    Returns `base64url(payload).hmac_sha256_hex`. Short-lived (60s) and carried
+    once in the redirect URL — the plugin also rejects a token it has already
+    seen, so a leaked URL can't be replayed after use.
+    """
+    payload = f"{address}|{int(time.time()) + ttl}".encode()
+    sig = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
+    b64 = base64.urlsafe_b64encode(payload).decode().rstrip("=")
+    return f"{b64}.{sig}"

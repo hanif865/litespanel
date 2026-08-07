@@ -68,6 +68,12 @@ PHPMYADMIN_URL = _env("PANEL_PHPMYADMIN_URL", "")
 # If set (e.g. /webmail), the panel shows a Webmail tool linking to Roundcube.
 WEBMAIL_URL = _env("PANEL_WEBMAIL_URL", "")
 
+# Shared secret for single sign-on to webmail (the Check Email button). The panel
+# signs a short-lived token naming the mailbox; Roundcube's panel_sso plugin verifies
+# the signature with this same secret and logs the user in via a Dovecot master user.
+# Unset (mail stack not installed) → Check Email falls back to the plain login page.
+WEBMAIL_SSO_SECRET = _env("PANEL_WEBMAIL_SSO_SECRET", "")
+
 # WordPress 1-click installer sources.
 WORDPRESS_URL = _env("PANEL_WORDPRESS_URL", "https://wordpress.org/latest.zip")
 WP_CLI_URL = _env("PANEL_WP_CLI_URL",

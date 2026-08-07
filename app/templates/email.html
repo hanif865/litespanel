@@ -88,7 +88,7 @@
       </td>
       <td class="actions">
         {% if WEBMAIL_URL %}
-        <a href="{{ WEBMAIL_URL }}" target="_blank" rel="noopener" class="btn btn-sm">Check Email</a>
+        <a href="/email/{{ a.id }}/sso" target="_blank" rel="noopener" class="btn btn-sm">Check Email</a>
         {% endif %}
         <a href="/email/{{ a.id }}/connect" class="btn btn-sm">Connect Devices</a>
         <details style="display:inline-block">

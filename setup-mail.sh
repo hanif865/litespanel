@@ -71,6 +71,26 @@ adduser postfix ssl-cert >/dev/null 2>&1 || true
 ok "TLS cert ready (${SSL_CERT})"
 
 # --------------------------------------------------------------------------
+step "Preparing webmail single sign-on (Dovecot master user)"
+# The panel's "Check Email" button opens a mailbox in Roundcube already logged
+# in. The panel never stores the mailbox password, so it can't hand one over.
+# Instead we create ONE privileged Dovecot "master" account: the panel signs a
+# short-lived token naming the mailbox, and Roundcube's panel_sso plugin logs in
+# as "<address>*panelsso" with the master password. Dovecot's master passdb
+# authorizes that as the target user without their password.
+SSO_MASTER_USER="panelsso"
+# Fresh secret + master password each run; both sides (Dovecot, Roundcube plugin,
+# panel env) are rewritten together below, so they always stay in lock-step.
+SSO_MASTER_PASS="$(openssl rand -base64 24 | tr -dc 'A-Za-z0-9' | cut -c1-24)"
+SSO_SECRET="$(openssl rand -hex 32)"
+umask 077
+printf '%s:%s\n' "$SSO_MASTER_USER" "$(doveadm pw -s SHA512-CRYPT -p "$SSO_MASTER_PASS")" \
+    > /etc/dovecot/master-users
+chown root:dovecot /etc/dovecot/master-users 2>/dev/null || true
+chmod 640 /etc/dovecot/master-users
+ok "master user '${SSO_MASTER_USER}' created"
+
+# --------------------------------------------------------------------------
 step "Configuring Dovecot (IMAP + POP3 + LMTP, TLS, passwd-file auth)"
 [ -f /etc/dovecot/dovecot.conf.orig ] || cp /etc/dovecot/dovecot.conf /etc/dovecot/dovecot.conf.orig 2>/dev/null || true
 cat > /etc/dovecot/dovecot.conf <<'EOF'
@@ -103,6 +123,15 @@ namespace inbox {
 passdb {
   driver = passwd-file
   args = scheme=SHA512-CRYPT username_format=%u /etc/dovecot/users
+}
+# Master user for webmail single sign-on: a login of "user@domain*panelsso" with
+# the master password authenticates as user@domain. Used only by the panel's
+# Check Email button (panel_sso plugin) — normal logins never touch this.
+auth_master_user_separator = *
+passdb {
+  driver = passwd-file
+  args = /etc/dovecot/master-users
+  master = yes
 }
 userdb {
   driver = static
@@ -266,7 +295,7 @@ cat > "$RC_DIR/config/config.inc.php" <<EOF
 \$config['support_url'] = '';
 \$config['product_name'] = 'Webmail';
 \$config['des_key'] = '${DES_KEY}';
-\$config['plugins'] = ['archive', 'zipdownload'];
+\$config['plugins'] = ['archive', 'zipdownload', 'panel_sso'];
 \$config['skin'] = 'elastic';
 # Snakeoil is self-signed, so Roundcube (connecting to localhost over TLS) must
 # not verify the peer certificate — the hostname won't match and it's local.
@@ -275,6 +304,118 @@ cat > "$RC_DIR/config/config.inc.php" <<EOF
 EOF
 chown -R www-data:www-data "$RC_DIR/config"
 ok "Roundcube installed"
+
+# --------------------------------------------------------------------------
+step "Installing the panel_sso Roundcube plugin (Check Email single sign-on)"
+# The panel's "Check Email" button redirects to /webmail/?_sso=<token>. This
+# plugin verifies the signed token (HMAC with the shared secret) and logs the
+# user in as "<address>*panelsso" via the Dovecot master password — so the
+# mailbox opens without the panel ever knowing the real password. Modelled on
+# Roundcube's bundled `autologon` example. Secret + master creds go in the
+# plugin's own config below, in lock-step with Dovecot + the panel env.
+PLUGIN_DIR="$RC_DIR/plugins/panel_sso"
+mkdir -p "$PLUGIN_DIR"
+cat > "$PLUGIN_DIR/panel_sso.php" <<'EOF'
+<?php
+/**
+ * panel_sso — single sign-on for LitesPanel's "Check Email" button.
+ *
+ * Token: base64url(payload).hmac_sha256_hex, payload = "<address>|<expiry>".
+ * Verifies the HMAC, checks expiry, rejects a replayed token, then logs in as
+ * "<address>*panelsso" with the Dovecot master password.
+ */
+class panel_sso extends rcube_plugin
+{
+    public $noajax = true;
+
+    function init()
+    {
+        $this->add_hook('startup', array($this, 'startup'));
+        $this->add_hook('authenticate', array($this, 'authenticate'));
+    }
+
+    function startup($args)
+    {
+        $token = rcube_utils::get_input_value('_sso', rcube_utils::INPUT_GET);
+        if (empty($_SESSION['user_id']) && !empty($token) && $this->verify($token)) {
+            $args['action'] = 'login';
+        }
+        return $args;
+    }
+
+    function authenticate($args)
+    {
+        $token = rcube_utils::get_input_value('_sso', rcube_utils::INPUT_GET);
+        if (!empty($token) && ($addr = $this->verify($token))) {
+            $rcmail = rcmail::get_instance();
+            $args['user'] = $addr . '*' . $rcmail->config->get('panel_sso_master_user');
+            $args['pass'] = $rcmail->config->get('panel_sso_master_pass');
+            $args['cookiecheck'] = false;
+            $args['valid'] = true;
+        }
+        return $args;
+    }
+
+    private function verify($token)
+    {
+        $this->load_config();
+        $secret = rcmail::get_instance()->config->get('panel_sso_secret');
+        if (empty($secret)) return false;
+
+        $parts = explode('.', $token, 2);
+        if (count($parts) !== 2) return false;
+        list($b64, $sig) = $parts;
+
+        $b64 = strtr($b64, '-_', '+/');
+        if ($pad = strlen($b64) % 4) $b64 .= str_repeat('=', 4 - $pad);
+        $payload = base64_decode($b64, true);
+        if ($payload === false) return false;
+
+        $expected = hash_hmac('sha256', $payload, $secret);
+        if (!hash_equals($expected, $sig)) return false;
+
+        $bits = explode('|', $payload);
+        if (count($bits) !== 2) return false;
+        list($addr, $exp) = $bits;
+        if (intval($exp) < time()) return false;
+        if ($this->seen($sig)) return false;
+        return $addr;
+    }
+
+    // One-time use: reject a signature already accepted. Nonces live in the RC
+    // temp dir with expiry stamps and are pruned on each check.
+    private function seen($sig)
+    {
+        $rcmail = rcmail::get_instance();
+        $dir = $rcmail->config->get('temp_dir') ?: sys_get_temp_dir();
+        $file = $dir . '/panel_sso_nonces';
+        $now = time();
+        $keep = array();
+        if (is_readable($file)) {
+            foreach (explode("\n", (string) file_get_contents($file)) as $line) {
+                $row = explode(' ', trim($line), 2);
+                if (count($row) === 2 && intval($row[0]) > $now) $keep[$row[1]] = intval($row[0]);
+            }
+        }
+        if (isset($keep[$sig])) return true;
+        $keep[$sig] = $now + 120;
+        $out = '';
+        foreach ($keep as $s => $t) $out .= $t . ' ' . $s . "\n";
+        @file_put_contents($file, $out, LOCK_EX);
+        return false;
+    }
+}
+EOF
+cat > "$PLUGIN_DIR/config.inc.php" <<EOF
+<?php
+// Managed by LitesPanel setup-mail.sh — SSO shared secret + Dovecot master creds.
+\$config['panel_sso_secret'] = '${SSO_SECRET}';
+\$config['panel_sso_master_user'] = '${SSO_MASTER_USER}';
+\$config['panel_sso_master_pass'] = '${SSO_MASTER_PASS}';
+EOF
+chown -R www-data:www-data "$PLUGIN_DIR"
+chmod 640 "$PLUGIN_DIR/config.inc.php"
+ok "panel_sso plugin installed"
 
 # --------------------------------------------------------------------------
 step "Adding /webmail to nginx"
@@ -312,10 +453,13 @@ nginx -t >/dev/null 2>&1 && systemctl reload nginx || die "nginx config test fai
 ok "Webmail served at /webmail"
 
 # --------------------------------------------------------------------------
-step "Telling the panel about Webmail"
+step "Telling the panel about Webmail + SSO"
 if ! grep -q '^PANEL_WEBMAIL_URL=' "$ENV_FILE" 2>/dev/null; then
     echo "PANEL_WEBMAIL_URL=/webmail" >> "$ENV_FILE"
 fi
+# Write (or overwrite) the SSO secret so the panel and Roundcube stay in lock-step.
+sed -i '/^PANEL_WEBMAIL_SSO_SECRET=/d' "$ENV_FILE" 2>/dev/null || true
+echo "PANEL_WEBMAIL_SSO_SECRET=${SSO_SECRET}" >> "$ENV_FILE"
 systemctl restart litespanel
 ok "Panel updated"
 

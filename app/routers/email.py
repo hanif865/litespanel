@@ -182,6 +182,38 @@ def connect_devices(
     return templates.TemplateResponse(request, "email_connect.html", ctx)
 
 
+@router.get("/{account_id}/sso")
+def webmail_sso(
+    request: Request,
+    account_id: int,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """Check Email → open this mailbox in Roundcube already logged in.
+
+    Signs a short-lived token naming the mailbox and redirects to Roundcube's
+    panel_sso plugin (`/webmail/?_sso=<token>`), which verifies it and logs in
+    via the Dovecot master user. If the mail stack isn't wired for SSO (no
+    shared secret) we just send the user to the plain webmail login page, so
+    the button always does something sensible.
+    """
+    from ..config import WEBMAIL_SSO_SECRET, WEBMAIL_URL
+    from ..security import make_webmail_sso_token
+
+    account = db.get(EmailAccount, account_id)
+    if account is None or account.domain.owner_id != user.id:
+        _flash(request, "❌ Mailbox not found.")
+        return RedirectResponse("/email", status_code=303)
+
+    base = (WEBMAIL_URL or "/webmail").rstrip("/")
+    if not WEBMAIL_SSO_SECRET:
+        # Mail stack present but SSO not configured — fall back to manual login.
+        return RedirectResponse(base or "/email", status_code=303)
+
+    token = make_webmail_sso_token(account.address, WEBMAIL_SSO_SECRET)
+    return RedirectResponse(f"{base}/?_sso={token}", status_code=303)
+
+
 # Friendly message when the mail stack isn't installed on the host yet.
 def _mail_err(exc: Exception) -> str:
     msg = str(exc)
