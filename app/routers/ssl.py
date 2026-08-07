@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models import Certificate, Domain, User
+from ..models import Certificate, Domain, Subdomain, User
 from ..providers import get_provider
 from ..security import current_user
 from ..web import templates
@@ -82,4 +82,57 @@ def revoke(
         db.delete(domain.certificate)
         db.commit()
     _flash(request, f"🔓 SSL revoked for {domain.name}.")
+    return RedirectResponse("/ssl", status_code=303)
+
+
+# --- Subdomains ----------------------------------------------------------
+# Subdomains live in their own table and own their own vhost, so they get
+# their own routes. Ownership runs through the parent domain. No force-HTTPS
+# rewrite here: certbot's --nginx --redirect already patches the subdomain's
+# own <fqdn>.conf, and set_https_redirect() hardcodes the parent's server_name.
+
+
+@router.post("/sub/{sub_id}/issue")
+def issue_sub(
+    request: Request,
+    sub_id: int,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    sub = db.get(Subdomain, sub_id)
+    if sub is None or sub.parent.owner_id != user.id:
+        _flash(request, "❌ Subdomain not found.")
+        return RedirectResponse("/ssl", status_code=303)
+
+    info = get_provider().issue_certificate(sub.fqdn)
+    # Replace any existing cert record for this subdomain.
+    existing = db.scalar(select(Certificate).where(Certificate.subdomain_id == sub.id))
+    if existing:
+        db.delete(existing)
+        db.flush()
+    db.add(Certificate(
+        subdomain_id=sub.id, domain_id=None, issuer=info.issuer,
+        issued_at=info.issued_at, expires_at=info.expires_at, cert_path=info.cert_path,
+    ))
+    db.commit()
+    _flash(request, f"🔒 SSL issued for {sub.fqdn} (expires {info.expires_at:%Y-%m-%d}).")
+    return RedirectResponse("/ssl", status_code=303)
+
+
+@router.post("/sub/{sub_id}/revoke")
+def revoke_sub(
+    request: Request,
+    sub_id: int,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    sub = db.get(Subdomain, sub_id)
+    if sub is None or sub.parent.owner_id != user.id:
+        _flash(request, "❌ Subdomain not found.")
+        return RedirectResponse("/ssl", status_code=303)
+    get_provider().revoke_certificate(sub.fqdn)
+    if sub.certificate:
+        db.delete(sub.certificate)
+        db.commit()
+    _flash(request, f"🔓 SSL revoked for {sub.fqdn}.")
     return RedirectResponse("/ssl", status_code=303)

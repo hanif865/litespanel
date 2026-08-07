@@ -149,6 +149,9 @@ class Subdomain(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     parent: Mapped["Domain"] = relationship(back_populates="subdomains")
+    certificate: Mapped["Certificate | None"] = relationship(
+        back_populates="subdomain", cascade="all, delete-orphan", uselist=False
+    )
 
 
 class PhpConfig(Base):
@@ -466,11 +469,20 @@ class Certificate(Base):
     __tablename__ = "certificates"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    domain_id: Mapped[int] = mapped_column(ForeignKey("domains.id"), unique=True)
+    # A cert belongs to EITHER a domain or a subdomain — exactly one of these is
+    # set, the other NULL. Both are unique, and SQLite allows many NULLs, so the
+    # two constraints never collide.
+    domain_id: Mapped[int | None] = mapped_column(
+        ForeignKey("domains.id"), unique=True, nullable=True
+    )
+    subdomain_id: Mapped[int | None] = mapped_column(
+        ForeignKey("subdomains.id", ondelete="CASCADE"), unique=True, nullable=True
+    )
     issuer: Mapped[str] = mapped_column(String(64), default="Let's Encrypt")
     # ISO date strings kept simple for the demo.
     issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     cert_path: Mapped[str] = mapped_column(String(500))
 
-    domain: Mapped["Domain"] = relationship(back_populates="certificate")
+    domain: Mapped["Domain | None"] = relationship(back_populates="certificate")
+    subdomain: Mapped["Subdomain | None"] = relationship(back_populates="certificate")

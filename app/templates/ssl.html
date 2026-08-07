@@ -34,6 +34,32 @@
         {% endif %}
       </td>
     </tr>
+    {% for s in d.subdomains %}
+    <tr>
+      <td class="muted">↳ {{ s.fqdn }}</td>
+      <td>
+        {% if s.certificate %}<span class="pill pill-ok">🔒 Active</span>
+        {% else %}<span class="pill">🔓 None</span>{% endif %}
+      </td>
+      <td class="muted">{{ s.certificate.issuer if s.certificate else '—' }}</td>
+      <td class="muted">{{ s.certificate.expires_at.strftime('%Y-%m-%d') if s.certificate else '—' }}</td>
+      <td class="actions">
+        {% if s.certificate %}
+          <form method="post" action="/ssl/sub/{{ s.id }}/revoke"
+                onsubmit="return confirm('Revoke SSL for {{ s.fqdn }}?')">
+            <button type="submit" class="btn btn-sm btn-danger">Revoke</button>
+          </form>
+          <form method="post" action="/ssl/sub/{{ s.id }}/issue">
+            <button type="submit" class="btn btn-sm">Renew</button>
+          </form>
+        {% else %}
+          <form method="post" action="/ssl/sub/{{ s.id }}/issue">
+            <button type="submit" class="btn btn-sm btn-primary">Issue certificate</button>
+          </form>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
   {% endfor %}
   </tbody>
 </table>

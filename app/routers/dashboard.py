@@ -5,11 +5,11 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models import Certificate, Database, Domain, EmailAccount, User
+from ..models import Certificate, Database, Domain, EmailAccount, Subdomain, User
 from ..providers import get_provider
 from ..security import current_user
 from ..web import templates
@@ -52,8 +52,16 @@ def home(request: Request, user: User = Depends(current_user), db: Session = Dep
     n_email = db.scalar(
         select(func.count()).select_from(EmailAccount).where(EmailAccount.domain_id.in_(owned_domain_ids or [0]))
     ) or 0
+    # Certs attach to either a domain or a subdomain, so count both. An INNER
+    # join on Domain would silently drop subdomain certs (domain_id IS NULL).
+    owned_subdomain_ids = [s.id for d in domains for s in d.subdomains]
     n_certs = db.scalar(
-        select(func.count()).select_from(Certificate).join(Domain).where(Domain.owner_id == user.id)
+        select(func.count()).select_from(Certificate).where(
+            or_(
+                Certificate.domain_id.in_(owned_domain_ids or [0]),
+                Certificate.subdomain_id.in_(owned_subdomain_ids or [0]),
+            )
+        )
     ) or 0
 
     # Per-account usage vs the account's limits (0 = unlimited / admin).

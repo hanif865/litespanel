@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from .. import config
 from ..accounts import account_home
 from ..db import get_db
-from ..models import DnsRecord, Domain, Subdomain, User
+from ..models import Certificate, DnsRecord, Domain, Subdomain, User
 from ..providers import get_provider
 from ..security import current_user
 from ..web import templates
@@ -83,10 +83,11 @@ def create_subdomain(
     docroot = Path(parent.docroot) / label
     get_provider().create_subdomain(fqdn, docroot, parent.php_version, user.system_user)
     get_provider().reload_web()
-    db.add(Subdomain(
+    sub = Subdomain(
         label=label, fqdn=fqdn, parent_id=parent.id,
         docroot=str(docroot), php_version=parent.php_version,
-    ))
+    )
+    db.add(sub)
 
     # Publish DNS so the subdomain actually resolves. Without an A record the
     # zone never learns about the label and clients get NXDOMAIN. The panel DB
@@ -105,10 +106,28 @@ def create_subdomain(
     db.flush()
     get_provider().sync_zone(parent.name, _zone_payload(parent))
     db.commit()
+
+    # cPanel-style AutoSSL: try to get a cert immediately. On the linux box this
+    # only works once DNS resolves, so it's best-effort — a failure just leaves
+    # the subdomain plain HTTP with an Issue button on the SSL page. Demo always
+    # succeeds (placeholder PEM).
+    db.refresh(sub)
+    try:
+        info = get_provider().issue_certificate(fqdn)
+        db.add(Certificate(
+            subdomain_id=sub.id, domain_id=None, issuer=info.issuer,
+            issued_at=info.issued_at, expires_at=info.expires_at, cert_path=info.cert_path,
+        ))
+        db.commit()
+        ssl_note = " 🔒 SSL issued."
+    except Exception:  # noqa: BLE001 — DNS may not have propagated; retry from /ssl
+        db.rollback()
+        ssl_note = " (Issue SSL from the SSL page once DNS resolves.)"
+
     _flash(
         request,
         f"✅ {fqdn} created. DNS A record → {config.SERVER_IP} added; public "
-        "resolution requires this domain's nameservers to point here.",
+        "resolution requires this domain's nameservers to point here." + ssl_note,
     )
     return RedirectResponse("/subdomains", status_code=303)
 
