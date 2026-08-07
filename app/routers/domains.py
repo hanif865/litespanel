@@ -94,11 +94,17 @@ def create_domain(
         return RedirectResponse("/domains", status_code=303)
 
     # Provision (or reuse) the owner's isolated system account, then place the
-    # site under its home so PHP runs as that account.
-    home = account_home(db, user)
-    docroot = home / name / "public_html"
-    get_provider().create_site(name, docroot, php_version, user.system_user)
-    get_provider().reload_web()
+    # site under its home so PHP runs as that account. A provisioning failure
+    # (bad system state, nginx config, etc.) becomes a friendly flash — never a
+    # 500 — and leaves no half-created Domain row behind.
+    try:
+        home = account_home(db, user)
+        docroot = home / name / "public_html"
+        get_provider().create_site(name, docroot, php_version, user.system_user)
+        get_provider().reload_web()
+    except Exception as exc:  # noqa: BLE001 — surface a reason, not a stack trace
+        _flash(request, f"❌ Could not create {name}: {exc}")
+        return RedirectResponse("/domains", status_code=303)
     db.add(Domain(name=name, owner_id=user.id, docroot=str(docroot), php_version=php_version))
     db.commit()
     _flash(request, f"✅ {name} created and is now live.")

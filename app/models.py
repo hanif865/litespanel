@@ -276,6 +276,12 @@ class WordPressApp(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     domain_id: Mapped[int] = mapped_column(ForeignKey("domains.id", ondelete="CASCADE"))
+    # Set when the install targets a subdomain (blog.example.com) rather than the
+    # domain root/subdir. The domain_id still points at the parent domain (for
+    # ownership + cascade), but the site is served from the subdomain's docroot.
+    subdomain_id: Mapped[int | None] = mapped_column(
+        ForeignKey("subdomains.id", ondelete="CASCADE"), nullable=True
+    )
     admin_user: Mapped[str] = mapped_column(String(64))
     admin_email: Mapped[str] = mapped_column(String(255))
     login_secret: Mapped[str] = mapped_column(String(64))  # HMAC key for auto-login
@@ -286,6 +292,7 @@ class WordPressApp(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     domain: Mapped["Domain"] = relationship()
+    subdomain: Mapped["Subdomain | None"] = relationship()
 
 
 class NodeApp(Base):

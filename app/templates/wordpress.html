@@ -14,7 +14,8 @@
     {% for i in installs %}
       <tr>
         <td>
-          <strong>📝 {{ i.domain.name }}{% if i.path %}/{{ i.path }}{% endif %}</strong>
+          <strong>📝 {{ i.display_host }}{% if i.path %}/{{ i.path }}{% endif %}</strong>
+          {% if i.subdomain %}<span class="badge">subdomain</span>{% endif %}
           {% if not i.managed %}<span class="badge">detected</span>{% endif %}
           {% if not i.on_disk %}<span class="badge badge-warn">files missing</span>{% endif %}
         </td>
@@ -24,15 +25,16 @@
           {% if i.managed %}
             <a href="/wordpress/{{ i.app.id }}/login" target="_blank" class="btn btn-sm btn-primary">🔑 Login</a>
           {% endif %}
-          <a href="http://{{ i.domain.name }}{% if i.path %}/{{ i.path }}{% endif %}" target="_blank" class="btn btn-sm">🌐 Visit</a>
+          <a href="http://{{ i.display_host }}{% if i.path %}/{{ i.path }}{% endif %}" target="_blank" class="btn btn-sm">🌐 Visit</a>
           {% if i.managed %}
           <form method="post" action="/wordpress/{{ i.app.id }}/forget" onsubmit="return confirm('Remove from this list only? (site files and database are kept)')">
             <button type="submit" class="btn btn-sm">Forget</button>
           </form>
           {% endif %}
           <form method="post" action="/wordpress/{{ i.domain.id }}/uninstall"
-                onsubmit="return confirm('UNINSTALL WordPress from {{ i.domain.name }}{% if i.path %}/{{ i.path }}{% endif %}?\n\nThis permanently deletes ALL site files{% if i.db_name %} and drops the database {{ i.db_name }}{% endif %}. This cannot be undone.')">
+                onsubmit="return confirm('UNINSTALL WordPress from {{ i.display_host }}{% if i.path %}/{{ i.path }}{% endif %}?\n\nThis permanently deletes ALL site files{% if i.db_name %} and drops the database {{ i.db_name }}{% endif %}. This cannot be undone.')">
             <input type="hidden" name="path" value="{{ i.path }}">
+            {% if i.subdomain %}<input type="hidden" name="subdomain_id" value="{{ i.subdomain.id }}">{% endif %}
             <button type="submit" class="btn btn-sm btn-danger">🗑️ Uninstall</button>
           </form>
         </td>
@@ -45,7 +47,7 @@
 </div>
 {% endif %}
 
-{% if domains %}
+{% if targets %}
 <form method="post" action="/wordpress/install" id="wpform">
   <!-- Software Setup -->
   <div class="card">
@@ -62,9 +64,9 @@
         <p class="hint">Pick <code>https://</code> to auto-request a free SSL certificate (the domain's DNS must already point here).</p>
       </div>
       <div>
-        <span class="cron-lbl">Choose Domain</span>
-        <select name="domain_id" id="wp_domain" onchange="wpUrl()">
-          {% for d in domains %}<option value="{{ d.id }}" data-name="{{ d.name }}">{{ d.name }}</option>{% endfor %}
+        <span class="cron-lbl">Choose Domain / Subdomain</span>
+        <select name="target" id="wp_domain" onchange="wpUrl()">
+          {% for t in targets %}<option value="{{ t.token }}" data-name="{{ t.name }}" data-ssl="{{ '1' if t.ssl else '0' }}">{{ t.name }}</option>{% endfor %}
         </select>
       </div>
       <div>

@@ -96,14 +96,37 @@ class LinuxProvider(Provider):
         home = Path("/home") / username
         # Create the system user if it doesn't exist (no shell login).
         if subprocess.run(["id", username], capture_output=True).returncode != 0:
+            # Each account gets its own primary group so its files stay private.
+            # useradd's default same-name group creation fails when a group of
+            # that name already exists (e.g. Ubuntu's reserved `admin` group, or
+            # an orphan left by an earlier half-finished run). Rather than reuse a
+            # group we don't own — which could hand the account another group's
+            # members or privileges — create a panel-namespaced group instead.
+            group = username
+            if self._group_exists(group):
+                group = f"{username}_lp"
+            if not self._group_exists(group):
+                _run(["groupadd", group])
             _run(["useradd", "--create-home", "--home-dir", str(home),
-                  "--shell", "/usr/sbin/nologin", username])
+                  "--shell", "/usr/sbin/nologin", "--no-user-group",
+                  "--gid", group, username])
         # A dedicated PHP-FPM pool makes this account's PHP run AS this user,
         # so its sites can't read another account's files.
         self._write_php_pool(username)
         # Let nginx (www-data) traverse into the account to reach public_html.
         _run(["chmod", "751", str(home)])
         return home
+
+    def _group_exists(self, name: str) -> bool:
+        return subprocess.run(["getent", "group", name],
+                              capture_output=True).returncode == 0
+
+    def _primary_group(self, username: str) -> str:
+        """The account's real primary group. Usually equals the username, but a
+        panel-namespaced fallback when that name collided with an existing group."""
+        r = subprocess.run(["id", "-gn", username], capture_output=True, text=True)
+        name = r.stdout.strip()
+        return name if r.returncode == 0 and name else username
 
     def remove_account(self, username: str) -> None:
         _ident(username, "account username")
@@ -121,10 +144,11 @@ class LinuxProvider(Provider):
                         directives: dict[str, str] | None = None,
                         reload: bool = True) -> None:
         pool = Path(f"/etc/php/{config.PHP_FPM_VERSION}/fpm/pool.d/{username}.conf")
+        group = self._primary_group(username)
         lines = [
             f"[{username}]",
             f"user = {username}",
-            f"group = {username}",
+            f"group = {group}",
             f"listen = {self._php_sock(username)}",
             "listen.owner = www-data",
             "listen.group = www-data",
@@ -170,8 +194,10 @@ class LinuxProvider(Provider):
         _ident(system_user, "account username")
         self._ensure_weblog_dir()
         docroot.mkdir(parents=True, exist_ok=True)
-        # Hand ownership of the whole site tree to the account.
-        _run(["chown", "-R", f"{system_user}:{system_user}", str(Path(docroot).parent)])
+        # Hand ownership of the whole site tree to the account (its real primary
+        # group, which may be a panel-namespaced fallback on a name collision).
+        group = self._primary_group(system_user)
+        _run(["chown", "-R", f"{system_user}:{group}", str(Path(docroot).parent)])
         (NGINX_SITES / f"{domain}.conf").write_text(
             self._vhost(domain, f" www.{domain}", docroot, system_user)
         )

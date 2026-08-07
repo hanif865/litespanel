@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session
 from .. import config, crypto
 from ..db import get_db
 from ..limits import database_limit_reached
-from ..models import Certificate, Database, Domain, User, WordPressApp
+from ..models import Certificate, Database, Domain, Subdomain, User, WordPressApp
 from ..providers import get_provider
 from ..security import current_user
 from ..web import templates
@@ -38,6 +38,55 @@ _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 def _flash(request: Request, message: str) -> None:
     request.session["flash"] = message
+
+
+class _Target:
+    """A place WordPress can be installed: a domain (root or subdirectory) or a
+    subdomain. Unifies the two so the installer, listing and uninstall don't each
+    special-case subdomains. `token` (\"d:5\" / \"s:3\") is what the form round-trips."""
+
+    def __init__(self, domain: Domain, subdomain: Subdomain | None):
+        self.domain = domain              # always the parent domain (ownership, DB)
+        self.subdomain = subdomain        # set when the target is a subdomain
+
+    @property
+    def token(self) -> str:
+        return f"s:{self.subdomain.id}" if self.subdomain else f"d:{self.domain.id}"
+
+    @property
+    def host(self) -> str:
+        return self.subdomain.fqdn if self.subdomain else self.domain.name
+
+    @property
+    def docroot(self) -> Path:
+        return Path(self.subdomain.docroot if self.subdomain else self.domain.docroot)
+
+    @property
+    def php_version(self) -> str:
+        return self.subdomain.php_version if self.subdomain else self.domain.php_version
+
+    @property
+    def can_ssl(self) -> bool:
+        # Only domains carry a Certificate in the panel; subdomains stay HTTP.
+        return self.subdomain is None
+
+
+def _resolve_target(db: Session, user: User, token: str) -> _Target | None:
+    """Turn a form token (\"d:<id>\" / \"s:<id>\") into an owned _Target, or None."""
+    try:
+        kind, sid = token.split(":", 1)
+        oid = int(sid)
+    except (ValueError, AttributeError):
+        return None
+    if kind == "s":
+        sub = db.get(Subdomain, oid)
+        if sub is None or sub.parent.owner_id != user.id:
+            return None
+        return _Target(sub.parent, sub)
+    dom = db.get(Domain, oid)
+    if dom is None or dom.owner_id != user.id:
+        return None
+    return _Target(dom, None)
 
 
 _DB_NAME_RE = re.compile(r"""define\(\s*['"]DB_NAME['"]\s*,\s*['"]([^'"]+)['"]""")
@@ -55,8 +104,8 @@ def _wp_db_name(docroot: Path) -> str | None:
 
 def _list_installs(db: Session, user: User) -> list[dict]:
     """Every WordPress install this account has — panel-managed ones (any
-    subdirectory) plus any set up outside the panel (a wp-config.php sitting in
-    a domain's document root)."""
+    domain root, subdirectory or subdomain) plus any set up outside the panel
+    (a wp-config.php sitting in a domain's document root)."""
     domains = db.scalars(
         select(Domain).where(Domain.owner_id == user.id).order_by(Domain.name)
     ).all()
@@ -64,24 +113,30 @@ def _list_installs(db: Session, user: User) -> list[dict]:
         select(WordPressApp).join(Domain).where(Domain.owner_id == user.id)
     ).all()
     installs = []
-    seen = set()  # (domain_id, path) already represented by a managed record
+    seen = set()  # (domain_id, subdomain_id, path) already represented by a managed record
     for a in apps:
-        idir = Path(a.domain.docroot) / a.path if a.path else Path(a.domain.docroot)
+        idir = Path(a.subdomain.docroot) if a.subdomain_id else Path(a.domain.docroot)
+        if a.path:
+            idir = idir / a.path
+        display_host = a.subdomain.fqdn if a.subdomain else a.domain.name
         installs.append({
             "domain": a.domain, "app": a, "managed": True, "path": a.path or "",
+            "display_host": display_host,
+            "subdomain": a.subdomain,
             "db_name": a.db_name or _wp_db_name(idir),
             "on_disk": (idir / "wp-config.php").exists(),
         })
-        seen.add((a.domain_id, a.path or ""))
+        seen.add((a.domain_id, a.subdomain_id or 0, a.path or ""))
     for d in domains:
-        if (d.id, "") in seen:
+        if (d.id, 0, "") in seen:
             continue
         if (Path(d.docroot) / "wp-config.php").exists():   # root install we didn't create
             installs.append({
                 "domain": d, "app": None, "managed": False, "path": "",
+                "display_host": d.name, "subdomain": None,
                 "db_name": _wp_db_name(Path(d.docroot)), "on_disk": True,
             })
-    installs.sort(key=lambda i: (i["domain"].name, i["path"]))
+    installs.sort(key=lambda i: (i["display_host"], i["path"]))
     return installs
 
 
@@ -90,12 +145,18 @@ def wp_page(request: Request, user: User = Depends(current_user), db: Session = 
     domains = db.scalars(
         select(Domain).where(Domain.owner_id == user.id).order_by(Domain.name)
     ).all()
+    subdomains = db.scalars(
+        select(Subdomain).join(Domain).where(Domain.owner_id == user.id).order_by(Subdomain.fqdn)
+    ).all()
     installs = _list_installs(db, user)
-    # Any domain can host WordPress — at its root or in a subdirectory
-    # (Softaculous-style), so all domains are offered for install.
+    # Any domain OR subdomain can host WordPress — at its root or in a
+    # subdirectory (Softaculous-style). Offer each as a "d:<id>"/"s:<id>" target.
+    targets = [{"token": f"d:{d.id}", "name": d.name, "ssl": True} for d in domains]
+    targets += [{"token": f"s:{s.id}", "name": s.fqdn, "ssl": False} for s in subdomains]
     return templates.TemplateResponse(
         request, "wordpress.html",
-        {"user": user, "domains": domains, "installs": installs, "active": "wordpress",
+        {"user": user, "domains": domains, "targets": targets, "installs": installs,
+         "active": "wordpress",
          "flash": request.session.pop("flash", None), "creds": request.session.pop("wp_creds", None)},
     )
 
@@ -194,7 +255,8 @@ def _ensure_ssl(db: Session, domain: Domain) -> bool:
 @router.post("/install")
 def wp_install(
     request: Request,
-    domain_id: int = Form(...),
+    target: str = Form(""),
+    domain_id: int | None = Form(None),
     protocol: str = Form("http://"),
     directory: str = Form(""),
     version: str = Form("latest"),
@@ -208,10 +270,13 @@ def wp_install(
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
-    domain = db.get(Domain, domain_id)
-    if domain is None or domain.owner_id != user.id:
-        _flash(request, "❌ Domain not found.")
+    # Target is a "d:<id>"/"s:<id>" token; fall back to the legacy domain_id
+    # field so older forms/links keep working.
+    tgt = _resolve_target(db, user, target or (f"d:{domain_id}" if domain_id else ""))
+    if tgt is None:
+        _flash(request, "❌ Install target not found.")
         return RedirectResponse("/wordpress", status_code=303)
+    domain = tgt.domain
     if database_limit_reached(db, user):
         _flash(request, f"❌ Database limit reached ({user.eff_databases}).")
         return RedirectResponse("/wordpress", status_code=303)
@@ -224,10 +289,10 @@ def wp_install(
         _flash(request, "❌ Directory may only contain letters, digits, dashes and underscores.")
         return RedirectResponse("/wordpress", status_code=303)
 
-    docroot = Path(domain.docroot)
+    docroot = tgt.docroot
     install_dir = docroot / directory if directory else docroot
     if (install_dir / "wp-config.php").exists():
-        where = f"{domain.name}/{directory}" if directory else domain.name
+        where = f"{tgt.host}/{directory}" if directory else tgt.host
         _flash(request, f"❌ WordPress is already installed at {where}.")
         return RedirectResponse("/wordpress", status_code=303)
 
@@ -237,17 +302,22 @@ def wp_install(
 
     # 0. If HTTPS was requested and there's no cert yet, try to obtain one now
     #    (also creates the :443 vhost so HTTPS won't fall through to the panel).
+    #    Only domains carry certificates in the panel — subdomains stay on HTTP.
     ssl_note = ""
-    if want_https:
+    if want_https and not tgt.can_ssl:
+        want_https = False
+        ssl_note = " (subdomains are served over HTTP — installed without SSL.)"
+    elif want_https:
         if _ensure_ssl(db, domain):
             db.refresh(domain)
         else:
             want_https = False
             ssl_note = (" (couldn't get an SSL certificate — installed over HTTP. "
                         "Point the domain's DNS at this server, then issue SSL from the SSL page.)")
-    scheme, host = _parse_protocol("https://" if want_https else "http://", domain.name)
-    if "www." in protocol:
-        host = f"www.{domain.name}"
+    scheme = "https" if want_https else "http"
+    host = tgt.host
+    if "www." in protocol and not tgt.subdomain:
+        host = f"www.{tgt.host}"
     url_path = f"/{directory}" if directory else ""
     site_url = f"{scheme}://{host}{url_path}"
 
@@ -269,11 +339,11 @@ def wp_install(
                 for member in zf.namelist():
                     if not member.startswith("wordpress/") or member.endswith("/"):
                         continue
-                    target = (install_dir / member[len("wordpress/"):]).resolve()
-                    if install_dir.resolve() not in target.parents:
+                    target_path = (install_dir / member[len("wordpress/"):]).resolve()
+                    if install_dir.resolve() not in target_path.parents:
                         continue
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    with zf.open(member) as s, open(target, "wb") as d:
+                    target_path.parent.mkdir(parents=True, exist_ok=True)
+                    with zf.open(member) as s, open(target_path, "wb") as d:
                         d.write(s.read())
         else:
             (install_dir / "index.php").write_text(
@@ -312,9 +382,13 @@ def wp_install(
     (mu / "litespanel-autologin.php").write_text(_MU_PLUGIN.format(secret=login_secret), encoding="utf-8")
     get_provider().set_owner(install_dir, sysuser)
 
+    sub_id = tgt.subdomain.id if tgt.subdomain else None
     db.query(WordPressApp).filter(
-        WordPressApp.domain_id == domain.id, WordPressApp.path == directory).delete()
-    db.add(WordPressApp(domain_id=domain.id, admin_user=admin_user.strip(),
+        WordPressApp.domain_id == domain.id,
+        WordPressApp.subdomain_id == sub_id,
+        WordPressApp.path == directory).delete()
+    db.add(WordPressApp(domain_id=domain.id, subdomain_id=sub_id,
+                        admin_user=admin_user.strip(),
                         admin_email=admin_email.strip(), login_secret=login_secret,
                         db_name=dbname, path=directory))
     db.commit()
@@ -334,8 +408,13 @@ def wp_login(app_id: int, user: User = Depends(current_user), db: Session = Depe
     exp = int(time.time()) + 300
     sig = hmac.new(app.login_secret.encode(), f"{app.admin_user}.{exp}".encode(), hashlib.sha256).hexdigest()
     token = f"{app.admin_user}.{exp}.{sig}"
-    scheme = "https" if app.domain.certificate else "http"
-    base = f"{scheme}://{app.domain.name}" + (f"/{app.path}" if app.path else "")
+    # A subdomain install lives at its own fqdn over HTTP; a domain install uses
+    # the domain name and HTTPS when it has a certificate.
+    if app.subdomain_id:
+        host, scheme = app.subdomain.fqdn, "http"
+    else:
+        host, scheme = app.domain.name, ("https" if app.domain.certificate else "http")
+    base = f"{scheme}://{host}" + (f"/{app.path}" if app.path else "")
     return RedirectResponse(f"{base}/?litespanel_login={token}", status_code=303)
 
 
@@ -375,6 +454,7 @@ def wp_uninstall(
     request: Request,
     domain_id: int,
     path: str = Form(""),
+    subdomain_id: int | None = Form(None),
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
@@ -387,10 +467,19 @@ def wp_uninstall(
         return RedirectResponse("/wordpress", status_code=303)
 
     path = path.strip().strip("/")
-    docroot = Path(domain.docroot)
+    subdomain = None
+    if subdomain_id:
+        subdomain = db.get(Subdomain, subdomain_id)
+        if subdomain is None or subdomain.parent_id != domain.id:
+            _flash(request, "❌ Subdomain not found.")
+            return RedirectResponse("/wordpress", status_code=303)
+
+    docroot = Path(subdomain.docroot if subdomain else domain.docroot)
     install_dir = docroot / path if path else docroot
     app = db.scalar(select(WordPressApp).where(
-        WordPressApp.domain_id == domain.id, WordPressApp.path == path))
+        WordPressApp.domain_id == domain.id,
+        WordPressApp.subdomain_id == subdomain_id,
+        WordPressApp.path == path))
     dbname = (app.db_name if app and app.db_name else None) or _wp_db_name(install_dir)
 
     # 1. Drop the database + its scoped user (best effort).
@@ -427,6 +516,8 @@ def wp_uninstall(
         db.delete(app)
     db.commit()
 
-    where = f"{domain.name}/{path}" if path else domain.name
+    where = f"{subdomain.fqdn if subdomain else domain.name}"
+    if path:
+        where += f"/{path}"
     _flash(request, f"🗑️ Uninstalled WordPress from {where}{dropped}.")
     return RedirectResponse("/wordpress", status_code=303)
