@@ -19,6 +19,10 @@ RC_DIR="/usr/share/roundcube"
 ENV_FILE="/etc/litespanel.env"
 MYHOST="$(hostname -f 2>/dev/null || hostname)"
 
+# Read a KEY=value from the panel env file (relay creds can live there so the
+# admin just edits the file and re-runs — sudo won't pass them via environment).
+env_get() { grep -E "^$1=" "$ENV_FILE" 2>/dev/null | tail -n1 | cut -d= -f2- || true; }
+
 BOLD="\033[1m"; GREEN="\033[32m"; BLUE="\033[34m"; YELLOW="\033[33m"; RED="\033[31m"; RESET="\033[0m"
 step() { echo -e "\n${BLUE}${BOLD}==>${RESET} ${BOLD}$1${RESET}"; }
 ok()   { echo -e "  ${GREEN}✓${RESET} $1"; }
@@ -202,6 +206,31 @@ if ! postconf -M smtps/inet >/dev/null 2>&1; then
     postconf -P "smtps/inet/smtpd_tls_wrappermode=yes"
     postconf -P "smtps/inet/smtpd_sasl_auth_enable=yes"
     postconf -P "smtps/inet/smtpd_client_restrictions=permit_sasl_authenticated,reject"
+fi
+# Optional SMTP relay (smarthost) for outbound mail. When these env vars are
+# set, Postfix sends outbound mail through the relay (e.g. Zoho, SendGrid,
+# Mailgun, SES) instead of directly to the recipient's MX. Solves the "port 25
+# blocked by VPS provider" + "no IP reputation" problem — relay uses 587/465
+# (never blocked) and its own established reputation. If unset, direct delivery.
+RELAY_HOST="${PANEL_SMTP_RELAY_HOST:-$(env_get PANEL_SMTP_RELAY_HOST)}"
+RELAY_USER="${PANEL_SMTP_RELAY_USER:-$(env_get PANEL_SMTP_RELAY_USER)}"
+RELAY_PASS="${PANEL_SMTP_RELAY_PASS:-$(env_get PANEL_SMTP_RELAY_PASS)}"
+if [ -n "$RELAY_HOST" ] && [ -n "$RELAY_USER" ] && [ -n "$RELAY_PASS" ]; then
+    postconf -e "relayhost = ${RELAY_HOST}"
+    postconf -e "smtp_sasl_auth_enable = yes"
+    postconf -e "smtp_sasl_password_maps = hash:/etc/postfix/sasl_passwd"
+    postconf -e "smtp_sasl_security_options = noanonymous"
+    postconf -e "smtp_tls_security_level = encrypt"
+    # Write credentials to the sasl_passwd map (hashed, postfix-only readable).
+    echo "${RELAY_HOST} ${RELAY_USER}:${RELAY_PASS}" > /etc/postfix/sasl_passwd
+    chmod 600 /etc/postfix/sasl_passwd
+    postmap /etc/postfix/sasl_passwd
+    rm -f /etc/postfix/sasl_passwd  # keep only the .db
+    ok "SMTP relay configured (${RELAY_HOST})"
+else
+    # No relay configured — direct delivery to recipient MX (needs open port 25).
+    postconf -e "relayhost ="
+    ok "Direct mail delivery (no relay)"
 fi
 systemctl restart postfix
 ok "Postfix configured (submission 587 + smtps 465, TLS on)"
@@ -471,5 +500,14 @@ echo -e "  ${BOLD}Mail clients${RESET} (Thunderbird / phone / Outlook) — full 
 echo -e "    IMAP  ${BOLD}993${RESET} SSL/TLS   ·   POP3  ${BOLD}995${RESET} SSL/TLS   ·   SMTP  ${BOLD}465${RESET} SSL/TLS"
 echo -e "    server ${BOLD}mail.<domain>${RESET} (self-signed cert → accept the one-time warning)"
 echo -e "    See each account's ${BOLD}Connect Devices${RESET} page in the panel for exact settings.\n"
-echo -e "  ${YELLOW}For internet delivery: point the domain's MX at this server, add SPF/DKIM,${RESET}"
-echo -e "  ${YELLOW}and confirm your host doesn't block port 25.${RESET}\n"
+if [ -n "$RELAY_HOST" ]; then
+    echo -e "  ${GREEN}Outbound mail relays through ${BOLD}${RELAY_HOST}${RESET}${GREEN} — port 25 blocks don't matter.${RESET}"
+    echo -e "  ${YELLOW}The relay may require the From domain to be verified on your relay account.${RESET}\n"
+else
+    echo -e "  ${YELLOW}For internet delivery (Gmail etc.): point the domain's MX here, add SPF/DKIM,${RESET}"
+    echo -e "  ${YELLOW}and confirm your host doesn't block outbound port 25.${RESET}"
+    echo -e "  ${YELLOW}If port 25 is blocked, use a relay — set these in ${ENV_FILE} and re-run:${RESET}"
+    echo -e "    PANEL_SMTP_RELAY_HOST=[smtp.zoho.com]:587"
+    echo -e "    PANEL_SMTP_RELAY_USER=you@yourdomain.com   PANEL_SMTP_RELAY_PASS=<app-password>"
+    echo -e "  ${YELLOW}(works with Zoho, SendGrid, Mailgun, Amazon SES — any authenticated submission host.)${RESET}\n"
+fi
