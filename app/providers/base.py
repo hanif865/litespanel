@@ -638,6 +638,49 @@ class Provider(ABC):
         as root — admin-only at the router layer.
         """
 
+    # --- Panel self-update (admin-only) -----------------------------------
+    @abstractmethod
+    def panel_version(self) -> dict:
+        """Describe the panel's own installed version (admin-only).
+
+        Returns {commit, short, branch, dirty, describe} where `commit` is the
+        full git revision the panel is running (or None when the install dir is
+        not a git checkout), `short` its 7-char form, `dirty` True when there
+        are uncommitted local changes, and `describe` a human label. Never
+        raises — a non-git or git-less host returns a best-effort dict.
+        """
+
+    @abstractmethod
+    def check_panel_update(self) -> dict:
+        """Check the upstream remote for a newer panel version (admin-only).
+
+        Fetches the remote (read-only) and compares. Returns {available,
+        current, latest, behind, message}: `available` True when the remote
+        branch is ahead, `behind` the number of commits behind, `latest` the
+        remote short hash. Never raises — network/git failure returns
+        {available: False, message: <reason>}.
+        """
+
+    @abstractmethod
+    def update_panel(self) -> tuple[bool, str]:
+        """Update the panel to the latest upstream version (admin-only).
+
+        Pulls the newest code, applies database migrations, and restarts the
+        panel service — WITHOUT dropping the in-flight request that triggered
+        it (the work runs detached, since restarting the service would kill a
+        synchronous call). All data is preserved (same idempotent path as
+        re-running the installer). Returns (ok, message) describing whether the
+        update was *launched*, not whether it finished. Admin-only.
+        """
+
+    @abstractmethod
+    def panel_update_log(self, lines: int = 200) -> str:
+        """Return the tail of the last self-update run's log (admin-only).
+
+        Empty string when no update has been run yet. `lines` caps how many
+        trailing lines come back so the WHM page can show recent progress.
+        """
+
     # --- Logs (admin-only) ------------------------------------------------
     @abstractmethod
     def log_sources(self) -> list[dict]:

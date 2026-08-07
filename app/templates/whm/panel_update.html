@@ -1,0 +1,98 @@
+{% extends "whm_base.html" %}
+{% from "_icons.html" import icon %}
+{% block title %}Update Panel{% endblock %}
+{% block content %}
+<div class="whm-page-head">
+  <h1>Update Panel</h1>
+  <p class="muted">Upgrade {{ APP_NAME }} to the latest version. This pulls the
+    newest code, applies any database migrations, and restarts the panel —
+    <strong>all your accounts, sites, databases and settings are preserved</strong>.
+    Admin-only, and runs on the whole server.</p>
+</div>
+
+<div class="whm-cards">
+  <div class="whm-card">
+    <div class="whm-card-ico">{{ icon("server", 22) }}</div>
+    <div class="whm-card-num" style="font-size:1.1rem">{{ version.short }}</div>
+    <div class="whm-card-lbl">Installed version</div>
+  </div>
+  <div class="whm-card">
+    <div class="whm-card-ico {{ 'warn' if check.available else 'ok' }}">
+      {{ icon("success" if not check.available else "warning", 22) }}
+    </div>
+    <div class="whm-card-num" style="font-size:1.1rem">
+      {{ check.latest if check.available else version.short }}
+    </div>
+    <div class="whm-card-lbl">{{ 'Latest available' if check.available else 'Up to date' }}</div>
+  </div>
+  {% if check.available and check.behind %}
+  <div class="whm-card">
+    <div class="whm-card-ico">{{ icon("packages", 22) }}</div>
+    <div class="whm-card-num">{{ check.behind }}</div>
+    <div class="whm-card-lbl">Commits behind</div>
+  </div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0">Status</h2>
+
+  {% if version.commit is none %}
+    <p class="muted" style="display:flex;align-items:center;gap:8px">
+      {{ icon("warning", 18) }}
+      This install isn't a git checkout yet. The first update will initialise it
+      from <code>{{ branch }}</code> in place — your data (in a separate
+      directory) is untouched.
+    </p>
+  {% endif %}
+
+  <table class="table" style="margin:12px 0">
+    <tr><td class="muted">Installed</td>
+        <td><code>{{ version.describe }}</code>
+          {% if version.branch %}<span class="pill">{{ version.branch }}</span>{% endif %}
+          {% if version.dirty %}<span class="pill" style="background:#fdecec;color:#e5484d">local changes</span>{% endif %}
+        </td></tr>
+    <tr><td class="muted">Tracking</td><td><code>origin/{{ branch }}</code></td></tr>
+    <tr><td class="muted">Update check</td>
+        <td>
+          {% if check.available %}
+            <span class="pill" style="background:#fff4e5;color:#b46a00">🆕 {{ check.message }}</span>
+          {% else %}
+            <span class="pill pill-ok">{{ check.message }}</span>
+          {% endif %}
+        </td></tr>
+  </table>
+
+  <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:16px">
+    <form method="post" action="/whm/panel-update/check" class="inline-form">
+      <button class="btn">Check for updates</button>
+    </form>
+
+    {% if check.available %}
+    <form method="post" action="/whm/panel-update/run" class="inline-form"
+          onsubmit="return confirm('Update {{ APP_NAME }} now?\n\nThe panel will restart during the update and be briefly unreachable (usually under a minute). Your accounts and data are preserved. Continue?');">
+      <button class="btn btn-primary">⬆ Update to {{ check.latest }}</button>
+    </form>
+    {% else %}
+    <form method="post" action="/whm/panel-update/run" class="inline-form"
+          onsubmit="return confirm('Re-sync {{ APP_NAME }} to the latest {{ branch }}?\n\nThe panel will restart during the update. Your data is preserved. Continue?');">
+      <button class="btn" title="Force a re-sync to the latest code even if already up to date">Reinstall latest</button>
+    </form>
+    {% endif %}
+  </div>
+
+  <p class="muted" style="margin-top:14px;font-size:.85rem;display:flex;align-items:center;gap:8px">
+    {{ icon("info", 16) }}
+    After clicking Update, the panel restarts itself — this page may show a brief
+    error while it comes back. Wait a few seconds and refresh; the version above
+    will reflect the new build and the log below shows what happened.
+  </p>
+</div>
+
+{% if log %}
+<div class="card">
+  <h2 style="margin-top:0">Last update log</h2>
+  <pre class="log-view" style="max-height:340px;overflow:auto;white-space:pre-wrap">{{ log }}</pre>
+</div>
+{% endif %}
+{% endblock %}

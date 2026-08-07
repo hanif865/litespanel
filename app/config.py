@@ -100,6 +100,17 @@ HOME_DIR = DATA_DIR / "home"
 # PHP-FPM version used for per-account pools (linux provider).
 PHP_FPM_VERSION = _env("PANEL_PHP_FPM_VERSION", "8.3")
 
+# --- Panel self-update (admin-only) ----------------------------------------
+# Where the panel is installed on the VPS (the git working tree the updater
+# pulls into) and how to reach it. BASE_DIR is the real runtime directory, so
+# it works regardless of where the code was copied. Overridable for odd layouts.
+PANEL_INSTALL_DIR = _env("PANEL_INSTALL_DIR", str(BASE_DIR))
+PANEL_SERVICE_NAME = _env("PANEL_SERVICE_NAME", "litespanel")
+PANEL_REPO_URL = _env("PANEL_REPO_URL", "https://github.com/hanif865/litespanel.git")
+PANEL_REPO_BRANCH = _env("PANEL_REPO_BRANCH", "main")
+# The self-updater writes its progress here so the WHM page can tail it.
+PANEL_UPDATE_LOG = _env("PANEL_UPDATE_LOG", str(DATA_DIR / "panel-update.log"))
+
 # Node.js support (admin-only). Major versions the panel can install via
 # NodeSource, and the local port range reverse-proxied apps are assigned from.
 NODE_VERSIONS = ("22", "20", "18")

@@ -27,35 +27,63 @@ updating): see **[DEPLOY.md](DEPLOY.md)**.
 
 ## Features
 
+### User Panel (cPanel-style)
+
 - 🌐 **Domains / website hosting** — provisions an nginx vhost + document root
 - 🔗 **Subdomains** — `blog.example.com`, docroot nested in the parent's public_html
 - 🧭 **DNS Zone Editor** — add / **edit** / delete A/AAAA/CNAME/MX/TXT/NS records,
   synced to a zone file; new domains auto-seed sensible defaults (A, www, MX, SPF)
 - 📧 **Email accounts** — per-domain mailboxes with quota; Maildir + Dovecot-style
-  virtual users file (password stored hashed, never plaintext)
+  virtual users file (password stored hashed, never plaintext). Change password & quota
+  post-creation. **Webmail SSO** — one-click login to Roundcube via short-lived signed token.
+- 📬 **Connect Email** — per-mailbox IMAP/SMTP config guide (server, ports, SSL settings)
+  for desktop/mobile clients
 - 📤 **Email forwarders** — forward an address to another (or `*` catch-all),
   synced to a Postfix-style virtual alias file
 - 🤖 **Autoresponders** — automatic replies (out-of-office) with enable/disable
+- 🔐 **Email Deliverability** — generate DKIM keypair (2048-bit RSA), auto-register with
+  OpenDKIM, display public key + DNS TXT records chunked to fit 255-char limits. SPF/DMARC
+  guides for one-click copy.
 - 📁 **File manager** — browse, upload, edit, download, delete (sandboxed per site)
-- 🗄️ **Database management** — create MySQL/MariaDB databases with a scoped user
+- 🗄️ **MySQL / MariaDB databases** — create with a scoped user
+- 🐘 **PostgreSQL databases** — create with a scoped user (full parity with MySQL manager)
 - 🐬 **Database Manager (phpMyAdmin-style)** — SQL console + table browser. In demo
   mode each database is a real SQLite file so queries actually run; set
   `PANEL_PHPMYADMIN_URL` to embed real phpMyAdmin in production.
 - 🧙 **Database Wizard** — guided create-database-and-user flow with a chosen
   username and password (vs. the one-click auto-generated Databases page)
 - 🐘 **PHP version selector** — set the PHP-FPM version per domain (rewrites vhost)
+- 🟢 **Node.js app hosting** — deploy from Git URL or upload a tarball; set npm install
+  options, environment variables, custom start command; live streaming logs; start/stop/restart
+- 📂 **FTP Accounts** — create per-domain FTP users (ProFTPd virtual users file), each
+  jailed to their docroot
+- 🔨 **WordPress 1-Click Installer** — fully installs WordPress (database, files, admin
+  account) on a **domain or subdomain** with HMAC-signed auto-login. No browser setup wizard.
+  Subdomain installs serve over HTTP; domain installs use HTTPS when a certificate exists.
 - ⏰ **Cron jobs** — schedule commands, synced to the system crontab
 - 🔒 **SSL** — issue/revoke Let's Encrypt certificates per domain
 - 💾 **Backups** — full-account zip (sites + databases + DNS + email); download & restore
-- 👥 **Multi-user / Reseller** — WHM-style User Manager with roles (admin / reseller /
-  user), per-account limits (domains, databases, email, disk) enforced on creation,
-  suspend/reactivate, and full resource isolation per account
-- 📦 **Packages** — reusable hosting plans (named limit bundles). Assign to accounts;
-  editing a package updates every account on it. Effective limits = package if
-  assigned, else the account's inline limits
 - 📊 **Dashboard** — cPanel Jupiter-style home with **real** CPU / memory / disk
   stats (stdlib + ctypes sampler on Windows, /proc on Linux — no psutil)
 - 🌙 **Dark mode** — persistent theme toggle (applied before paint, no flash)
+
+### WHM (Admin / Reseller)
+
+- 👥 **User Manager** — create/edit accounts with roles (admin / reseller / user),
+  per-account limits (domains, databases, email, disk), suspend/reactivate, full resource
+  isolation per account (dedicated Linux system user + PHP-FPM pool)
+- 📋 **Account Details** — per-account deep view: resource usage, owned domains, databases,
+  email accounts, FTP users, limits, package assignment
+- 📦 **Packages** — reusable hosting plans (named limit bundles). Assign to accounts;
+  editing a package updates every account on it. Effective limits = package if
+  assigned, else the account's inline limits
+- 💿 **Server Software** — install PHP versions, Node.js, PostgreSQL, mail stack
+  (Postfix/Dovecot/OpenDKIM/Roundcube) host-wide (admin-only, one-click via background shell)
+- ⚙️ **Service Manager** — start/stop/restart core services (Nginx, PHP-FPM, MySQL, PostgreSQL,
+  Postfix, Dovecot) with live status. Admin-only, runs `systemctl` via the provider.
+- 🛡️ **ModSecurity WAF** — admin-only on/off toggle for the OWASP Core Rule Set
+- 🚫 **IP Blocker** — block IPs host-wide (nginx `deny`), review auto-bans (e.g. from
+  fail2ban), unblock with one click
 
 ## Security
 
@@ -77,6 +105,16 @@ Built-in protections:
   gets its own Linux user, a dedicated PHP-FPM pool, and a `/home/<user>` tree it
   owns. A site's PHP runs **as that user**, so one account can't read or write
   another's files. Files created via the File Manager are chowned to the account.
+  On a group-name collision (e.g. Ubuntu's reserved `admin` group) the account gets
+  a panel-namespaced primary group rather than reusing a group it doesn't own.
+- **Admin-only server operations** — Service Manager, Server Software, ModSecurity and
+  IP Blocker are gated by `require_admin` and, where a client sends a target, use a
+  fixed server-side allowlist (a `key` catalog, never a raw unit/path) so a request can
+  never target an arbitrary systemd unit or file.
+- **Mail stack TLS** — Postfix/Dovecot serve over STARTTLS/SSL for external clients so
+  mailbox credentials aren't sent in the clear; DKIM signs outbound mail via OpenDKIM.
+- **Signed auto-login tokens** — WordPress and Webmail one-click logins use short-lived
+  (300s) HMAC-SHA256 tokens, never a stored session or plaintext credential in the URL.
 
 Remaining hardening:
 
@@ -176,8 +214,8 @@ app/
 
 ## Roadmap (next)
 
-- DNS record management
-- Email accounts
-- Cron jobs & scheduled backups
-- Multi-user / reseller packages
-- Real CPU metric via a tiny sampler (avoid psutil to stay light)
+- Filesystem-level disk quotas (`setquota`) — currently tracked in the DB but not enforced
+- Drop the panel from root to a scoped-`sudo` service user
+- Scheduled / automatic backups (manual full-account backup already ships)
+- Let's Encrypt for subdomains (subdomain WordPress installs are HTTP-only today)
+- Per-service uptime / memory metrics in the Service Manager

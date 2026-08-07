@@ -495,3 +495,40 @@ async def services_control(
     ok, message = await run_in_threadpool(get_provider().control_service, service, action)
     _flash(request, ("✅ " if ok else "❌ ") + message)
     return RedirectResponse("/whm/services", status_code=303)
+
+
+# --- Panel Update (self-update — admin only) ------------------------------
+# Update the panel software itself: sync to the latest code, run migrations, and
+# restart — all hosted data preserved. Like cPanel/WHM's "Upgrade to Latest
+# Version". Admin-only (shells out as root, restarts the service). The actual
+# work runs detached in the provider so the restart can't kill the request.
+@router.get("/panel-update")
+async def panel_update(request: Request, admin: User = Depends(require_admin),
+                       db: Session = Depends(get_db)):
+    provider = get_provider()
+    version = await run_in_threadpool(provider.panel_version)
+    check = await run_in_threadpool(provider.check_panel_update)
+    log = await run_in_threadpool(provider.panel_update_log, 100)
+    flash = request.session.pop("flash", None)
+    return templates.TemplateResponse(
+        request, "whm/panel_update.html",
+        {"user": admin, "active": "panel-update", "flash": flash,
+         "version": version, "check": check, "log": log,
+         "branch": config.PANEL_REPO_BRANCH},
+    )
+
+
+@router.post("/panel-update/check")
+async def panel_update_check(request: Request, admin: User = Depends(require_admin),
+                             db: Session = Depends(get_db)):
+    check = await run_in_threadpool(get_provider().check_panel_update)
+    _flash(request, ("🆕 " if check["available"] else "✅ ") + check["message"])
+    return RedirectResponse("/whm/panel-update", status_code=303)
+
+
+@router.post("/panel-update/run")
+async def panel_update_run(request: Request, admin: User = Depends(require_admin),
+                           db: Session = Depends(get_db)):
+    ok, message = await run_in_threadpool(get_provider().update_panel)
+    _flash(request, ("✅ " if ok else "❌ ") + message)
+    return RedirectResponse("/whm/panel-update", status_code=303)

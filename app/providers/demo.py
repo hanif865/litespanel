@@ -1064,6 +1064,70 @@ class DemoProvider(Provider):
         past = {"start": "started", "stop": "stopped", "restart": "restarted"}[action]
         return True, f"(demo) {past} {label}."
 
+    # --- Panel self-update -------------------------------------------------
+    # No real git/systemd on the dev box. A small JSON file simulates the
+    # installed version and whether a newer one is "available", so the WHM
+    # Update page renders and its buttons work end-to-end in demo mode.
+    def _panel_update_file(self) -> Path:
+        return config.FIREWALL_DIR / "panel_update.json"
+
+    def _panel_update_load(self) -> dict:
+        import json
+
+        try:
+            state = json.loads(self._panel_update_file().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            state = {}
+        return state if isinstance(state, dict) else {}
+
+    def _panel_update_save(self, state: dict) -> None:
+        import json
+
+        config.FIREWALL_DIR.mkdir(parents=True, exist_ok=True)
+        self._panel_update_file().write_text(json.dumps(state, indent=2), encoding="utf-8")
+
+    def panel_version(self) -> dict:
+        state = self._panel_update_load()
+        commit = state.get("commit", "demo0000000000000000000000000000000000000")
+        return {"commit": commit, "short": commit[:7], "branch": "main",
+                "dirty": False, "describe": "demo"}
+
+    def check_panel_update(self) -> dict:
+        state = self._panel_update_load()
+        cur = self.panel_version()
+        # Demo starts with an update available so the flow is exercisable;
+        # running update_panel() clears it.
+        available = state.get("available", True)
+        latest = state.get("latest", "abcdef1234567890abcdef1234567890abcdef12")
+        return {
+            "available": available,
+            "current": cur["short"],
+            "latest": latest[:7] if available else cur["short"],
+            "behind": 3 if available else 0,
+            "message": ("A newer version is available (demo)." if available
+                        else "The panel is up to date (demo)."),
+        }
+
+    def update_panel(self) -> tuple[bool, str]:
+        # Simulate a successful update: adopt the "latest" hash and clear the
+        # available flag. Nothing restarts in demo.
+        state = self._panel_update_load()
+        latest = state.get("latest", "abcdef1234567890abcdef1234567890abcdef12")
+        self._panel_update_save({"commit": latest, "available": False, "latest": latest})
+        try:
+            Path(config.PANEL_UPDATE_LOG).write_text(
+                "(demo) pulled latest, ran migrations, restarted panel.\n", encoding="utf-8")
+        except OSError:
+            pass
+        return True, "(demo) Update applied — the panel is now up to date."
+
+    def panel_update_log(self, lines: int = 200) -> str:
+        try:
+            content = Path(config.PANEL_UPDATE_LOG).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return ""
+        return "\n".join(content.splitlines()[-lines:])
+
     # --- Logs -------------------------------------------------------------
     # The demo has no real /var/log, so it writes small, realistic sample logs
     # under LOG_DIR the first time each is requested. The viewer still only

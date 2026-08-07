@@ -1583,6 +1583,166 @@ class LinuxProvider(Provider):
         past = {"start": "Started", "stop": "Stopped", "restart": "Restarted"}[action]
         return True, f"{past} {label}."
 
+    # --- Panel self-update ------------------------------------------------
+    # Admin-only: check for updates and upgrade the panel itself via git pull +
+    # migrations + restart. The work runs fully detached (systemd-run --scope)
+    # so restarting the litespanel.service doesn't kill the update mid-flight.
+    def panel_version(self) -> dict:
+        import os
+
+        panel_dir = Path(config.PANEL_INSTALL_DIR)
+        # If the install dir isn't a git checkout (install.sh copies files),
+        # we can't determine a version. Return a best-effort dict.
+        if not (panel_dir / ".git").is_dir():
+            return {"commit": None, "short": "unknown", "branch": None,
+                    "dirty": False, "describe": "not a git repository"}
+        try:
+            # Current commit hash (HEAD)
+            proc = subprocess.run(["git", "rev-parse", "HEAD"],
+                                  cwd=str(panel_dir), capture_output=True, text=True)
+            commit = proc.stdout.strip() if proc.returncode == 0 else None
+            short = commit[:7] if commit else "unknown"
+            # Current branch
+            proc = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                                  cwd=str(panel_dir), capture_output=True, text=True)
+            branch = proc.stdout.strip() if proc.returncode == 0 else None
+            # Uncommitted changes?
+            proc = subprocess.run(["git", "status", "--porcelain"],
+                                  cwd=str(panel_dir), capture_output=True, text=True)
+            dirty = bool(proc.stdout.strip()) if proc.returncode == 0 else False
+            # git describe (human label)
+            proc = subprocess.run(["git", "describe", "--always", "--tags"],
+                                  cwd=str(panel_dir), capture_output=True, text=True)
+            describe = proc.stdout.strip() if proc.returncode == 0 else short
+        except (FileNotFoundError, OSError):
+            return {"commit": None, "short": "unknown", "branch": None,
+                    "dirty": False, "describe": "git not available"}
+        return {"commit": commit, "short": short, "branch": branch,
+                "dirty": dirty, "describe": describe}
+
+    def check_panel_update(self) -> dict:
+        panel_dir = Path(config.PANEL_INSTALL_DIR)
+        cur = self.panel_version()
+        if cur["commit"] is None:
+            return {"available": False, "current": cur["short"], "latest": cur["short"],
+                    "behind": 0, "message": "The panel is not a git repository."}
+        # Fetch the remote (read-only, doesn't change the working tree)
+        try:
+            subprocess.run(["git", "fetch", "origin", config.PANEL_REPO_BRANCH],
+                           cwd=str(panel_dir), capture_output=True, text=True,
+                           timeout=30, check=True)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
+            return {"available": False, "current": cur["short"], "latest": cur["short"],
+                    "behind": 0, "message": f"Could not fetch remote: {exc}"}
+        # Compare HEAD with origin/<branch>
+        try:
+            proc = subprocess.run(
+                ["git", "rev-list", "--count", f"HEAD..origin/{config.PANEL_REPO_BRANCH}"],
+                cwd=str(panel_dir), capture_output=True, text=True, timeout=10)
+            behind = int(proc.stdout.strip()) if proc.returncode == 0 else 0
+            proc = subprocess.run(["git", "rev-parse", f"origin/{config.PANEL_REPO_BRANCH}"],
+                                  cwd=str(panel_dir), capture_output=True, text=True)
+            latest_hash = proc.stdout.strip() if proc.returncode == 0 else cur["commit"]
+            latest_short = latest_hash[:7] if latest_hash else cur["short"]
+        except (ValueError, subprocess.TimeoutExpired, OSError):
+            return {"available": False, "current": cur["short"], "latest": cur["short"],
+                    "behind": 0, "message": "Could not compare versions."}
+        if behind > 0:
+            return {"available": True, "current": cur["short"], "latest": latest_short,
+                    "behind": behind, "message": f"{behind} newer commit(s) available."}
+        return {"available": False, "current": cur["short"], "latest": cur["short"],
+                "behind": 0, "message": "The panel is up to date."}
+
+    def update_panel(self) -> tuple[bool, str]:
+        """Launch a detached background update (sync to latest + migrate + restart).
+
+        The update runs via `systemd-run` as a transient unit — OUTSIDE the
+        panel's own cgroup — so `systemctl restart litespanel` at the end can't
+        kill the update mid-flight. The script is written under DATA_DIR (not the
+        panel dir) so `git reset --hard` can't rewrite the file bash is running.
+
+        Idempotent and data-safe: the working tree is synced to origin (via
+        `git init` + `reset --hard` when the install isn't yet a checkout), while
+        the DB and all hosted data live under a separate DATA_DIR that git never
+        touches — the same guarantee as re-running install.sh.
+        """
+        cur = self.panel_version()
+        panel_dir = config.PANEL_INSTALL_DIR
+        branch = config.PANEL_REPO_BRANCH
+        repo = config.PANEL_REPO_URL
+        log = config.PANEL_UPDATE_LOG
+        service = config.PANEL_SERVICE_NAME
+        venv_py = f"{panel_dir}/.venv/bin/python"
+        venv_pip = f"{panel_dir}/.venv/bin/pip"
+        venv_alembic = f"{panel_dir}/.venv/bin/alembic"
+        # Script lives outside panel_dir so a `git reset --hard` can't rewrite
+        # the file bash is mid-way through executing.
+        script = Path(config.DATA_DIR) / "update-panel.sh"
+        script.write_text(f"""#!/usr/bin/env bash
+# LitesPanel self-updater — launched detached by the WHM Update page.
+set -uo pipefail
+LOG="{log}"
+say() {{ echo "$(date '+%Y-%m-%d %H:%M:%S'): $*" >> "$LOG"; }}
+fail() {{ say "FAILED: $*"; exit 1; }}
+
+say "=== panel update started ==="
+command -v git >/dev/null 2>&1 || {{ apt-get update -qq && apt-get install -y -qq git; }} >> "$LOG" 2>&1
+cd "{panel_dir}" || fail "cannot cd into {panel_dir}"
+
+# Ensure the install dir is a git checkout tracking origin/{branch}. install.sh
+# copies files (no .git), so on the first update we initialise in place. This
+# only rewrites tracked files; .venv and DATA_DIR are untouched.
+if [ ! -d .git ]; then
+    say "not a git checkout yet — initialising from {repo}"
+    git init -q >> "$LOG" 2>&1 || fail "git init failed"
+    git remote add origin "{repo}" 2>/dev/null || git remote set-url origin "{repo}"
+fi
+git fetch origin "{branch}" >> "$LOG" 2>&1 || fail "git fetch failed"
+git reset --hard "origin/{branch}" >> "$LOG" 2>&1 || fail "git reset failed"
+git branch --set-upstream-to="origin/{branch}" 2>/dev/null || true
+
+# Dependencies may have changed between versions.
+"{venv_pip}" install -q -r requirements.txt >> "$LOG" 2>&1 || say "pip install had warnings (continuing)"
+
+# Apply migrations. init_db() runs `alembic upgrade head`; a fresh DB gets every
+# table, an existing one only new migrations — no data loss.
+if [ -x "{venv_alembic}" ]; then
+    "{venv_alembic}" upgrade head >> "$LOG" 2>&1 || fail "database migration failed"
+else
+    "{venv_py}" -c "from app.db import init_db; init_db()" >> "$LOG" 2>&1 || fail "database migration failed"
+fi
+
+NEW=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
+say "restarting {service} (now at $NEW)"
+systemctl restart "{service}" >> "$LOG" 2>&1 || fail "service restart failed"
+say "=== panel update finished successfully (now at $NEW) ==="
+""", encoding="utf-8")
+        script.chmod(0o755)
+        # systemd-run puts the script in its own transient unit/cgroup, so the
+        # final `systemctl restart litespanel` won't take the updater down with
+        # it. start_new_session detaches from the request's process group too.
+        try:
+            proc = subprocess.run(
+                ["systemd-run", "--collect", "--unit", "litespanel-update",
+                 "--description", "LitesPanel self-update",
+                 "bash", str(script)],
+                capture_output=True, text=True, start_new_session=True, timeout=15,
+            )
+        except (FileNotFoundError, OSError, subprocess.TimeoutExpired) as exc:
+            return False, f"Could not launch the updater: {exc}"
+        if proc.returncode != 0:
+            return False, "Could not launch the updater: " + (proc.stderr or proc.stdout).strip()[-300:]
+        return True, (f"Update started in the background (currently {cur['short']}). "
+                      "The panel will restart in a moment — refresh this page shortly.")
+
+    def panel_update_log(self, lines: int = 200) -> str:
+        """Return the tail of the self-update log (empty string if none yet)."""
+        try:
+            content = Path(config.PANEL_UPDATE_LOG).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return ""
+        return "\n".join(content.splitlines()[-lines:])
+
     # --- Logs -------------------------------------------------------------
     # Fixed allowlist of readable logs. The viewer passes back a `key` from this
     # map — never a path — so it can only ever read these specific files.

@@ -175,6 +175,25 @@ webmail বসে যায়, webmail থাকে `/webmail`-এ।
 
 ---
 
+## ধাপ ৪.৫ — বাড়তি সফটওয়্যার (ঐচ্ছিক)
+
+`install.sh` কোর স্ট্যাক (nginx/MySQL/PHP/mail) বসায়। বাকি টুলগুলো **WHM → Server
+Software** পেজ থেকে admin এক ক্লিকে বসাতে পারে — SSH লাগে না:
+
+- **PostgreSQL** — MySQL-এর পাশাপাশি Postgres ডাটাবেস (User Panel → PostgreSQL)
+- **Node.js** — Git URL/tarball থেকে অ্যাপ ডিপ্লয়, env vars, custom start command, লাইভ লগ
+- **অতিরিক্ত PHP ভার্সন** — per-domain PHP selector-এ দেখাবে
+
+install হয়ে গেলে যেসব ফিচার সরাসরি ব্যবহারযোগ্য:
+
+- **WordPress** (User Panel → WordPress) — ডোমেইন বা **সাবডোমেইনে** এক ক্লিকে ইনস্টল,
+  auto-login সহ। সাবডোমেইন ইনস্টল HTTP-তে চলে; ডোমেইনে সার্টিফিকেট থাকলে HTTPS।
+- **FTP Accounts** — per-domain FTP ইউজার (নিজের docroot-এ jailed)
+- **WHM → Service Manager** — nginx/PHP/MySQL/Postgres/Postfix/Dovecot start/stop/restart
+- **WHM → ModSecurity** — OWASP WAF on/off; **IP Blocker** — IP ব্লক/আনব্লক, auto-ban রিভিউ
+
+---
+
 ## ধাপ ৫ — প্রথম লগইন
 
 1. ব্রাউজারে যাও: `https://panel.example.com` (বা `http://YOUR_SERVER_IP`)
@@ -205,6 +224,10 @@ sudo journalctl -u litespanel -f      # লাইভ লগ
 # nginx
 sudo nginx -t                         # কনফিগ টেস্ট
 sudo systemctl reload nginx
+
+# ডাটাবেস migration (git pull-এর পর নতুন migration চালাতে)
+cd /opt/litespanel
+.venv/bin/alembic upgrade head        # অথবা systemctl restart litespanel (startup-এ অটো চলে)
 
 # লগ
 sudo journalctl -u litespanel -n 100  # প্যানেল লগ
