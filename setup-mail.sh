@@ -33,7 +33,8 @@ step "Installing Postfix, Dovecot, Roundcube dependencies"
 debconf-set-selections <<< "postfix postfix/mailname string ${MYHOST}"
 debconf-set-selections <<< "postfix postfix/main_mailer_type string 'Internet Site'"
 apt-get update -qq
-apt-get install -y -qq postfix dovecot-core dovecot-imapd dovecot-lmtpd \
+apt-get install -y -qq postfix dovecot-core dovecot-imapd dovecot-pop3d dovecot-lmtpd \
+    ssl-cert \
     "php${PHP_VER}-imap" "php${PHP_VER}-mbstring" "php${PHP_VER}-xml" \
     "php${PHP_VER}-intl" "php${PHP_VER}-zip" "php${PHP_VER}-gd" "php${PHP_VER}-mysql" \
     wget tar >/dev/null
@@ -51,16 +52,44 @@ chmod 640 /etc/dovecot/users
 ok "/var/mail/vhosts ready"
 
 # --------------------------------------------------------------------------
-step "Configuring Dovecot (IMAP + LMTP, passwd-file auth)"
+step "Setting up the TLS certificate for mail clients"
+# External mail clients (Thunderbird, phone, Outlook) connect over TLS, so
+# Dovecot (993/995) and Postfix (465/587) both need a certificate + key. We use
+# Debian's ssl-cert "snakeoil" self-signed pair: it exists on every box (the
+# ssl-cert package regenerates it), and the `ssl-cert` group model lets the
+# postfix daemon read the private key without loosening its permissions.
+#
+# Caveat: one cert can't match every mail.<domain> a multi-tenant box serves, so
+# clients see a name-mismatch warning and accept once. A real per-domain cert
+# (Let's Encrypt) would remove it, but that's out of scope for this one-shot.
+SSL_CERT=/etc/ssl/certs/ssl-cert-snakeoil.pem
+SSL_KEY=/etc/ssl/private/ssl-cert-snakeoil.key
+[ -f "$SSL_CERT" ] || make-ssl-cert generate-default-snakeoil --force-overwrite >/dev/null 2>&1 || true
+# Postfix's smtpd runs as the postfix user; add it to ssl-cert so it can read the
+# key. (Dovecot reads the key as root at startup, so it needs no extra group.)
+adduser postfix ssl-cert >/dev/null 2>&1 || true
+ok "TLS cert ready (${SSL_CERT})"
+
+# --------------------------------------------------------------------------
+step "Configuring Dovecot (IMAP + POP3 + LMTP, TLS, passwd-file auth)"
 [ -f /etc/dovecot/dovecot.conf.orig ] || cp /etc/dovecot/dovecot.conf /etc/dovecot/dovecot.conf.orig 2>/dev/null || true
 cat > /etc/dovecot/dovecot.conf <<'EOF'
 # Managed by LitesPanel setup-mail.sh
-protocols = imap lmtp
-listen = 127.0.0.1
+protocols = imap pop3 lmtp
+# Listen on all interfaces so phones and desktop clients can connect over TLS.
+listen = *, ::
 log_path = /var/log/dovecot.log
 auth_mechanisms = plain login
-disable_plaintext_auth = no
-ssl = no
+# Only accept plaintext logins over an encrypted (TLS) or loopback connection.
+# Loopback counts as secured, so Roundcube on localhost still authenticates.
+disable_plaintext_auth = yes
+
+# TLS for the imaps/pop3s ports and STARTTLS on 143/110. Snakeoil self-signed —
+# clients get a one-time name-mismatch prompt (see the cert note above).
+ssl = yes
+ssl_cert = </etc/ssl/certs/ssl-cert-snakeoil.pem
+ssl_key = </etc/ssl/private/ssl-cert-snakeoil.key
+ssl_min_protocol = TLSv1.2
 
 mail_location = maildir:/var/mail/vhosts/%d/%n/Maildir
 mail_uid = vmail
@@ -80,6 +109,21 @@ userdb {
   args = uid=vmail gid=vmail home=/var/mail/vhosts/%d/%n
 }
 
+# IMAP: 143 (STARTTLS) + 993 (implicit SSL/TLS).
+service imap-login {
+  inet_listener imap  { port = 143 }
+  inet_listener imaps { port = 993
+    ssl = yes
+  }
+}
+# POP3: 110 (STARTTLS) + 995 (implicit SSL/TLS).
+service pop3-login {
+  inet_listener pop3  { port = 110 }
+  inet_listener pop3s { port = 995
+    ssl = yes
+  }
+}
+
 service lmtp {
   unix_listener /var/spool/postfix/private/dovecot-lmtp {
     mode = 0600
@@ -96,7 +140,7 @@ service auth {
 }
 EOF
 systemctl restart dovecot
-ok "Dovecot configured"
+ok "Dovecot configured (IMAP 143/993, POP3 110/995, TLS on)"
 
 # --------------------------------------------------------------------------
 step "Configuring Postfix (virtual mailbox delivery via Dovecot LMTP)"
@@ -108,6 +152,12 @@ postconf -e "virtual_mailbox_base = /var/mail/vhosts"
 postconf -e "smtpd_sasl_type = dovecot"
 postconf -e "smtpd_sasl_path = private/auth"
 postconf -e "smtpd_sasl_auth_enable = yes"
+# TLS: present the same snakeoil cert to clients so submission (587 STARTTLS)
+# and smtps (465 implicit TLS) can encrypt. `may` = opportunistic on port 25.
+postconf -e "smtpd_tls_cert_file = ${SSL_CERT}"
+postconf -e "smtpd_tls_key_file = ${SSL_KEY}"
+postconf -e "smtpd_tls_security_level = may"
+postconf -e "smtp_tls_security_level = may"
 # Enable the submission port (587) for authenticated sending from webmail/clients.
 if ! postconf -M submission/inet >/dev/null 2>&1; then
     postconf -M "submission/inet=submission inet n - y - - smtpd"
@@ -115,8 +165,17 @@ if ! postconf -M submission/inet >/dev/null 2>&1; then
     postconf -P "submission/inet/smtpd_sasl_auth_enable=yes"
     postconf -P "submission/inet/smtpd_client_restrictions=permit_sasl_authenticated,reject"
 fi
+# Enable smtps (465) — implicit-TLS submission that phone/desktop clients default
+# to. wrappermode wraps the whole connection in TLS from the first byte.
+if ! postconf -M smtps/inet >/dev/null 2>&1; then
+    postconf -M "smtps/inet=smtps inet n - y - - smtpd"
+    postconf -P "smtps/inet/syslog_name=postfix/smtps"
+    postconf -P "smtps/inet/smtpd_tls_wrappermode=yes"
+    postconf -P "smtps/inet/smtpd_sasl_auth_enable=yes"
+    postconf -P "smtps/inet/smtpd_client_restrictions=permit_sasl_authenticated,reject"
+fi
 systemctl restart postfix
-ok "Postfix configured"
+ok "Postfix configured (submission 587 + smtps 465, TLS on)"
 
 # --------------------------------------------------------------------------
 step "Installing OpenDKIM (signs outgoing mail)"
@@ -200,8 +259,8 @@ cat > "$RC_DIR/config/config.inc.php" <<EOF
 <?php
 \$config = [];
 \$config['db_dsnw'] = 'mysql://roundcube:${RC_DB_PASS}@localhost/roundcube';
-\$config['imap_host'] = 'localhost:143';
-\$config['smtp_host'] = 'localhost:587';
+\$config['imap_host'] = 'ssl://localhost:993';
+\$config['smtp_host'] = 'ssl://localhost:465';
 \$config['smtp_user'] = '%u';
 \$config['smtp_pass'] = '%p';
 \$config['support_url'] = '';
@@ -209,6 +268,9 @@ cat > "$RC_DIR/config/config.inc.php" <<EOF
 \$config['des_key'] = '${DES_KEY}';
 \$config['plugins'] = ['archive', 'zipdownload'];
 \$config['skin'] = 'elastic';
+# Snakeoil is self-signed, so Roundcube (connecting to localhost over TLS) must
+# not verify the peer certificate — the hostname won't match and it's local.
+\$config['imap_conn_options'] = ['ssl' => ['verify_peer' => false, 'verify_peer_name' => false]];
 \$config['smtp_conn_options'] = ['ssl' => ['verify_peer' => false, 'verify_peer_name' => false]];
 EOF
 chown -R www-data:www-data "$RC_DIR/config"
@@ -261,5 +323,9 @@ echo -e "\n${GREEN}${BOLD}  ✓ Mail stack installed.${RESET}"
 echo -e "  Webmail:  http(s)://<your-panel>/webmail"
 echo -e "  Create mailboxes in the panel (Email Accounts), then log into webmail"
 echo -e "  with the full address + password.\n"
+echo -e "  ${BOLD}Mail clients${RESET} (Thunderbird / phone / Outlook) — full address + password:"
+echo -e "    IMAP  ${BOLD}993${RESET} SSL/TLS   ·   POP3  ${BOLD}995${RESET} SSL/TLS   ·   SMTP  ${BOLD}465${RESET} SSL/TLS"
+echo -e "    server ${BOLD}mail.<domain>${RESET} (self-signed cert → accept the one-time warning)"
+echo -e "    See each account's ${BOLD}Connect Devices${RESET} page in the panel for exact settings.\n"
 echo -e "  ${YELLOW}For internet delivery: point the domain's MX at this server, add SPF/DKIM,${RESET}"
 echo -e "  ${YELLOW}and confirm your host doesn't block port 25.${RESET}\n"

@@ -287,10 +287,14 @@ ufw allow OpenSSH >/dev/null 2>&1 || true
 ufw allow 'Nginx Full' >/dev/null 2>&1 || true
 # Mail ports so this box can send and receive as a small self-hosted SMTP:
 #   25  — receive mail from other servers    587 — authenticated submission (webmail/clients)
+#   465 — SMTP SSL/TLS (wrappermode)         993 — IMAP SSL/TLS    995 — POP3 SSL/TLS
 ufw allow 25/tcp  >/dev/null 2>&1 || true
 ufw allow 587/tcp >/dev/null 2>&1 || true
+ufw allow 465/tcp >/dev/null 2>&1 || true
+ufw allow 993/tcp >/dev/null 2>&1 || true
+ufw allow 995/tcp >/dev/null 2>&1 || true
 # --force skips the interactive "proceed?" prompt; SSH is already allowed above.
-ufw --force enable >/dev/null 2>&1 && ok "ufw enabled (OpenSSH, Nginx Full, SMTP 25, submission 587)" \
+ufw --force enable >/dev/null 2>&1 && ok "ufw enabled (OpenSSH, Nginx Full, mail: 25/587/465/993/995)" \
     || warn "Could not enable ufw automatically — run 'ufw --force enable' manually"
 
 step "Configuring fail2ban (sshd jail)"

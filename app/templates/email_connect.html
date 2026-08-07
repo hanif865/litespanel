@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Connect Devices — {{ address }}{% endblock %}
+{% block content %}
+<div class="breadcrumb">
+  <a href="/">🏠 Home</a> / <a href="/email">Email</a> / Mail Client Manual Settings
+</div>
+
+<h1>Mail Client Manual Settings</h1>
+<p class="muted">Configure your phone, tablet, or desktop email client (Thunderbird, Apple Mail, Outlook, etc.)
+  to send and receive mail for <strong>{{ address }}</strong>.</p>
+
+<div class="card">
+  <h2 style="margin:0 0 .6rem; font-size:1.05rem">🔒 Secure SSL/TLS Settings (Recommended)</h2>
+  <p class="muted" style="margin-bottom:1rem">Use these settings for maximum security. Your mail client connects
+    with full encryption from the start.</p>
+
+  <table class="table">
+    <thead><tr><th>Setting</th><th>Value</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Username</strong></td><td><code>{{ address }}</code></td></tr>
+      <tr><td><strong>Password</strong></td><td>Your mailbox password</td></tr>
+      {% for label, host, port, sec in ssl %}
+      <tr>
+        <td><strong>{{ label }}</strong></td>
+        <td><code>{{ host }}</code> — Port <strong>{{ port }}</strong> ({{ sec }})</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h2 style="margin:0 0 .6rem; font-size:1.05rem">🔓 STARTTLS Settings (Alternative)</h2>
+  <p class="muted" style="margin-bottom:1rem">Use these if your client doesn't support direct SSL/TLS connections.
+    The connection starts unencrypted and upgrades to TLS.</p>
+
+  <table class="table">
+    <thead><tr><th>Setting</th><th>Value</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Username</strong></td><td><code>{{ address }}</code></td></tr>
+      <tr><td><strong>Password</strong></td><td>Your mailbox password</td></tr>
+      {% for label, host, port, sec in starttls %}
+      <tr>
+        <td><strong>{{ label }}</strong></td>
+        <td><code>{{ host }}</code> — Port <strong>{{ port }}</strong> ({{ sec }})</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div style="background:#f6f8fa; border-left:3px solid var(--orange); padding:.8rem 1rem; border-radius:8px; margin-top:1.5rem">
+  <strong>📌 Notes</strong>
+  <ul style="margin:.4rem 0 0; padding-left:1.3rem">
+    <li>Use the <strong>full email address</strong> ({{ address }}) as the username, not just the local part.</li>
+    <li>For SSL/TLS ports (993/995/465), choose <strong>"SSL/TLS"</strong> in your client's security dropdown, not STARTTLS.</li>
+    <li>For STARTTLS ports (143/110/587), choose <strong>"STARTTLS"</strong> and ensure encryption is enabled.</li>
+    <li>The mail server hostname is <code>{{ mail_host }}</code> — make sure its DNS A record points to this server's IP.</li>
+  </ul>
+</div>
+
+<div style="margin-top:1.5rem">
+  <a href="/email?domain_id={{ account.domain_id }}" class="btn">← Back to Email Accounts</a>
+</div>
+{% endblock %}

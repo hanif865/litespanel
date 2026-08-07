@@ -428,6 +428,16 @@ class Provider(ABC):
         """Change an existing mailbox's storage quota, preserving its password."""
 
     @abstractmethod
+    def mailbox_usage(self, address: str) -> int:
+        """Return a mailbox's current disk usage in bytes (0 if empty/absent).
+
+        Measures the real Maildir on the host so the Email Accounts page can
+        show a Used/Allocated storage meter like cPanel. Best-effort — a
+        missing mailbox or a host without the mail stack returns 0 rather than
+        raising, so the list still renders.
+        """
+
+    @abstractmethod
     def sync_forwarders(self, domain: str, pairs: list[tuple[str, str]]) -> None:
         """Rewrite the domain's forwarders from (source_local, destination) pairs."""
 

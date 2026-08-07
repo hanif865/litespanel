@@ -548,6 +548,22 @@ class DemoProvider(Provider):
                 out.append(line)
         passwd.write_text("\n".join(out) + "\n", encoding="utf-8")
 
+    def mailbox_usage(self, address: str) -> int:
+        # Sum the sizes of everything under the mailbox dir so the demo shows a
+        # believable storage meter. Missing mailbox → 0.
+        local, _, domain = address.partition("@")
+        box = config.MAIL_DIR / domain / local
+        if not box.exists():
+            return 0
+        total = 0
+        for path in box.rglob("*"):
+            try:
+                if path.is_file():
+                    total += path.stat().st_size
+            except OSError:
+                continue
+        return total
+
     def sync_forwarders(self, domain: str, pairs: list[tuple[str, str]]) -> None:
         # Postfix-style virtual alias lines: "source@domain  destination".
         maildir = config.MAIL_DIR / domain

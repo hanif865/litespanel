@@ -2,12 +2,31 @@
 {% block title %}Email Accounts{% endblock %}
 {% block content %}
 <div class="breadcrumb"><a href="/">🏠 Home</a> / Email / Email Accounts</div>
-<h1>Email Accounts</h1>
-{% if WEBMAIL_URL %}<p><a href="{{ WEBMAIL_URL }}" target="_blank" rel="noopener" class="btn btn-sm">📬 Open Webmail (Roundcube)</a> — log in with a full email address below.</p>{% endif %}
+
+<div class="whm-page-head">
+  <h1>Email Accounts</h1>
+  <p class="muted">Create and manage the email addresses on your domains. Log in from
+    Webmail, or connect a phone / desktop client with the Connect Devices settings.</p>
+</div>
 
 {% if not domains %}
 <div class="empty">Add a domain first to create email accounts.</div>
 {% else %}
+
+{# ---- Summary counter (cPanel's "X Available, Y Used") --------------------- #}
+<div class="whm-cards" style="margin-bottom:1rem">
+  <div class="whm-card">
+    <span class="whm-card-ico ok">{{ icon("email", 20) }}</span>
+    <div><div class="whm-card-num">{{ used_count }}</div><div class="whm-card-lbl">Used</div></div>
+  </div>
+  <div class="whm-card">
+    <span class="whm-card-ico">{{ icon("success", 20) }}</span>
+    <div>
+      <div class="whm-card-num">{% if available >= 999 %}∞{% else %}{{ available }}{% endif %}</div>
+      <div class="whm-card-lbl">Available</div>
+    </div>
+  </div>
+</div>
 
 <form method="get" action="/email" class="row-form" style="margin-bottom:1rem">
   <select name="domain_id" onchange="this.form.submit()">
@@ -16,8 +35,10 @@
     {% endfor %}
   </select>
   <span class="muted">Accounts on <strong>{{ selected.name }}</strong></span>
+  {% if WEBMAIL_URL %}<a href="{{ WEBMAIL_URL }}" target="_blank" rel="noopener" class="btn btn-sm" style="margin-left:auto">📬 Open Webmail</a>{% endif %}
 </form>
 
+{# ---- Create form ---------------------------------------------------------- #}
 <div class="card">
   <form method="post" action="/email/create" class="row-form">
     <input type="hidden" name="domain_id" value="{{ selected.id }}">
@@ -32,21 +53,50 @@
 </div>
 
 {% if accounts %}
-<table class="table">
-  <thead><tr><th>Email Address</th><th>Quota</th><th>Created</th><th></th></tr></thead>
+{# ---- Search + filter tabs ------------------------------------------------- #}
+<div class="row-form" style="margin:1rem 0 .6rem; gap:.6rem; flex-wrap:wrap">
+  <input type="text" id="mail-search" class="php-search" placeholder="🔍 Search email accounts…"
+         oninput="filterMail()" style="max-width:320px">
+  <span class="count-badge" id="mail-count">{{ accounts|length }} account{{ '' if accounts|length == 1 else 's' }}</span>
+</div>
+<div class="mail-tabs" id="mail-tabs">
+  <button type="button" class="mail-tab is-active" data-filter="all" onclick="setMailTab(this)">All</button>
+  <button type="button" class="mail-tab" data-filter="restricted" onclick="setMailTab(this)">Restricted</button>
+  <button type="button" class="mail-tab" data-filter="exceeded" onclick="setMailTab(this)">Exceeded Storage</button>
+</div>
+
+<table class="table" id="mail-table">
+  <thead><tr>
+    <th>Account @ Domain</th><th>Restrictions</th><th style="min-width:200px">Storage: Used / Allocated</th><th></th>
+  </tr></thead>
   <tbody>
-  {% for a in accounts %}
-    <tr>
-      <td><strong>{{ a.local_part }}@{{ selected.name }}</strong></td>
-      <td class="muted">{{ a.quota_mb }} MB</td>
-      <td class="muted">{{ a.created_at.strftime('%Y-%m-%d') }}</td>
+  {% for r in accounts %}
+    {% set a = r.account %}
+    <tr class="mail-row" data-name="{{ a.local_part }}@{{ selected.name }}"
+        data-exceeded="{{ '1' if r.over else '0' }}" data-restricted="0">
+      <td>
+        <strong>{{ a.local_part }}@{{ selected.name }}</strong><br>
+        <span class="muted" style="font-size:.78rem">Created {{ a.created_at.strftime('%Y-%m-%d') }}</span>
+      </td>
+      <td><span class="pill pill-ok">Unrestricted</span></td>
+      <td>
+        <div style="display:flex; justify-content:space-between; font-size:.78rem; margin-bottom:.25rem">
+          <span class="muted">{{ r.used_bytes | filesizeformat }} / {{ r.quota_mb }} MB</span>
+          <span class="muted {{ 'over' if r.over }}" style="{{ 'color:#e5484d;font-weight:600' if r.over }}">{{ r.pct }}%</span>
+        </div>
+        <div class="meter"><div class="meter-fill {{ 'hot' if r.pct >= 80 }}" style="width:{{ r.pct }}%"></div></div>
+      </td>
       <td class="actions">
-        <details>
+        {% if WEBMAIL_URL %}
+        <a href="{{ WEBMAIL_URL }}" target="_blank" rel="noopener" class="btn btn-sm">Check Email</a>
+        {% endif %}
+        <a href="/email/{{ a.id }}/connect" class="btn btn-sm">Connect Devices</a>
+        <details style="display:inline-block">
           <summary class="btn btn-sm">Manage ▾</summary>
           <div style="margin-top:.4rem; display:flex; flex-direction:column; gap:.4rem; align-items:flex-start">
             <form method="post" action="/email/{{ a.id }}/quota" class="row-form">
               <label class="chk" style="margin:0">Quota
-                <input type="number" name="quota_mb" value="{{ a.quota_mb }}" min="1" style="max-width:90px"> MB
+                <input type="number" name="quota_mb" value="{{ r.quota_mb }}" min="1" style="max-width:90px"> MB
               </label>
               <button type="submit" class="btn btn-sm">Save</button>
             </form>
@@ -54,16 +104,44 @@
               <input type="password" name="password" placeholder="new password (min 6)" required style="max-width:190px">
               <button type="submit" class="btn btn-sm">Change Password</button>
             </form>
+            <form method="post" action="/email/{{ a.id }}/delete" onsubmit="return confirm('Delete {{ a.local_part }}@{{ selected.name }}?')">
+              <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+            </form>
           </div>
         </details>
-        <form method="post" action="/email/{{ a.id }}/delete" onsubmit="return confirm('Delete {{ a.local_part }}@{{ selected.name }}?')">
-          <button type="submit" class="btn btn-sm btn-danger">Delete</button>
-        </form>
       </td>
     </tr>
   {% endfor %}
   </tbody>
 </table>
+<div class="muted" id="mail-empty" style="display:none; padding:1rem 0">No accounts match.</div>
+
+<script>
+// Client-side search + filter tabs over the mailbox rows (cPanel-style).
+var mailFilter = "all";
+function setMailTab(btn) {
+  document.querySelectorAll(".mail-tab").forEach(function (t) { t.classList.remove("is-active"); });
+  btn.classList.add("is-active");
+  mailFilter = btn.getAttribute("data-filter");
+  filterMail();
+}
+function filterMail() {
+  var q = (document.getElementById("mail-search").value || "").trim().toLowerCase();
+  var shown = 0;
+  document.querySelectorAll("#mail-table .mail-row").forEach(function (row) {
+    var name = row.getAttribute("data-name").toLowerCase();
+    var okName = !q || name.indexOf(q) !== -1;
+    var okTab = mailFilter === "all"
+      || (mailFilter === "exceeded" && row.getAttribute("data-exceeded") === "1")
+      || (mailFilter === "restricted" && row.getAttribute("data-restricted") === "1");
+    var show = okName && okTab;
+    row.style.display = show ? "" : "none";
+    if (show) shown++;
+  });
+  document.getElementById("mail-count").textContent = shown + (shown === 1 ? " account" : " accounts");
+  document.getElementById("mail-empty").style.display = shown ? "none" : "";
+}
+</script>
 {% else %}
 <div class="empty">No email accounts yet on {{ selected.name }}.</div>
 {% endif %}

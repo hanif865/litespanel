@@ -847,6 +847,23 @@ class LinuxProvider(Provider):
                 out.append(line)
         users.write_text("\n".join(out) + "\n")
 
+    def mailbox_usage(self, address: str) -> int:
+        # Sum the mailbox's Maildir on disk. `du -sb` reports apparent bytes;
+        # a missing mailbox (or no mail stack) just yields 0 so the list still
+        # renders. Cheap enough per-account for the small scale this targets.
+        local, _, domain = address.partition("@")
+        path = f"/var/mail/vhosts/{domain}/{local}"
+        try:
+            out = subprocess.run(["du", "-sb", path], capture_output=True, text=True)
+        except OSError:
+            return 0
+        if out.returncode != 0:
+            return 0
+        try:
+            return int(out.stdout.split("\t", 1)[0].split()[0])
+        except (ValueError, IndexError):
+            return 0
+
     def _register_mail_domain(self, domain: str) -> None:
         """Add the domain to Postfix's virtual-mailbox domain list and reload."""
         vdomains = Path("/etc/postfix/vhost_domains")

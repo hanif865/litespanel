@@ -5,7 +5,7 @@ import re
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..db import get_db
@@ -31,12 +31,22 @@ def list_email(
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
+    from ..config import SERVER_IP
     domains = db.scalars(
         select(Domain).where(Domain.owner_id == user.id).order_by(Domain.name)
     ).all()
     flash = request.session.pop("flash", None)
+
+    # Used/Available counter (matches cPanel's "74 Available, 26 Used" display).
+    owned_domain_ids = [d.id for d in domains]
+    used_count = db.scalar(
+        select(func.count()).select_from(EmailAccount).where(EmailAccount.domain_id.in_(owned_domain_ids))
+    ) or 0
+    available = max(0, user.eff_email - used_count) if not user.unlimited and user.eff_email > 0 else 999
+
     ctx = {"user": user, "domains": domains, "active": "email", "flash": flash,
-           "selected": None, "accounts": []}
+           "selected": None, "accounts": [], "used_count": used_count, "available": available,
+           "mail_host": f"mail.{domains[0].name}" if domains else f"mail.{SERVER_IP}"}
 
     if domains:
         selected = db.get(Domain, domain_id) if domain_id else domains[0]
@@ -45,7 +55,23 @@ def list_email(
         accounts = db.scalars(
             select(EmailAccount).where(EmailAccount.domain_id == selected.id).order_by(EmailAccount.local_part)
         ).all()
-        ctx.update({"selected": selected, "accounts": accounts})
+
+        # Enrich each account with disk usage (for the storage meter). Best-effort:
+        # a missing mailbox or no mail stack → 0 bytes, meter shows empty.
+        provider = get_provider()
+        rows = []
+        for acc in accounts:
+            used_bytes = provider.mailbox_usage(acc.address)
+            quota_bytes = acc.quota_mb * 1024 * 1024
+            pct = int(100 * used_bytes / quota_bytes) if quota_bytes > 0 else 0
+            rows.append({
+                "account": acc,
+                "used_bytes": used_bytes,
+                "quota_mb": acc.quota_mb,
+                "pct": min(pct, 100),
+                "over": used_bytes > quota_bytes,
+            })
+        ctx.update({"selected": selected, "accounts": rows, "mail_host": f"mail.{selected.name}"})
 
     return templates.TemplateResponse(request, "email.html", ctx)
 
@@ -114,6 +140,46 @@ def delete_email(
     db.commit()
     _flash(request, f"🗑️ Mailbox {address} deleted.")
     return RedirectResponse(f"/email?domain_id={domain_id}", status_code=303)
+
+
+@router.get("/{account_id}/connect")
+def connect_devices(
+    request: Request,
+    account_id: int,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """Mail-client manual settings for one mailbox (cPanel's Connect Devices).
+
+    Shows the IMAP/POP3/SMTP host + ports a phone or Thunderbird uses. The
+    values match what setup-mail.sh actually serves: SSL/TLS on 993/995/465
+    and STARTTLS on 143/110/587, all authenticating with the full address.
+    """
+    account = db.get(EmailAccount, account_id)
+    if account is None or account.domain.owner_id != user.id:
+        _flash(request, "❌ Mailbox not found.")
+        return RedirectResponse("/email", status_code=303)
+    domain = account.domain.name
+    ctx = {
+        "user": user,
+        "active": "email",
+        "account": account,
+        "address": account.address,
+        "domain": domain,
+        # cPanel advertises mail.<domain>; our MX/A seed points it at this host.
+        "mail_host": f"mail.{domain}",
+        "ssl": [
+            ("Incoming — IMAP", f"mail.{domain}", 993, "SSL/TLS"),
+            ("Incoming — POP3", f"mail.{domain}", 995, "SSL/TLS"),
+            ("Outgoing — SMTP", f"mail.{domain}", 465, "SSL/TLS"),
+        ],
+        "starttls": [
+            ("Incoming — IMAP", f"mail.{domain}", 143, "STARTTLS"),
+            ("Incoming — POP3", f"mail.{domain}", 110, "STARTTLS"),
+            ("Outgoing — SMTP", f"mail.{domain}", 587, "STARTTLS"),
+        ],
+    }
+    return templates.TemplateResponse(request, "email_connect.html", ctx)
 
 
 # Friendly message when the mail stack isn't installed on the host yet.

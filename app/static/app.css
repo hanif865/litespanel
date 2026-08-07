@@ -227,6 +227,12 @@ label input { display: block; width: 100%; margin-top: .3rem; font-weight: 400; 
 .php-search:focus { outline: none; border-color: var(--orange); box-shadow: 0 0 0 3px var(--orange-soft); }
 .count-badge { font-size: .72rem; font-weight: 700; padding: .25rem .6rem; border-radius: 99px; background: var(--orange-soft); color: var(--orange-dark); white-space: nowrap; }
 
+/* ---------- Email Accounts (filter tabs + storage rows) ---------- */
+.mail-tabs { display: flex; gap: .35rem; flex-wrap: wrap; margin-bottom: .6rem; }
+.mail-tab { font-size: .78rem; padding: .35rem .75rem; border-radius: 99px; border: 1px solid var(--border); background: #fff; color: var(--muted); font-weight: 600; cursor: pointer; }
+.mail-tab:hover { border-color: #cdd4df; }
+.mail-tab.is-active { background: var(--orange-soft); color: var(--orange-dark); border-color: transparent; font-weight: 700; }
+
 .ext-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: .6rem; }
 .ext-group { margin-bottom: 1.1rem; }
 .ext-letter { font-size: .8rem; font-weight: 800; color: var(--orange); text-transform: uppercase; letter-spacing: .05em; margin: 0 0 .5rem; padding-bottom: .3rem; border-bottom: 1px solid var(--border); }
