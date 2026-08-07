@@ -11,12 +11,57 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
+import math
 import os
 import re
 import subprocess
 
+from .. import config
+
 if TYPE_CHECKING:
     from ..models import NodeApp
+
+
+# --- Upload cap derivation --------------------------------------------------
+# nginx's client_max_body_size must never be smaller than what PHP itself will
+# accept, or a body PHP would have taken gets rejected upstream with a raw 413
+# before PHP can answer. The PHP Selector owns post_max_size / upload_max_filesize;
+# both providers derive the nginx cap from them via upload_cap_mb() so the two
+# layers stay in lock-step (Option A: the PHP page is the single control).
+def _php_size_to_mb(value: str | None) -> int | None:
+    """Parse a PHP size shorthand ('128M', '1G', '512K' or plain bytes) into
+    whole megabytes, rounded up. Returns None for blank/unparseable input so the
+    caller can fall back to a default."""
+    if value is None:
+        return None
+    s = str(value).strip()
+    if not s:
+        return None
+    unit = s[-1].lower()
+    try:
+        if unit in ("k", "m", "g"):
+            num = float(s[:-1])
+            factor = {"k": 1 / 1024, "m": 1.0, "g": 1024.0}[unit]
+            mb = num * factor
+        else:
+            mb = float(s) / (1024 * 1024)   # no suffix → PHP treats it as bytes
+    except ValueError:
+        return None
+    if mb <= 0:
+        return None
+    return max(1, math.ceil(mb))
+
+
+def upload_cap_mb(directives: dict[str, str] | None) -> int:
+    """The nginx client_max_body_size (in MB) that fully covers PHP's own upload
+    limits — the larger of post_max_size / upload_max_filesize. Falls back to
+    config.MAX_UPLOAD_MB when neither is set or parseable."""
+    best = 0
+    for key in ("post_max_size", "upload_max_filesize"):
+        mb = _php_size_to_mb((directives or {}).get(key))
+        if mb and mb > best:
+            best = mb
+    return best or config.MAX_UPLOAD_MB
 
 
 # Node app runtime helpers, shared by the demo + linux providers so the two

@@ -15,7 +15,7 @@ from pathlib import Path
 from .. import config
 from .base import (
     CertInfo, DbCredentials, Provider, dkim_generate, node_env_lines,
-    node_exec_start, txt_record_chunks,
+    node_exec_start, txt_record_chunks, upload_cap_mb,
 )
 
 _NGINX_TEMPLATE = """# Managed by {app} — do not edit by hand.
@@ -170,6 +170,14 @@ class DemoProvider(Provider):
             prefix = "" if extensions[name] else ";"
             lines.append(f"{prefix}extension={name}")
         target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        # Mirror the linux provider: derive nginx's body cap from the account's
+        # PHP upload limits and write the per-account include, so the demo shows
+        # the two layers staying in lock-step (Option A — PHP page is the control).
+        cap = upload_cap_mb(directives)
+        (config.NGINX_DIR / f"{system_user}.limits.conf").write_text(
+            f"client_max_body_size {cap}m;\n", encoding="utf-8"
+        )
 
     # --- PHP extension packages (simulated) -------------------------------
     def _installed_ext_file(self) -> Path:

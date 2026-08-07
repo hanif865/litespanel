@@ -19,7 +19,7 @@ from pathlib import Path
 from .. import config
 from .base import (
     CertInfo, DbCredentials, Provider, dkim_generate, node_env_lines,
-    node_exec_start, txt_record_chunks,
+    node_exec_start, txt_record_chunks, upload_cap_mb,
 )
 
 # On Debian/Ubuntu these are the conventional locations.
@@ -33,6 +33,12 @@ WEBDAV_DIR = Path("/etc/litespanel/webdav")
 # master, workers as www-data) opens these for writing, so the directory must
 # exist before a vhost referencing it is loaded.
 WEBLOG_DIR = Path("/var/log/litespanel")
+# Per-account upload cap. client_max_body_size lives in a tiny include, one file
+# per account, so the PHP Selector can change an account's upload limit and have
+# nginx follow in lock-step: rewrite this one file + reload, and every vhost that
+# includes it picks up the new cap — no vhost regeneration, no touching certbot's
+# own :443 edits. Kept out of sites-enabled so it's never loaded as a server block.
+NGINX_LIMITS = Path("/etc/nginx/litespanel-limits")
 
 # Database/user names must be plain identifiers — validated here as defense in
 # depth so a bad name can never be interpolated into SQL, even if a caller
@@ -113,6 +119,9 @@ class LinuxProvider(Provider):
         # A dedicated PHP-FPM pool makes this account's PHP run AS this user,
         # so its sites can't read another account's files.
         self._write_php_pool(username)
+        # Seed the per-account nginx upload cap so the include target exists
+        # before this account's first vhost references it.
+        self._ensure_limits(username)
         # Let nginx (www-data) traverse into the account to reach public_html.
         _run(["chmod", "751", str(home)])
         return home
@@ -190,11 +199,34 @@ class LinuxProvider(Provider):
         """Make sure /var/log/litespanel exists before nginx opens a log there."""
         WEBLOG_DIR.mkdir(parents=True, exist_ok=True)
 
+    # --- Per-account upload cap (nginx client_max_body_size) --------------
+    def _limits_conf(self, username: str) -> Path:
+        _ident(username, "account username")
+        return NGINX_LIMITS / f"{username}.conf"
+
+    def _write_limits(self, username: str, mb: int) -> None:
+        NGINX_LIMITS.mkdir(parents=True, exist_ok=True)
+        self._limits_conf(username).write_text(f"client_max_body_size {mb}m;\n")
+
+    def _ensure_limits(self, username: str) -> None:
+        """Guarantee the include target exists before any vhost references it, so
+        `nginx -t` can never fail on a missing include. Writes the panel default
+        only when absent — never clobbers a cap the PHP Selector already set."""
+        if not self._limits_conf(username).exists():
+            self._write_limits(username, config.MAX_UPLOAD_MB)
+
+    def set_upload_limit(self, username: str, mb: int) -> None:
+        """Point nginx's body cap for this account at `mb` MB and reload, so a
+        change made on the PHP Selector page takes effect across the account's
+        vhosts immediately (they all include this one file)."""
+        self._write_limits(username, mb)
+        self.reload_web()
+
     def _vhost(self, server_name: str, extra_names: str, docroot: Path, username: str) -> str:
         return (
             f"server {{\n    listen 80;\n    server_name {server_name}{extra_names};\n"
             f"    root {docroot};\n    index index.php index.html;\n"
-            f"    client_max_body_size {config.MAX_UPLOAD_MB}M;\n"
+            f"    include {self._limits_conf(username)};\n"
             f"    access_log /var/log/litespanel/{server_name}.access.log;\n"
             f"    error_log /var/log/litespanel/{server_name}.error.log;\n"
             f"    location /lpanel {{ return 301 {config.PANEL_URL}/login; }}\n"
@@ -206,6 +238,7 @@ class LinuxProvider(Provider):
     def create_site(self, domain: str, docroot: Path, php_version: str, system_user: str) -> Path:
         _ident(system_user, "account username")
         self._ensure_weblog_dir()
+        self._ensure_limits(system_user)
         docroot.mkdir(parents=True, exist_ok=True)
         # Hand ownership of the whole site tree to the account (its real primary
         # group, which may be a panel-namespaced fallback on a name collision).
@@ -227,6 +260,7 @@ class LinuxProvider(Provider):
 
     def set_php_version(self, domain: str, docroot: str, php_version: str, system_user: str) -> None:
         # The socket is per-account (not per-version); rewrite the whole vhost.
+        self._ensure_limits(system_user)
         (NGINX_SITES / f"{domain}.conf").write_text(
             self._vhost(domain, f" www.{domain}", Path(docroot), system_user)
         )
@@ -270,6 +304,11 @@ class LinuxProvider(Provider):
                     pass
 
         self._reload_php()
+        # Keep nginx's body cap in lock-step with the account's PHP upload limits
+        # so neither layer becomes the silent 413. Rewrites the one per-account
+        # include and reloads nginx; every vhost that includes it now honours the
+        # new cap without being regenerated.
+        self.set_upload_limit(system_user, upload_cap_mb(directives))
 
     # --- PHP extension packages -------------------------------------------
     _EXT_NAME_RE = re.compile(r"^[a-z0-9_]{1,40}$")
@@ -330,11 +369,12 @@ class LinuxProvider(Provider):
                            system_user: str, enabled: bool, has_ssl: bool) -> None:
         _ident(system_user, "account username")
         self._ensure_weblog_dir()
+        self._ensure_limits(system_user)
         docroot = Path(docroot)
         names = f"{domain} www.{domain}"
         logs = (f" access_log /var/log/litespanel/{domain}.access.log;"
                 f" error_log /var/log/litespanel/{domain}.error.log;")
-        body = f" client_max_body_size {config.MAX_UPLOAD_MB}M;"
+        body = f" include {self._limits_conf(system_user)};"
         php = (f"location ~ \\.php$ {{ fastcgi_pass unix:{self._php_sock(system_user)};"
                f" include fastcgi_params; fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name; }}")
         lpanel = f"location /lpanel {{ return 301 {config.PANEL_URL}/login; }}"
@@ -359,6 +399,7 @@ class LinuxProvider(Provider):
     def create_subdomain(self, fqdn: str, docroot: Path, php_version: str, system_user: str) -> Path:
         _ident(system_user, "account username")
         self._ensure_weblog_dir()
+        self._ensure_limits(system_user)
         docroot.mkdir(parents=True, exist_ok=True)
         _run(["chown", "-R", f"{system_user}:{system_user}", str(docroot)])
         (NGINX_SITES / f"{fqdn}.conf").write_text(self._vhost(fqdn, "", docroot, system_user))

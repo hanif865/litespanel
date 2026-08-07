@@ -216,6 +216,10 @@ ok "Service enabled and started"
 # --------------------------------------------------------------------------
 step "Configuring nginx"
 SERVER_NAME="${DOMAIN:-_}"
+# Per-account upload-cap includes live here; the panel writes one file per
+# account and every account vhost includes it. Create it up front so an early
+# `nginx -t` never trips over a not-yet-created directory.
+mkdir -p /etc/nginx/litespanel-limits
 cat > /etc/nginx/sites-available/litespanel <<EOF
 server {
     listen 80;

@@ -8,6 +8,8 @@ drive sync_zone.
 """
 from __future__ import annotations
 
+from . import config
+
 # PHP-FPM versions the panel offers. Newest first (index 0 is the default).
 PHP_VERSIONS = ["8.3", "8.2", "8.1", "8.0", "7.4"]
 
@@ -132,6 +134,13 @@ def apt_package(ext: str, php_ver: str) -> str | None:
 
 # Editable php.ini directives with their default values (strings — the form
 # posts strings and php.ini is textual anyway).
+#
+# post_max_size / upload_max_filesize default to config.MAX_UPLOAD_MB so a fresh
+# account can upload sizeable theme/plugin zips out of the box. This is also the
+# single knob the nginx body cap follows: the PHP Selector writes these values
+# and the provider derives client_max_body_size from them (base.upload_cap_mb),
+# so the two layers never mismatch into a silent 413.
+_UPLOAD_DEFAULT = f"{config.MAX_UPLOAD_MB}M"
 _DIRECTIVES: list[tuple[str, str]] = [
     ("allow_url_fopen", "On"),
     ("display_errors", "Off"),
@@ -139,8 +148,8 @@ _DIRECTIVES: list[tuple[str, str]] = [
     ("max_input_time", "60"),
     ("max_input_vars", "1000"),
     ("memory_limit", "256M"),
-    ("post_max_size", "32M"),
-    ("upload_max_filesize", "32M"),
+    ("post_max_size", _UPLOAD_DEFAULT),
+    ("upload_max_filesize", _UPLOAD_DEFAULT),
     ("session.gc_maxlifetime", "1440"),
     ("date.timezone", "UTC"),
 ]
