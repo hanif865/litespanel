@@ -486,3 +486,23 @@ class Certificate(Base):
 
     domain: Mapped["Domain | None"] = relationship(back_populates="certificate")
     subdomain: Mapped["Subdomain | None"] = relationship(back_populates="certificate")
+
+
+class ErrorLog(Base):
+    """A persisted unhandled server exception (see the catch-all in app/main.py).
+
+    The auto-increment id doubles as the "error ID" shown to an admin on the 500
+    page. user_id is a plain int (no FK) so a log survives deletion of the user
+    who triggered it; username is a snapshot for display.
+    """
+    __tablename__ = "error_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    method: Mapped[str] = mapped_column(String(8))
+    path: Mapped[str] = mapped_column(String(500))
+    exc_type: Mapped[str] = mapped_column(String(255))
+    exc_message: Mapped[str] = mapped_column(Text)
+    traceback: Mapped[str] = mapped_column(Text)
+    user_id: Mapped[int | None] = mapped_column(nullable=True)     # no FK: logs outlive the user
+    username: Mapped[str | None] = mapped_column(String(64), nullable=True)

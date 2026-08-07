@@ -12,6 +12,18 @@
   <div class="error-code">Error {{ status }}</div>
   <div class="error-title">{{ headline }}</div>
   <p class="error-detail">{{ detail }}</p>
+  {% if traceback %}
+  <div class="error-trace" style="text-align:left;margin:1rem 0;">
+    <p class="muted small" style="text-align:center;">Error ID: <strong>#{{ error_id }}</strong></p>
+    <details>
+      <summary style="cursor:pointer;">Show traceback</summary>
+      <pre style="background:var(--bg-secondary, #f5f5f5);padding:1rem;border-radius:4px;overflow:auto;max-height:400px;font-size:.8rem;line-height:1.4;margin-top:.5rem;">{{ traceback }}</pre>
+    </details>
+    <p class="muted small" style="text-align:center;margin-top:.5rem;">
+      <a href="/errors">View all errors →</a>
+    </p>
+  </div>
+  {% endif %}
   <a href="/" class="btn btn-primary">← Back to dashboard</a>
 {% endmacro %}
 

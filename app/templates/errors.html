@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% from "_icons.html" import icon %}
+{% block title %}Error Log{% endblock %}
+{% block content %}
+<div class="breadcrumb"><a href="/">🏠 Home</a> / Security / Error Log</div>
+<h1>Error Log</h1>
+<p class="muted">
+  Admin-only. Unhandled server errors (HTTP 500) are recorded here with their
+  full traceback, so you can debug a failure without reading the system journal.
+  The newest 200 are shown.
+</p>
+
+<div class="card" style="display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap;">
+  <span class="muted small">
+    {% if errors %}{{ errors | length }} error{{ '' if errors | length == 1 else 's' }} recorded{% else %}No errors recorded — nice.{% endif %}
+  </span>
+  {% if errors %}
+  <form method="post" action="/errors/clear"
+        onsubmit="return confirm('Clear all recorded errors? This cannot be undone.');">
+    <button type="submit" class="btn btn-sm btn-danger">Clear all</button>
+  </form>
+  {% endif %}
+</div>
+
+{% for e in errors %}
+<details class="card" id="err-{{ e.id }}" style="margin-top:.75rem;">
+  <summary style="cursor:pointer;display:flex;gap:.75rem;align-items:baseline;flex-wrap:wrap;">
+    <span class="badge" style="background:#fdf3f3;color:var(--danger);">#{{ e.id }}</span>
+    <strong>{{ e.exc_type }}</strong>
+    <span class="muted small">{{ e.method }} {{ e.path }}</span>
+    <span class="muted small" style="margin-left:auto;">{{ e.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
+  </summary>
+  <p class="muted small" style="margin:.5rem 0;">
+    {% if e.username %}Triggered by <strong>{{ e.username }}</strong> (user #{{ e.user_id }}){% else %}Anonymous / logged-out request{% endif %}
+  </p>
+  <p style="margin:.25rem 0;"><strong>{{ e.exc_message }}</strong></p>
+  <pre style="background:var(--bg-secondary, #f5f5f5);padding:1rem;border-radius:4px;overflow:auto;max-height:420px;font-size:.8rem;line-height:1.4;">{{ e.traceback }}</pre>
+</details>
+{% endfor %}
+{% endblock %}

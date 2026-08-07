@@ -5,6 +5,8 @@ On a VPS, keep it to a single worker for the smallest footprint.
 """
 from __future__ import annotations
 
+import traceback
+
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import RedirectResponse
@@ -15,12 +17,12 @@ from starlette.middleware.sessions import SessionMiddleware
 from . import config
 from .db import SessionLocal, init_db
 from .middleware import CSRFMiddleware, SecurityHeadersMiddleware
-from .models import User
+from .models import ErrorLog, User
 from .security import hash_password
 from .web import TEMPLATES_DIR, templates
 from .routers import (
     account, auth, autoresponders, backups, cron, dashboard, databases, dbconsole, dbwizard,
-    deliverability, disk_usage, dns, domains, email, files, firewall, forwarders, ftp, git,
+    deliverability, disk_usage, dns, domains, email, errors, files, firewall, forwarders, ftp, git,
     ip_blocker, logs, metrics, modsecurity, node,
     packages, pg_databases, php, ssl, subdomains, users, webdisk, whm, wordpress,
 )
@@ -74,6 +76,7 @@ app.include_router(firewall.router)
 app.include_router(ip_blocker.router)
 app.include_router(modsecurity.router)
 app.include_router(logs.router)
+app.include_router(errors.router)
 app.include_router(metrics.router)
 app.include_router(backups.router)
 app.include_router(packages.router)
@@ -149,19 +152,53 @@ async def validation_error(request: Request, exc: RequestValidationError):
 async def unhandled_error(request: Request, exc: Exception):
     """Catch-all so an unexpected error never leaks a traceback or raw JSON.
 
-    The full exception is logged server-side (visible via journalctl) while the
-    browser only sees a clean, generic page.
+    The full exception is logged server-side (visible via journalctl) AND
+    persisted to the error_logs table so an admin can inspect it at /errors
+    without SSHing into the box. The browser only sees a clean, generic page;
+    a logged-in admin additionally gets an error ID + a collapsible traceback.
+
+    Everything here is defensive: this handler runs in Starlette's outer
+    ServerErrorMiddleware, so identity is read from request.scope without ever
+    touching request.session (which would assert), persistence uses a fresh
+    SessionLocal, and any failure inside is swallowed — the generic page always
+    renders, never a second exception from inside the handler.
     """
     import logging
 
     logging.getLogger("litespanel").exception(
         "Unhandled error on %s %s", request.method, request.url.path
     )
-    return templates.TemplateResponse(
-        request, "error.html",
-        {"status": 500, "detail": "Something went wrong on our end. The issue has been logged."},
-        status_code=500,
-    )
+
+    ctx = {"status": 500, "detail": "Something went wrong on our end. The issue has been logged."}
+    try:
+        # Keep the deepest frames + the exception message (they're at the tail).
+        tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))[-20000:]
+        message = str(exc)[:2000] or type(exc).__name__
+
+        session = request.scope.get("session") or {}
+        uid = session.get("user_id")
+
+        db = SessionLocal()
+        try:
+            user = db.get(User, uid) if uid is not None else None
+            log = ErrorLog(
+                method=request.method, path=request.url.path,
+                exc_type=type(exc).__name__, exc_message=message, traceback=tb,
+                user_id=uid, username=user.username if user else None,
+            )
+            db.add(log)
+            db.commit()
+            error_id = log.id
+        finally:
+            db.close()
+
+        # Persistence runs for every requester; only the display is admin-gated.
+        if user is not None and user.role == "admin" and error_id:
+            ctx["error_id"] = error_id
+            ctx["traceback"] = tb
+    except Exception:  # noqa: BLE001 — never let persistence fail the request
+        pass
+    return templates.TemplateResponse(request, "error.html", ctx, status_code=500)
 
 
 @app.get("/healthz")
