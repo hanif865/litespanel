@@ -155,6 +155,22 @@ SERVICE_PACKAGES = {
     "varnish": ["varnish"],
 }
 
+# --- Varnish front-end cache (admin-only, default OFF) ---------------------
+# "Web fronting" turns every hosted site's nginx vhost into a sandwich:
+#   Internet :443 -> nginx (TLS terminator) -> Varnish (cache) -> nginx backend
+#   (127.0.0.1:NGINX_BACKEND_PORT, server_name-routed) -> PHP-FPM.
+# Varnish binds to localhost only (VARNISH_PORT), so public ports/firewall are
+# unchanged. The mode is a persisted flag; default OFF means every generator
+# emits exactly today's direct vhost (regression-safe). Both providers and every
+# vhost builder read the same flag so they never disagree on the current mode.
+WEB_FRONTING_FILE = DATA_DIR / "web_fronting.json"
+VARNISH_PORT = int(_env("PANEL_VARNISH_PORT", "6081"))
+NGINX_BACKEND_PORT = int(_env("PANEL_NGINX_BACKEND_PORT", "8080"))
+# Shared ACME webroot every :80 terminator serves /.well-known/acme-challenge
+# from, so certbot renews over HTTP with `certonly --webroot` and never rewrites
+# nginx (which would break the sandwich). One directory covers all domains.
+ACME_WEBROOT = _env("PANEL_ACME_WEBROOT", "/var/www/letsencrypt")
+
 
 def ensure_dirs() -> None:
     """Create the data directories on startup (idempotent)."""

@@ -10,7 +10,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Sequence
+import json
 import math
 import os
 import re
@@ -233,6 +234,33 @@ class DbCredentials:
     password: str
     host: str = "localhost"
     port: int = 3306
+
+
+@dataclass
+class SiteVhost:
+    """One hostable vhost, as the router hands it to set_web_fronting for bulk
+    regeneration — a DB-free snapshot so the provider never imports models."""
+    name: str                    # primary server_name / fqdn
+    docroot: str
+    php_version: str
+    system_user: str
+    has_ssl: bool = False
+    force_https: bool = False    # :80 should 301 -> https (only when has_ssl)
+    extra_names: str = ""        # leading-space-joined, e.g. " www.example.com"
+    is_node: bool = False        # node-app domains stay direct (no Varnish)
+
+
+def web_fronting_enabled() -> bool:
+    """True when the Varnish sandwich mode is switched on (persisted flag).
+
+    Both providers and every vhost builder read this one file so they never
+    disagree on the current mode. Missing/unreadable/off → False (default OFF,
+    regression-safe: every generator then emits today's direct vhost)."""
+    try:
+        data = json.loads(config.WEB_FRONTING_FILE.read_text())
+    except (OSError, ValueError):
+        return False
+    return bool(data.get("varnish", False))
 
 
 class Provider(ABC):
@@ -701,6 +729,21 @@ class Provider(ABC):
         anything runs, so a client can never install an arbitrary package).
         Runs the distro package install as root, then enables + starts the
         unit. Admin-only at the router layer.
+        """
+
+    @abstractmethod
+    def set_web_fronting(self, enabled: bool, sites: Sequence[SiteVhost]) -> tuple[bool, str]:
+        """Turn the Varnish sandwich on/off, then regenerate every vhost.
+
+        Persists the mode flag (config.WEB_FRONTING_FILE) and rewrites all
+        hosted vhosts in the new mode as one atomic batch: when ON, each site
+        becomes an nginx TLS terminator proxying to Varnish
+        (127.0.0.1:VARNISH_PORT), which fronts an internal nginx backend
+        (127.0.0.1:NGINX_BACKEND_PORT) that talks to PHP-FPM; when OFF, each
+        emits today's direct vhost. `sites` is a DB-free snapshot handed in by
+        the router so the provider never imports models. Node-app domains
+        (is_node) stay direct. Validates the whole nginx config once and rolls
+        back all files on failure. Admin-only at the router layer.
         """
 
     # --- Panel self-update (admin-only) -----------------------------------

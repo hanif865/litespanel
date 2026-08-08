@@ -103,4 +103,38 @@
     {% for s in mail_svcs %}{{ service_item(s) }}{% endfor %}
   </div>
 </div>
+
+{% set varnish = services | selectattr('key', 'equalto', 'varnish') | list | first %}
+<div class="card">
+  <h2 style="margin-top:0">Web Fronting — Varnish cache</h2>
+  <p class="muted">
+    Sandwiches every hosted site behind a Varnish HTTP cache:
+    <code>nginx (TLS) &rarr; Varnish &rarr; nginx &rarr; PHP-FPM</code>. Cacheable
+    responses get served straight from RAM. Flipping this
+    <strong>rewrites every site's nginx vhost</strong> and restarts Varnish; while
+    it's on, new SSL certs are issued over the ACME webroot so the sandwich stays
+    intact. The panel's own domain is never fronted, and Varnish binds to localhost
+    only — public ports and the firewall don't change.
+  </p>
+  {% if web_fronting %}
+    <p><span class="pill pill-ok">fronting ON</span> &nbsp;All sites route through Varnish.</p>
+    <form method="post" action="/whm/services/varnish-fronting" class="inline-form"
+          onsubmit="return confirm('Turn web fronting OFF? Every site vhost is rewritten back to direct nginx. This reverts to today\'s setup instantly.');">
+      <input type="hidden" name="enabled" value="0">
+      <button class="btn btn-danger">Turn fronting OFF</button>
+    </form>
+  {% else %}
+    <p><span class="pill" style="background:#eef1f5;color:#555">fronting OFF</span>
+       &nbsp;Sites serve directly from nginx.</p>
+    {% if varnish and varnish.available and varnish.status == 'running' %}
+    <form method="post" action="/whm/services/varnish-fronting" class="inline-form"
+          onsubmit="return confirm('Turn web fronting ON? Every site vhost is rewritten to route through Varnish and Varnish is restarted. Toggle OFF to revert instantly.');">
+      <input type="hidden" name="enabled" value="1">
+      <button class="btn btn-primary">Turn fronting ON</button>
+    </form>
+    {% else %}
+    <p class="muted">Install and start Varnish above to enable web fronting.</p>
+    {% endif %}
+  {% endif %}
+</div>
 {% endblock %}

@@ -1121,6 +1121,20 @@ class DemoProvider(Provider):
         self._installed_save(installed)
         return True, f"(demo) installed {label}."
 
+    def set_web_fronting(self, enabled: bool, sites) -> tuple[bool, str]:
+        # No real nginx/Varnish on the dev box: just persist the shared mode flag
+        # so the toggle round-trips in the UI (and the linux string builders,
+        # which read the same file, can be exercised from a verify script).
+        import json
+
+        enabled = bool(enabled)
+        try:
+            config.WEB_FRONTING_FILE.write_text(json.dumps({"varnish": enabled}))
+        except OSError as exc:
+            return False, f"could not save fronting flag: {exc}"
+        mode = "ON" if enabled else "OFF"
+        return True, f"(demo) web fronting turned {mode}."
+
     # --- Panel self-update -------------------------------------------------
     # No real git/systemd on the dev box. A small JSON file simulates the
     # installed version and whether a newer one is "available", so the WHM

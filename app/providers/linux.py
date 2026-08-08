@@ -11,15 +11,18 @@ socket paths, MySQL admin auth). Fill these in for your distro before use.
 """
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Sequence
 
 from .. import config
 from .base import (
-    CertInfo, DbCredentials, Provider, dkim_generate, node_env_lines,
+    CertInfo, DbCredentials, Provider, SiteVhost, dkim_generate, node_env_lines,
     node_exec_start, tail_file, txt_record_chunks, upload_cap_mb,
+    web_fronting_enabled,
 )
 
 # On Debian/Ubuntu these are the conventional locations.
@@ -39,6 +42,13 @@ WEBLOG_DIR = Path("/var/log/litespanel")
 # includes it picks up the new cap — no vhost regeneration, no touching certbot's
 # own :443 edits. Kept out of sites-enabled so it's never loaded as a server block.
 NGINX_LIMITS = Path("/etc/nginx/litespanel-limits")
+
+# Varnish sandwich artifacts (web-fronting mode). The panel VCL points Varnish
+# at the internal nginx backend; the systemd drop-in binds varnishd to
+# loopback:VARNISH_PORT (never public) and loads that VCL. Kept off the default
+# unit so an apt upgrade of varnish leaves the panel's config intact.
+VARNISH_VCL = Path("/etc/varnish/litespanel.vcl")
+VARNISH_OVERRIDE = Path("/etc/systemd/system/varnish.service.d/litespanel.conf")
 
 # Database/user names must be plain identifiers — validated here as defense in
 # depth so a bad name can never be interpolated into SQL, even if a caller
@@ -289,9 +299,98 @@ class LinuxProvider(Provider):
                 except OSError:
                     pass
 
-    def _vhost(self, server_name: str, extra_names: str, docroot: Path, username: str) -> str:
+    # --- Varnish sandwich building blocks (mode-aware vhosts) -------------
+    # When web-fronting is ON, every hosted site is generated as a public nginx
+    # terminator that proxies to Varnish (127.0.0.1:VARNISH_PORT), which fronts
+    # an internal nginx backend (127.0.0.1:NGINX_BACKEND_PORT) that runs PHP-FPM.
+    # When OFF, _vhost / set_https_redirect emit exactly today's direct blocks,
+    # so the mode flag being unset is fully regression-safe.
+    def _php_location(self, username: str) -> str:
+        return (f"location ~ \\.php$ {{ fastcgi_pass unix:{self._php_sock(username)};"
+                f" include fastcgi_params; fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name; }}")
+
+    def _varnish_location(self) -> str:
         return (
-            f"server {{\n    listen 80;\n    server_name {server_name}{extra_names};\n"
+            "    location / {\n"
+            f"        proxy_pass http://127.0.0.1:{config.VARNISH_PORT};\n"
+            "        proxy_set_header Host $host;\n"
+            "        proxy_set_header X-Real-IP $remote_addr;\n"
+            "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
+            "        proxy_set_header X-Forwarded-Proto $scheme;\n"
+            "    }\n"
+        )
+
+    def _acme_location(self) -> str:
+        # Served straight off the :80 terminator (never through Varnish) so
+        # certbot certonly --webroot renewals keep working while fronting is on.
+        return f"    location /.well-known/acme-challenge/ {{ root {config.ACME_WEBROOT}; }}\n"
+
+    def _lpanel_location(self) -> str:
+        return f"    location /lpanel {{ return 301 {config.PANEL_URL}/login; }}\n"
+
+    def _terminator_http(self, primary: str, names: str, username: str, *, redirect_https: bool) -> str:
+        if redirect_https:
+            # :80 exists only to answer ACME and bounce everything else to https.
+            return (
+                f"server {{\n    listen 80;\n    server_name {names};\n"
+                f"{self._acme_location()}"
+                f"    location / {{ return 301 https://$host$request_uri; }}\n}}\n"
+            )
+        # Plain-HTTP site: :80 is the real traffic path into Varnish.
+        return (
+            f"server {{\n    listen 80;\n    server_name {names};\n"
+            f"    include {self._limits_conf(username)};\n"
+            f"    access_log /var/log/litespanel/{primary}.access.log;\n"
+            f"    error_log /var/log/litespanel/{primary}.error.log;\n"
+            f"{self._acme_location()}"
+            f"{self._lpanel_location()}"
+            f"{self._varnish_location()}}}\n"
+        )
+
+    def _terminator_https(self, primary: str, names: str, username: str, cert: str) -> str:
+        return (
+            f"server {{\n    listen 443 ssl;\n    server_name {names};\n"
+            f"    ssl_certificate {cert}/fullchain.pem;\n"
+            f"    ssl_certificate_key {cert}/privkey.pem;\n"
+            f"    include {self._limits_conf(username)};\n"
+            f"    access_log /var/log/litespanel/{primary}.access.log;\n"
+            f"    error_log /var/log/litespanel/{primary}.error.log;\n"
+            f"{self._lpanel_location()}"
+            f"{self._varnish_location()}}}\n"
+        )
+
+    def _backend_block(self, primary: str, names: str, docroot: Path, username: str) -> str:
+        # Internal nginx Varnish forwards to: server_name-routed, talks to PHP-FPM.
+        # Not publicly reachable (loopback:NGINX_BACKEND_PORT). Carries the body
+        # cap too, so a large upload accepted at the edge isn't 413'd here.
+        return (
+            f"server {{\n    listen 127.0.0.1:{config.NGINX_BACKEND_PORT};\n"
+            f"    server_name {names};\n"
+            f"    root {docroot};\n    index index.php index.html;\n"
+            f"    include {self._limits_conf(username)};\n"
+            f"    error_log /var/log/litespanel/{primary}.error.log;\n"
+            f"    {self._php_location(username)}\n}}\n"
+        )
+
+    def _sandwich_vhost(self, primary: str, names: str, docroot: Path, username: str,
+                        has_ssl: bool, force_https: bool) -> str:
+        """Full sandwich config for one site: public terminator(s) + backend."""
+        if has_ssl:
+            cert = f"/etc/letsencrypt/live/{primary}"
+            http = self._terminator_http(primary, names, username, redirect_https=force_https)
+            return (http
+                    + self._terminator_https(primary, names, username, cert)
+                    + self._backend_block(primary, names, docroot, username))
+        return (self._terminator_http(primary, names, username, redirect_https=False)
+                + self._backend_block(primary, names, docroot, username))
+
+    def _vhost(self, server_name: str, extra_names: str, docroot: Path, username: str) -> str:
+        names = f"{server_name}{extra_names}"
+        if web_fronting_enabled():
+            return self._sandwich_vhost(server_name, names, docroot, username,
+                                        has_ssl=False, force_https=False)
+        return (
+            f"server {{\n    listen 80;\n    server_name {names};\n"
             f"    root {docroot};\n    index index.php index.html;\n"
             f"    include {self._limits_conf(username)};\n"
             f"    access_log /var/log/litespanel/{server_name}.access.log;\n"
@@ -446,6 +545,14 @@ class LinuxProvider(Provider):
         self._ensure_limits(system_user)
         docroot = Path(docroot)
         names = f"{domain} www.{domain}"
+        if web_fronting_enabled():
+            # Sandwich mode: same TLS/redirect semantics, but every request path
+            # runs edge nginx -> Varnish -> backend nginx -> PHP-FPM.
+            text = self._sandwich_vhost(domain, names, docroot, system_user,
+                                        has_ssl=has_ssl, force_https=enabled)
+            (NGINX_SITES / f"{domain}.conf").write_text(text)
+            self.reload_web()
+            return
         logs = (f" access_log /var/log/litespanel/{domain}.access.log;"
                 f" error_log /var/log/litespanel/{domain}.error.log;")
         body = f" include {self._limits_conf(system_user)};"
@@ -839,8 +946,18 @@ class LinuxProvider(Provider):
         return proc.returncode == 0
 
     def issue_certificate(self, domain: str) -> CertInfo:
-        base = ["certbot", "--nginx", "--non-interactive", "--agree-tos",
-                "--redirect", "-m", f"admin@{domain}"]
+        if web_fronting_enabled():
+            # Sandwich mode: nginx is a hand-built terminator -> Varnish -> backend.
+            # certbot --nginx would rewrite that vhost and break the sandwich, so
+            # obtain the cert over the shared ACME webroot (the :80 terminator
+            # already serves /.well-known/acme-challenge from it) and let the
+            # existing :443 terminator pick the new cert up on reload.
+            self._ensure_acme_webroot()
+            base = ["certbot", "certonly", "--webroot", "-w", config.ACME_WEBROOT,
+                    "--non-interactive", "--agree-tos", "-m", f"admin@{domain}"]
+        else:
+            base = ["certbot", "--nginx", "--non-interactive", "--agree-tos",
+                    "--redirect", "-m", f"admin@{domain}"]
         try:
             # Prefer covering both the apex and the www host.
             _run(base + ["-d", domain, "-d", f"www.{domain}"])
@@ -1757,6 +1874,172 @@ class LinuxProvider(Provider):
             except RuntimeError:
                 pass
         return True, f"Installed {label}."
+
+    # --- Varnish web-fronting (admin-only) --------------------------------
+    def _ensure_acme_webroot(self) -> None:
+        """The shared webroot every :80 terminator serves ACME challenges from,
+        so certbot certonly --webroot renewals work while fronting is on."""
+        Path(config.ACME_WEBROOT).mkdir(parents=True, exist_ok=True)
+
+    def _varnish_vcl(self) -> str:
+        return (
+            "vcl 4.1;\n\n"
+            "# Managed by LitesPanel. Single backend: the internal nginx that\n"
+            "# serves every hosted site, server_name-routed on loopback.\n"
+            "backend default {\n"
+            '    .host = "127.0.0.1";\n'
+            f'    .port = "{config.NGINX_BACKEND_PORT}";\n'
+            "}\n\n"
+            "sub vcl_recv {\n"
+            "    # Never cache authenticated traffic: a session cookie or auth\n"
+            "    # header goes straight to the backend so the panel, wp-admin,\n"
+            "    # carts, etc. stay per-user.\n"
+            "    if (req.http.Authorization || req.http.Cookie) {\n"
+            "        return (pass);\n"
+            "    }\n"
+            '    if (req.method != "GET" && req.method != "HEAD") {\n'
+            "        return (pass);\n"
+            "    }\n"
+            "}\n\n"
+            "sub vcl_backend_response {\n"
+            "    # A response that sets a cookie is user-specific: don't cache it.\n"
+            "    if (beresp.http.Set-Cookie) {\n"
+            "        set beresp.uncacheable = true;\n"
+            "    }\n"
+            "}\n"
+        )
+
+    def _varnish_override(self) -> str:
+        # Clear ExecStart first (systemd appends otherwise), then rebind varnishd
+        # to loopback only and load the panel VCL. Public ports stay untouched.
+        return (
+            "[Service]\n"
+            "ExecStart=\n"
+            f"ExecStart=/usr/sbin/varnishd -a 127.0.0.1:{config.VARNISH_PORT} "
+            f"-f {VARNISH_VCL} -s malloc,256m\n"
+        )
+
+    def _ensure_varnish_config(self) -> tuple[bool, str]:
+        """Write the panel VCL + systemd drop-in and (re)start varnishd on
+        loopback:VARNISH_PORT. Returns (ok, message)."""
+        try:
+            VARNISH_VCL.parent.mkdir(parents=True, exist_ok=True)
+            VARNISH_VCL.write_text(self._varnish_vcl())
+            VARNISH_OVERRIDE.parent.mkdir(parents=True, exist_ok=True)
+            VARNISH_OVERRIDE.write_text(self._varnish_override())
+        except OSError as exc:
+            return False, f"could not write Varnish config: {exc}"
+        try:
+            _run(["systemctl", "daemon-reload"])
+            _run(["systemctl", "restart", "varnish"])
+        except RuntimeError as exc:
+            return False, f"Varnish failed to restart: {exc}"
+        return True, f"Varnish bound to 127.0.0.1:{config.VARNISH_PORT}."
+
+    def _rollback_vhosts(self, changed: dict[Path, str | None]) -> None:
+        for conf, original in changed.items():
+            try:
+                if original is None:
+                    conf.unlink(missing_ok=True)
+                else:
+                    conf.write_text(original)
+            except OSError:
+                pass
+
+    def _regenerate_all_vhosts(self, sites: Sequence[SiteVhost]) -> tuple[bool, str]:
+        """Rewrite every hosted site's vhost in the current mode as one atomic
+        batch: write all files, validate once with `nginx -t`, roll them all
+        back on failure so a mode switch can never leave nginx unable to reload.
+        Node-app domains are left untouched (they never front through Varnish)."""
+        if not NGINX_SITES.is_dir():
+            return True, "no vhosts to regenerate."
+        self._ensure_weblog_dir()
+        changed: dict[Path, str | None] = {}   # path -> original text (None = new)
+        for site in sites:
+            if site.is_node:
+                continue
+            conf = NGINX_SITES / f"{site.name}.conf"
+            try:
+                original: str | None = conf.read_text()
+            except OSError:
+                original = None
+            self._ensure_limits(site.system_user)
+            names = f"{site.name}{site.extra_names}"
+            docroot = Path(site.docroot)
+            if web_fronting_enabled():
+                content = self._sandwich_vhost(site.name, names, docroot, site.system_user,
+                                               has_ssl=site.has_ssl, force_https=site.force_https)
+            elif site.has_ssl:
+                # Direct mode with a cert: rebuild the :80(+redirect)/:443 pair.
+                # This is set_https_redirect's non-sandwich output, inlined so the
+                # batch stays a single nginx -t.
+                cert = f"/etc/letsencrypt/live/{site.name}"
+                logs = (f" access_log /var/log/litespanel/{site.name}.access.log;"
+                        f" error_log /var/log/litespanel/{site.name}.error.log;")
+                body = f" include {self._limits_conf(site.system_user)};"
+                php = (f"location ~ \\.php$ {{ fastcgi_pass unix:{self._php_sock(site.system_user)};"
+                       f" include fastcgi_params; fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name; }}")
+                lpanel = f"location /lpanel {{ return 301 {config.PANEL_URL}/login; }}"
+                if site.force_https:
+                    top = (f"server {{ listen 80; server_name {names};"
+                           f"{logs} return 301 https://$host$request_uri; }}")
+                else:
+                    top = (f"server {{ listen 80; server_name {names}; root {docroot};"
+                           f" index index.php index.html;{body}{logs} {lpanel} {php} }}")
+                tls = (f"server {{ listen 443 ssl; server_name {names};"
+                       f" ssl_certificate {cert}/fullchain.pem; ssl_certificate_key {cert}/privkey.pem;"
+                       f" root {docroot}; index index.php index.html;{body}{logs} {lpanel} {php} }}")
+                content = top + "\n" + tls + "\n"
+            else:
+                content = self._vhost(site.name, site.extra_names, docroot, site.system_user)
+            try:
+                conf.write_text(content)
+                changed[conf] = original
+            except OSError as exc:
+                self._rollback_vhosts(changed)
+                return False, f"could not write {conf.name}: {exc}"
+        if not changed:
+            return True, "no vhosts to regenerate."
+        try:
+            subprocess.run(["nginx", "-t"], capture_output=True, text=True, check=True)
+        except (subprocess.CalledProcessError, FileNotFoundError, OSError) as exc:
+            self._rollback_vhosts(changed)
+            detail = getattr(exc, "stderr", "") or str(exc)
+            return False, f"nginx config test failed, rolled back: {str(detail).strip()[-300:]}"
+        _run(["systemctl", "reload", "nginx"])
+        return True, f"regenerated {len(changed)} vhost(s)."
+
+    def set_web_fronting(self, enabled: bool, sites: Sequence[SiteVhost]) -> tuple[bool, str]:
+        enabled = bool(enabled)
+        prev = web_fronting_enabled()
+        # Persist the mode first so the vhost builders below read the new mode.
+        try:
+            config.WEB_FRONTING_FILE.write_text(json.dumps({"varnish": enabled}))
+        except OSError as exc:
+            return False, f"could not save fronting flag: {exc}"
+
+        def _restore() -> None:
+            try:
+                config.WEB_FRONTING_FILE.write_text(json.dumps({"varnish": prev}))
+            except OSError:
+                pass
+
+        try:
+            if enabled:
+                self._ensure_acme_webroot()
+                ok, msg = self._ensure_varnish_config()
+                if not ok:
+                    _restore()
+                    return False, msg
+            ok, msg = self._regenerate_all_vhosts(sites)
+        except Exception as exc:  # noqa: BLE001 — any failure must not strand the mode.
+            _restore()
+            return False, str(exc)
+        if not ok:
+            _restore()
+            return False, msg
+        mode = "ON" if enabled else "OFF"
+        return True, f"Web fronting turned {mode} — {msg}"
 
     # --- Panel self-update ------------------------------------------------
     # Admin-only: check for updates and upgrade the panel itself via git pull +

@@ -24,8 +24,9 @@ from .. import config, php_catalog, weblog
 from ..accounts import account_home, terminate_account
 from ..db import get_db
 from ..limits import _count
-from ..models import Database, Domain, EmailAccount, Package, PgDatabase, Subdomain, User
+from ..models import Database, Domain, EmailAccount, NodeApp, Package, PgDatabase, Subdomain, User
 from ..providers import get_provider
+from ..providers.base import SiteVhost, web_fronting_enabled
 from ..routers.dashboard import _meter
 from ..routers.disk_usage import _dir_size
 from ..routers.domains import _DOMAIN_RE
@@ -481,7 +482,8 @@ def services(request: Request, admin: User = Depends(require_admin), db: Session
     return templates.TemplateResponse(
         request, "whm/services.html",
         {"user": admin, "active": "services", "flash": flash, "services": rows,
-         "installable": list(config.SERVICE_PACKAGES)},
+         "installable": list(config.SERVICE_PACKAGES),
+         "web_fronting": web_fronting_enabled()},
     )
 
 
@@ -510,6 +512,57 @@ async def services_install(
         _flash(request, "❌ That service can't be installed from here.")
         return RedirectResponse("/whm/services", status_code=303)
     ok, message = await run_in_threadpool(get_provider().install_service, key)
+    _flash(request, ("✅ " if ok else "❌ ") + message)
+    return RedirectResponse("/whm/services", status_code=303)
+
+
+def _all_site_vhosts(db: Session) -> list[SiteVhost]:
+    """Snapshot every hosted vhost as DB-free descriptors for set_web_fronting.
+
+    The provider never touches the ORM, so the router hands it exactly what each
+    vhost generator needs. Node-app domains are flagged is_node (they proxy to a
+    long-running process and must not front through Varnish — it would break
+    their WebSocket upgrades), so the provider leaves them direct."""
+    node_ids = set(db.scalars(select(NodeApp.domain_id)).all())
+    sites: list[SiteVhost] = []
+    for d in db.scalars(select(Domain)).all():
+        user = d.owner.system_user or d.owner.username
+        has_ssl = d.certificate is not None
+        sites.append(SiteVhost(
+            name=d.name, docroot=d.docroot, php_version=d.php_version,
+            system_user=user, has_ssl=has_ssl, force_https=bool(d.force_https),
+            extra_names=f" www.{d.name}", is_node=d.id in node_ids,
+        ))
+        for s in d.subdomains:
+            sub_ssl = s.certificate is not None
+            sites.append(SiteVhost(
+                name=s.fqdn, docroot=s.docroot, php_version=s.php_version,
+                system_user=user, has_ssl=sub_ssl, force_https=sub_ssl,
+                extra_names="", is_node=False,
+            ))
+    return sites
+
+
+# Turn the Varnish web-fronting sandwich on or off for every hosted site. Admin
+# only (rewrites all vhosts + restarts Varnish as root). Refuses to switch ON
+# unless Varnish is installed and running, so we never front onto a dead cache.
+@router.post("/services/varnish-fronting")
+async def services_varnish_fronting(
+    request: Request, enabled: str = Form(""),
+    admin: User = Depends(require_admin), db: Session = Depends(get_db),
+):
+    want_on = enabled.lower() in ("1", "true", "on", "yes")
+    if want_on:
+        svcs = {s["key"]: s for s in get_provider().list_services()}
+        v = svcs.get("varnish")
+        if not v or not v.get("available"):
+            _flash(request, "❌ Install Varnish first, then enable web fronting.")
+            return RedirectResponse("/whm/services", status_code=303)
+        if v.get("status") != "running":
+            _flash(request, "❌ Start Varnish first — it must be running before fronting is enabled.")
+            return RedirectResponse("/whm/services", status_code=303)
+    sites = _all_site_vhosts(db)
+    ok, message = await run_in_threadpool(get_provider().set_web_fronting, want_on, sites)
     _flash(request, ("✅ " if ok else "❌ ") + message)
     return RedirectResponse("/whm/services", status_code=303)
 
