@@ -1,0 +1,17 @@
+{% extends "whm_base.html" %}
+{% block title %}{{ label }} — Status{% endblock %}
+{% block content %}
+<div class="whm-page-head">
+  <h1>{{ label }} — Status</h1>
+  <p class="muted">Read-only <code>systemctl status</code> output. Admin-only.</p>
+</div>
+
+<div class="card">
+  {% if not ok %}
+  <p class="pill" style="background:#fff4e5;color:#b46a00;display:inline-block">{{ text }}</p>
+  {% else %}
+  <pre class="log-view" style="max-height:420px;overflow:auto;white-space:pre-wrap">{{ text }}</pre>
+  {% endif %}
+  <p style="margin-top:1rem"><a class="btn" href="/whm/services">← Back to Service Manager</a></p>
+</div>
+{% endblock %}

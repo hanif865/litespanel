@@ -497,6 +497,23 @@ async def services_control(
     return RedirectResponse("/whm/services", status_code=303)
 
 
+# Read-only `systemctl status` for one service. GET (no state change), admin-only.
+# The key is a catalog id; the provider maps it to a real unit, so an arbitrary
+# unit can never be targeted here either.
+@router.get("/services/status/{key}")
+async def service_status(
+    request: Request, key: str,
+    admin: User = Depends(require_admin), db: Session = Depends(get_db),
+):
+    ok, text = await run_in_threadpool(get_provider().service_status, key)
+    label = config.SERVICE_LABELS.get(key, "Unknown service")
+    return templates.TemplateResponse(
+        request, "whm/service_status.html",
+        {"user": admin, "active": "services", "label": label,
+         "ok": ok, "text": text},
+    )
+
+
 # --- Panel Update (self-update — admin only) ------------------------------
 # Update the panel software itself: sync to the latest code, run migrations, and
 # restart — all hosted data preserved. Like cPanel/WHM's "Upgrade to Latest

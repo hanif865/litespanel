@@ -62,11 +62,18 @@ _IP_RE = re.compile(
 # map — never a unit name — so it can't ask systemctl to touch anything else.
 _SERVICE_UNITS: dict[str, list[str]] = {
     "nginx": ["nginx"],
+    "varnish": ["varnish"],
     "php-fpm": [f"php{config.PHP_FPM_VERSION}-fpm"],
+    "redis": ["redis-server", "redis"],
     "mysql": ["mariadb", "mysql"],
     "postgresql": ["postgresql"],
+    "named": ["named", "bind9"],
+    "ftp": ["pure-ftpd"],
+    "sshd": ["sshd", "ssh"],
+    "cron": ["crond", "cron"],
     "postfix": ["postfix"],
     "dovecot": ["dovecot"],
+    "opendkim": ["opendkim"],
 }
 
 # OpenDKIM's config dir (setup-mail.sh lays it down). Overridable so the
@@ -1652,11 +1659,11 @@ class LinuxProvider(Provider):
 
     def list_services(self) -> list[dict]:
         rows: list[dict] = []
-        for key, label in config.MANAGED_SERVICES:
+        for key, label, group in config.MANAGED_SERVICES:
             unit, load = self._resolve_unit(key)
             if unit is None:
                 # Not installed here, or systemctl itself is unavailable.
-                rows.append({"key": key, "label": label,
+                rows.append({"key": key, "label": label, "group": group,
                              "status": "unknown", "available": False})
                 continue
             try:
@@ -1666,7 +1673,7 @@ class LinuxProvider(Provider):
                     capture_output=True, text=True,
                 )
             except (FileNotFoundError, OSError):
-                rows.append({"key": key, "label": label,
+                rows.append({"key": key, "label": label, "group": group,
                              "status": "unknown", "available": False})
                 continue
             active = ""
@@ -1679,14 +1686,14 @@ class LinuxProvider(Provider):
                 status = "stopped"
             else:
                 status = "unknown"
-            rows.append({"key": key, "label": label,
+            rows.append({"key": key, "label": label, "group": group,
                          "status": status, "available": True})
         return rows
 
     def control_service(self, key: str, action: str) -> tuple[bool, str]:
         if action not in ("start", "stop", "restart"):
             return False, f"Unknown action: {action}"
-        label = dict(config.MANAGED_SERVICES).get(key)
+        label = config.SERVICE_LABELS.get(key)
         if label is None:
             return False, f"Unknown service: {key}"
         unit, _load = self._resolve_unit(key)
@@ -1705,6 +1712,25 @@ class LinuxProvider(Provider):
             return False, str(exc)
         past = {"start": "Started", "stop": "Stopped", "restart": "Restarted"}[action]
         return True, f"{past} {label}."
+
+    def service_status(self, key: str) -> tuple[bool, str]:
+        label = config.SERVICE_LABELS.get(key)
+        if label is None:
+            return False, f"Unknown service: {key}"
+        unit, _load = self._resolve_unit(key)
+        if unit is None:
+            return False, f"{label} is not installed on this server."
+        try:
+            proc = subprocess.run(
+                ["systemctl", "status", f"{unit}.service", "--no-pager", "-n", "30"],
+                capture_output=True, text=True,
+            )
+        except (FileNotFoundError, OSError):
+            return False, "systemctl is not available on this host."
+        # `systemctl status` exits non-zero for an inactive/failed unit but still
+        # prints the full status block — that's exactly what we want to show, so
+        # ignore the return code and prefer stdout.
+        return True, proc.stdout or proc.stderr or "(no output)"
 
     # --- Panel self-update ------------------------------------------------
     # Admin-only: check for updates and upgrade the panel itself via git pull +

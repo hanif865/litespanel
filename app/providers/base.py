@@ -683,6 +683,16 @@ class Provider(ABC):
         as root — admin-only at the router layer.
         """
 
+    @abstractmethod
+    def service_status(self, key: str) -> tuple[bool, str]:
+        """Return `systemctl status` output for one managed service.
+
+        `key` must be in the service catalog (rejected otherwise). Returns
+        (True, status_text) even when the unit is stopped/failed — the status
+        block is still informative. Returns (False, message) when the unit is
+        not installed or systemctl is unavailable. Admin-only at the router.
+        """
+
     # --- Panel self-update (admin-only) -----------------------------------
     @abstractmethod
     def panel_version(self) -> dict:

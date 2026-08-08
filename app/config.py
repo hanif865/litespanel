@@ -123,18 +123,29 @@ NODE_VERSIONS = ("22", "20", "18")
 NODE_PORT_BASE = int(_env("PANEL_NODE_PORT_BASE", "3100"))
 
 # Service Manager (admin-only). The core system services WHM can start/stop/
-# restart, as (key, label) pairs. `key` is the opaque catalog id the router and
-# templates use — the provider maps it to the real systemd unit, so a client can
-# never target an arbitrary unit. Shared here so the demo and linux providers
-# stay in lock-step on keys/labels/order.
+# restart, as (key, label, group) triples. `key` is the opaque catalog id the
+# router and templates use — the provider maps it to the real systemd unit, so a
+# client can never target an arbitrary unit. `group` is "server" or "mail" and
+# only drives how the page is sectioned. Shared here so the demo and linux
+# providers stay in lock-step on keys/labels/order.
 MANAGED_SERVICES = (
-    ("nginx",      "Nginx — web server"),
-    ("php-fpm",    "PHP-FPM"),
-    ("mysql",      "MySQL / MariaDB"),
-    ("postgresql", "PostgreSQL"),
-    ("postfix",    "Postfix — SMTP"),
-    ("dovecot",    "Dovecot — IMAP/POP3"),
+    ("nginx",      "Nginx — web server",      "server"),
+    ("varnish",    "Varnish — HTTP cache",    "server"),
+    ("php-fpm",    "PHP-FPM",                 "server"),
+    ("redis",      "Redis — cache / store",   "server"),
+    ("mysql",      "MySQL / MariaDB",         "server"),
+    ("postgresql", "PostgreSQL",              "server"),
+    ("named",      "BIND — DNS server",       "server"),
+    ("ftp",        "Pure-FTPd — FTP",         "server"),
+    ("sshd",       "SSH — OpenSSH",           "server"),
+    ("cron",       "Cron — scheduler",        "server"),
+    ("postfix",    "Postfix — SMTP",          "mail"),
+    ("dovecot",    "Dovecot — IMAP/POP3",     "mail"),
+    ("opendkim",   "OpenDKIM — DKIM signing", "mail"),
 )
+
+# key -> label, for provider control_service messages and the status page.
+SERVICE_LABELS = {key: label for key, label, _group in MANAGED_SERVICES}
 
 
 def ensure_dirs() -> None:

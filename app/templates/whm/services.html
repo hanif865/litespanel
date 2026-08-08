@@ -38,49 +38,62 @@
   {% endif %}
 </div>
 
-<div class="card">
-  <h2 style="margin-top:0">Services</h2>
-  <div class="ext-grid">
-    {% for s in services %}
-      <div class="ext-item {{ 'on' if s.status == 'running' }}" data-name="{{ s.key }}">
-        <div class="ext-name"><strong>{{ s.label }}</strong></div>
-        <div class="ext-meta">
-          {% if not s.available %}
-            <span class="pill">not installed</span>
-          {% elif s.status == 'running' %}
-            <span class="pill pill-ok">running</span>
-          {% elif s.status == 'stopped' %}
-            <span class="pill" style="background:#fdecec;color:#e5484d">stopped</span>
-          {% else %}
-            <span class="pill">unknown</span>
-          {% endif %}
+{% macro service_item(s) %}
+  <div class="ext-item {{ 'on' if s.status == 'running' }}" data-name="{{ s.key }}">
+    <div class="ext-name"><strong>{{ s.label }}</strong></div>
+    <div class="ext-meta">
+      {% if not s.available %}
+        <span class="pill">not installed</span>
+      {% elif s.status == 'running' %}
+        <span class="pill pill-ok">running</span>
+      {% elif s.status == 'stopped' %}
+        <span class="pill" style="background:#fdecec;color:#e5484d">stopped</span>
+      {% else %}
+        <span class="pill">unknown</span>
+      {% endif %}
 
-          {% if s.available %}
-            {% if s.status != 'running' %}
-            <form method="post" action="/whm/services/control" class="inline-form">
-              <input type="hidden" name="service" value="{{ s.key }}">
-              <input type="hidden" name="action" value="start">
-              <button class="btn btn-xs">Start</button>
-            </form>
-            {% endif %}
-            <form method="post" action="/whm/services/control" class="inline-form"
-                  onsubmit="return confirm('Restart {{ s.label }} now? Active connections may briefly drop.');">
-              <input type="hidden" name="service" value="{{ s.key }}">
-              <input type="hidden" name="action" value="restart">
-              <button class="btn btn-xs btn-primary">Restart</button>
-            </form>
-            {% if s.status == 'running' %}
-            <form method="post" action="/whm/services/control" class="inline-form"
-                  onsubmit="return confirm('Stop {{ s.label }}? This takes it fully offline host-wide.');">
-              <input type="hidden" name="service" value="{{ s.key }}">
-              <input type="hidden" name="action" value="stop">
-              <button class="btn btn-xs btn-danger">Stop</button>
-            </form>
-            {% endif %}
-          {% endif %}
-        </div>
-      </div>
-    {% endfor %}
+      {% if s.available %}
+        {% if s.status != 'running' %}
+        <form method="post" action="/whm/services/control" class="inline-form">
+          <input type="hidden" name="service" value="{{ s.key }}">
+          <input type="hidden" name="action" value="start">
+          <button class="btn btn-xs">Start</button>
+        </form>
+        {% endif %}
+        <form method="post" action="/whm/services/control" class="inline-form"
+              onsubmit="return confirm('Restart {{ s.label }} now? Active connections may briefly drop.');">
+          <input type="hidden" name="service" value="{{ s.key }}">
+          <input type="hidden" name="action" value="restart">
+          <button class="btn btn-xs btn-primary">Restart</button>
+        </form>
+        {% if s.status == 'running' %}
+        <form method="post" action="/whm/services/control" class="inline-form"
+              onsubmit="return confirm('Stop {{ s.label }}? This takes it fully offline host-wide.');">
+          <input type="hidden" name="service" value="{{ s.key }}">
+          <input type="hidden" name="action" value="stop">
+          <button class="btn btn-xs btn-danger">Stop</button>
+        </form>
+        {% endif %}
+      {% endif %}
+      <a class="btn btn-xs" href="/whm/services/status/{{ s.key }}">Status</a>
+    </div>
+  </div>
+{% endmacro %}
+
+{% set server_svcs = services | selectattr('group', 'equalto', 'server') | list %}
+{% set mail_svcs = services | selectattr('group', 'equalto', 'mail') | list %}
+
+<div class="card">
+  <h2 style="margin-top:0">Server Services</h2>
+  <div class="ext-grid">
+    {% for s in server_svcs %}{{ service_item(s) }}{% endfor %}
+  </div>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0">Mail Services</h2>
+  <div class="ext-grid">
+    {% for s in mail_svcs %}{{ service_item(s) }}{% endfor %}
   </div>
 </div>
 {% endblock %}

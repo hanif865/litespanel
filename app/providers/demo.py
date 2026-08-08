@@ -1054,16 +1054,16 @@ class DemoProvider(Provider):
     def list_services(self) -> list[dict]:
         state = self._services_load()
         rows = []
-        for key, label in config.MANAGED_SERVICES:
+        for key, label, group in config.MANAGED_SERVICES:
             status = state.get(key, "running")  # demo services are up by default
-            rows.append({"key": key, "label": label,
+            rows.append({"key": key, "label": label, "group": group,
                          "status": status, "available": True})
         return rows
 
     def control_service(self, key: str, action: str) -> tuple[bool, str]:
         if action not in ("start", "stop", "restart"):
             return False, f"Unknown action: {action}"
-        label = dict(config.MANAGED_SERVICES).get(key)
+        label = config.SERVICE_LABELS.get(key)
         if label is None:
             return False, f"Unknown service: {key}"
         state = self._services_load()
@@ -1071,6 +1071,21 @@ class DemoProvider(Provider):
         self._services_save(state)
         past = {"start": "started", "stop": "stopped", "restart": "restarted"}[action]
         return True, f"(demo) {past} {label}."
+
+    def service_status(self, key: str) -> tuple[bool, str]:
+        label = config.SERVICE_LABELS.get(key)
+        if label is None:
+            return False, f"Unknown service: {key}"
+        running = self._services_load().get(key, "running") == "running"
+        active = "active (running)" if running else "inactive (dead)"
+        text = (
+            f"* {key}.service - {label}\n"
+            f"     Loaded: loaded (/lib/systemd/system/{key}.service; enabled)\n"
+            f"     Active: {active} since Fri 2026-08-08 00:00:00 UTC\n"
+            f"   Main PID: 1234 ({key})\n"
+            f"     (demo) Simulated output — no real systemctl on the dev box.\n"
+        )
+        return True, text
 
     # --- Panel self-update -------------------------------------------------
     # No real git/systemd on the dev box. A small JSON file simulates the
