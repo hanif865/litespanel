@@ -1051,10 +1051,35 @@ class DemoProvider(Provider):
         config.FIREWALL_DIR.mkdir(parents=True, exist_ok=True)
         self._services_file().write_text(json.dumps(state, indent=2), encoding="utf-8")
 
+    def _installed_file(self) -> Path:
+        return config.FIREWALL_DIR / "installed_services.json"
+
+    def _installed_load(self) -> set:
+        import json
+
+        try:
+            data = json.loads(self._installed_file().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            data = []
+        return set(data) if isinstance(data, list) else set()
+
+    def _installed_save(self, installed: set) -> None:
+        import json
+
+        config.FIREWALL_DIR.mkdir(parents=True, exist_ok=True)
+        self._installed_file().write_text(json.dumps(sorted(installed), indent=2), encoding="utf-8")
+
     def list_services(self) -> list[dict]:
         state = self._services_load()
+        installed = self._installed_load()
         rows = []
         for key, label, group in config.MANAGED_SERVICES:
+            # Installable services (redis, varnish) start "not installed" in the
+            # demo until the Install button is used, so the button is exercisable.
+            if key in config.SERVICE_PACKAGES and key not in installed:
+                rows.append({"key": key, "label": label, "group": group,
+                             "status": "unknown", "available": False})
+                continue
             status = state.get(key, "running")  # demo services are up by default
             rows.append({"key": key, "label": label, "group": group,
                          "status": status, "available": True})
@@ -1086,6 +1111,15 @@ class DemoProvider(Provider):
             f"     (demo) Simulated output — no real systemctl on the dev box.\n"
         )
         return True, text
+
+    def install_service(self, key: str) -> tuple[bool, str]:
+        label = config.SERVICE_LABELS.get(key, key)
+        if key not in config.SERVICE_PACKAGES:
+            return False, f"{label} can't be installed from the panel."
+        installed = self._installed_load()
+        installed.add(key)
+        self._installed_save(installed)
+        return True, f"(demo) installed {label}."
 
     # --- Panel self-update -------------------------------------------------
     # No real git/systemd on the dev box. A small JSON file simulates the

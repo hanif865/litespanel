@@ -44,6 +44,13 @@
     <div class="ext-meta">
       {% if not s.available %}
         <span class="pill">not installed</span>
+        {% if s.key in installable %}
+        <form method="post" action="/whm/services/install" class="inline-form"
+              onsubmit="return confirm('Install {{ s.label }} now? This runs apt-get on the server.');">
+          <input type="hidden" name="key" value="{{ s.key }}">
+          <button class="btn btn-xs btn-primary">Install</button>
+        </form>
+        {% endif %}
       {% elif s.status == 'running' %}
         <span class="pill pill-ok">running</span>
       {% elif s.status == 'stopped' %}

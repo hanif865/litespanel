@@ -147,6 +147,14 @@ MANAGED_SERVICES = (
 # key -> label, for provider control_service messages and the status page.
 SERVICE_LABELS = {key: label for key, label, _group in MANAGED_SERVICES}
 
+# Services the panel can apt-install on demand. key -> apt package(s). Only
+# these keys are installable from the Service Manager; anything else is rejected
+# before apt runs, so a client can never install an arbitrary package.
+SERVICE_PACKAGES = {
+    "redis":   ["redis-server"],
+    "varnish": ["varnish"],
+}
+
 
 def ensure_dirs() -> None:
     """Create the data directories on startup (idempotent)."""

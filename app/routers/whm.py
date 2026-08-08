@@ -480,7 +480,8 @@ def services(request: Request, admin: User = Depends(require_admin), db: Session
     flash = request.session.pop("flash", None)
     return templates.TemplateResponse(
         request, "whm/services.html",
-        {"user": admin, "active": "services", "flash": flash, "services": rows},
+        {"user": admin, "active": "services", "flash": flash, "services": rows,
+         "installable": list(config.SERVICE_PACKAGES)},
     )
 
 
@@ -493,6 +494,22 @@ async def services_control(
         _flash(request, "❌ Unknown action.")
         return RedirectResponse("/whm/services", status_code=303)
     ok, message = await run_in_threadpool(get_provider().control_service, service, action)
+    _flash(request, ("✅ " if ok else "❌ ") + message)
+    return RedirectResponse("/whm/services", status_code=303)
+
+
+# Install a service on demand (apt-get as root). Only catalog keys that are in
+# config.SERVICE_PACKAGES are installable — anything else is rejected before apt
+# runs, so a client can never install an arbitrary package. Admin-only.
+@router.post("/services/install")
+async def services_install(
+    request: Request, key: str = Form(...),
+    admin: User = Depends(require_admin), db: Session = Depends(get_db),
+):
+    if key not in config.SERVICE_PACKAGES:
+        _flash(request, "❌ That service can't be installed from here.")
+        return RedirectResponse("/whm/services", status_code=303)
+    ok, message = await run_in_threadpool(get_provider().install_service, key)
     _flash(request, ("✅ " if ok else "❌ ") + message)
     return RedirectResponse("/whm/services", status_code=303)
 

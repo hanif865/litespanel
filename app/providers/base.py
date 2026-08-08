@@ -693,6 +693,16 @@ class Provider(ABC):
         not installed or systemctl is unavailable. Admin-only at the router.
         """
 
+    @abstractmethod
+    def install_service(self, key: str) -> tuple[bool, str]:
+        """Install one managed service on demand. Returns (ok, message).
+
+        `key` must be in config.SERVICE_PACKAGES (rejected otherwise, before
+        anything runs, so a client can never install an arbitrary package).
+        Runs the distro package install as root, then enables + starts the
+        unit. Admin-only at the router layer.
+        """
+
     # --- Panel self-update (admin-only) -----------------------------------
     @abstractmethod
     def panel_version(self) -> dict:

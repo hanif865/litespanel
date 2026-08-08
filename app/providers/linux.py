@@ -1732,6 +1732,32 @@ class LinuxProvider(Provider):
         # ignore the return code and prefer stdout.
         return True, proc.stdout or proc.stderr or "(no output)"
 
+    def install_service(self, key: str) -> tuple[bool, str]:
+        import os
+
+        pkgs = config.SERVICE_PACKAGES.get(key)
+        label = config.SERVICE_LABELS.get(key, key)
+        if not pkgs:
+            return False, f"{label} can't be installed from the panel."
+        # Bare subprocess.run with a timeout (not _run, which has none) so a
+        # slow apt can never hang the worker. Mirrors install_node / _apt.
+        env = {**os.environ, "DEBIAN_FRONTEND": "noninteractive"}
+        proc = subprocess.run(
+            ["apt-get", "install", "-y", *pkgs],
+            capture_output=True, text=True, env=env, timeout=600,
+        )
+        if proc.returncode != 0:
+            return False, (proc.stderr or proc.stdout).strip()[-500:]
+        # Bring it up now and on boot. If it installs but won't start, the
+        # Status page will show why — don't fail the whole install for that.
+        unit, _load = self._resolve_unit(key)
+        if unit:
+            try:
+                _run(["systemctl", "enable", "--now", f"{unit}.service"])
+            except RuntimeError:
+                pass
+        return True, f"Installed {label}."
+
     # --- Panel self-update ------------------------------------------------
     # Admin-only: check for updates and upgrade the panel itself via git pull +
     # migrations + restart. The work runs fully detached (systemd-run --scope)
