@@ -102,6 +102,37 @@ def _wp_db_name(docroot: Path) -> str | None:
     return m.group(1) if m else None
 
 
+_FS_METHOD_LINE = "define('FS_METHOD', 'direct');"
+_FS_METHOD_RE = re.compile(r"""define\s*\(\s*['"]FS_METHOD['"]""")
+_WP_SETTINGS_RE = re.compile(r"^([ \t]*require_once\b.*wp-settings\.php.*)$", re.MULTILINE)
+
+
+def _ensure_fs_direct(cfg: Path) -> bool:
+    """Force a wp-config.php to write files directly instead of popping the FTP
+    "Connection Information" prompt, by injecting define('FS_METHOD', 'direct').
+
+    Idempotent: returns True only when the file was actually changed (no existing
+    FS_METHOD define). The line is inserted just before the wp-settings.php
+    require so it takes effect for both panel-generated and stock configs.
+    """
+    try:
+        text = cfg.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return False
+    if _FS_METHOD_RE.search(text):
+        return False
+    m = _WP_SETTINGS_RE.search(text)
+    if m:
+        new_text = text[:m.start()] + _FS_METHOD_LINE + "\n" + text[m.start():]
+    else:  # no wp-settings require (unusual) — append to the end of the file
+        new_text = text.rstrip() + "\n" + _FS_METHOD_LINE + "\n"
+    try:
+        cfg.write_text(new_text, encoding="utf-8")
+    except OSError:
+        return False
+    return True
+
+
 def _list_installs(db: Session, user: User) -> list[dict]:
     """Every WordPress install this account has — panel-managed ones (any
     domain root, subdirectory or subdomain) plus any set up outside the panel
@@ -181,6 +212,7 @@ define('DB_COLLATE', '');
 {salts}
 $table_prefix = 'wp_';
 define('WP_DEBUG', false);
+define('FS_METHOD', 'direct');
 {extra}
 if (!defined('ABSPATH')) define('ABSPATH', __DIR__ . '/');
 require_once ABSPATH . 'wp-settings.php';
@@ -447,6 +479,57 @@ def _wipe_docroot(docroot: Path) -> None:
                 child.unlink()
             except OSError:
                 pass
+
+
+@router.post("/{domain_id}/fix-perms")
+def wp_fix_perms(
+    request: Request,
+    domain_id: int,
+    path: str = Form(""),
+    subdomain_id: int | None = Form(None),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """Make being a WordPress admin enough to install plugins/themes and upload
+    files — no "Connection Information" FTP prompt. Two halves: force
+    FS_METHOD 'direct' in wp-config.php, then hand the install to the account's
+    system user so the PHP-FPM pool (which runs as that user) can write it
+    directly. Covers panel-managed installs and ones set up outside the panel."""
+    domain = db.get(Domain, domain_id)
+    if domain is None or domain.owner_id != user.id:
+        _flash(request, "❌ Site not found.")
+        return RedirectResponse("/wordpress", status_code=303)
+
+    path = path.strip().strip("/")
+    subdomain = None
+    if subdomain_id:
+        subdomain = db.get(Subdomain, subdomain_id)
+        if subdomain is None or subdomain.parent_id != domain.id:
+            _flash(request, "❌ Subdomain not found.")
+            return RedirectResponse("/wordpress", status_code=303)
+
+    docroot = Path(subdomain.docroot if subdomain else domain.docroot)
+    install_dir = docroot / path if path else docroot
+    cfg = install_dir / "wp-config.php"
+    if not cfg.exists():
+        _flash(request, "❌ No WordPress (wp-config.php) found there.")
+        return RedirectResponse("/wordpress", status_code=303)
+
+    # 1. Force direct filesystem writes. Edit BEFORE set_owner so the rewritten
+    #    file also ends up owned by the account.
+    _ensure_fs_direct(cfg)
+    # 2. Give the whole install to the account's system user (the FPM pool user).
+    sysuser = domain.owner.system_user or domain.owner.username
+    try:
+        get_provider().set_owner(install_dir, sysuser)
+    except Exception as exc:  # noqa: BLE001
+        _flash(request, f"❌ Could not update file ownership: {exc}")
+        return RedirectResponse("/wordpress", status_code=303)
+
+    where = (subdomain.fqdn if subdomain else domain.name) + (f"/{path}" if path else "")
+    _flash(request, f"✅ Fixed permissions for {where} — WordPress can now install "
+                    f"plugins/themes and upload files directly (no FTP prompt).")
+    return RedirectResponse("/wordpress", status_code=303)
 
 
 @router.post("/{domain_id}/uninstall")
