@@ -137,4 +137,36 @@
     {% endif %}
   {% endif %}
 </div>
+
+{% set redis = services | selectattr('key', 'equalto', 'redis') | list | first %}
+<div class="card">
+  <h2 style="margin-top:0">Redis tuning</h2>
+  <p class="muted">
+    Cap how much memory Redis may use and choose what it evicts when full, so a
+    busy object cache or session store can't grow until it starves the box.
+    Applying <strong>restarts Redis</strong> (its cached data clears) via a systemd
+    drop-in. Redis is used by the WordPress object cache and PHP sessions.
+  </p>
+  <p>Current: <strong>{{ redis_tuning.maxmemory_mb }} MB</strong>,
+     policy <code>{{ redis_tuning.policy }}</code>.</p>
+  {% if redis and redis.available and redis.status == 'running' %}
+  <form method="post" action="/whm/services/redis-tune" class="inline-form"
+        onsubmit="return confirm('Apply Redis tuning now? This restarts Redis, so anything currently cached in it clears.');">
+    <label class="small">Max memory (MB)
+      <input type="number" name="maxmemory_mb" min="16" max="1048576" step="1"
+             value="{{ redis_tuning.maxmemory_mb }}" required style="width:9rem">
+    </label>
+    <label class="small" style="margin-left:.75rem">Eviction policy
+      <select name="policy">
+        {% for p in redis_policies %}
+        <option value="{{ p }}" {% if p == redis_tuning.policy %}selected{% endif %}>{{ p }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <button class="btn btn-primary" style="margin-left:.75rem">Apply</button>
+  </form>
+  {% else %}
+  <p class="muted">Install and start Redis above to tune it.</p>
+  {% endif %}
+</div>
 {% endblock %}

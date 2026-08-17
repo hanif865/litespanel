@@ -50,6 +50,17 @@ NGINX_LIMITS = Path("/etc/nginx/litespanel-limits")
 VARNISH_VCL = Path("/etc/varnish/litespanel.vcl")
 VARNISH_OVERRIDE = Path("/etc/systemd/system/varnish.service.d/litespanel.conf")
 
+# Redis daemon tuning artifacts. The systemd drop-in resets ExecStart and
+# relaunches redis-server with our memory/eviction flags appended after the
+# stock config file (CLI options win over redis.conf, so we never edit the
+# distro file). The drop-in PATH is derived per-host from the resolved unit
+# (redis-server vs redis differ by distro), so it isn't a fixed constant here.
+REDIS_BIN = "/usr/bin/redis-server"
+# Plain string, not Path(): this is a fixed POSIX path baked into a systemd
+# ExecStart, so it must render with forward slashes even when the module is
+# imported on the Windows dev box (a WindowsPath would emit backslashes).
+REDIS_CONF = "/etc/redis/redis.conf"
+
 # Database/user names must be plain identifiers — validated here as defense in
 # depth so a bad name can never be interpolated into SQL, even if a caller
 # forgets to check.
@@ -201,6 +212,13 @@ class LinuxProvider(Provider):
         }
         for key in sorted(effective):
             value = str(effective[key]).replace("\n", " ").strip()
+            # An empty value must never be written: `php_admin_value[foo] =` with
+            # nothing after it overrides PHP's built-in default with "" and can
+            # break the setting (e.g. an empty session.save_path breaks sessions).
+            # Skipping it lets a catalog directive default to "" = "leave PHP's
+            # default" while a real value still materializes.
+            if not value:
+                continue
             if value in ("On", "Off", "on", "off", "1", "0"):
                 lines.append(f"php_admin_flag[{key}] = {value}")
             else:
@@ -2040,6 +2058,79 @@ class LinuxProvider(Provider):
             return False, msg
         mode = "ON" if enabled else "OFF"
         return True, f"Web fronting turned {mode} — {msg}"
+
+    # --- Redis daemon tuning (admin-only) ---------------------------------
+    def _redis_override(self, maxmemory_mb: int, policy: str) -> str:
+        # Clear ExecStart first (systemd appends otherwise), then relaunch
+        # redis-server with our caps appended after the stock config file — CLI
+        # options override redis.conf, so we win without editing the distro file.
+        # --supervised systemd --daemonize no mirror Debian's own unit so systemd
+        # keeps tracking the process. maxmemory_mb/policy are pre-validated by the
+        # caller (clamped int + allowlisted policy), so nothing here can inject.
+        return (
+            "[Service]\n"
+            "ExecStart=\n"
+            f"ExecStart={REDIS_BIN} {REDIS_CONF} "
+            f"--maxmemory {maxmemory_mb}mb --maxmemory-policy {policy} "
+            "--supervised systemd --daemonize no\n"
+        )
+
+    def tune_redis(self, maxmemory_mb: int, policy: str) -> tuple[bool, str]:
+        # Validate + clamp before anything touches the system. The router checks
+        # too, but the provider is the last line of defense: a bad value can
+        # never reach the systemd unit.
+        if policy not in config.REDIS_EVICTION_POLICIES:
+            return False, f"Unknown eviction policy: {policy}"
+        try:
+            maxmemory_mb = int(maxmemory_mb)
+        except (TypeError, ValueError):
+            return False, "maxmemory must be a whole number of MB."
+        maxmemory_mb = max(config.REDIS_MAXMEMORY_MIN_MB,
+                           min(config.REDIS_MAXMEMORY_MAX_MB, maxmemory_mb))
+        unit, _load = self._resolve_unit("redis")
+        if unit is None:
+            return False, "Redis is not installed on this server."
+        # Drop-in path follows the resolved unit so we never guess the name.
+        override = Path(f"/etc/systemd/system/{unit}.service.d/litespanel.conf")
+        prev = override.read_text() if override.exists() else None
+        try:
+            override.parent.mkdir(parents=True, exist_ok=True)
+            override.write_text(self._redis_override(maxmemory_mb, policy))
+        except OSError as exc:
+            return False, f"could not write Redis tuning: {exc}"
+
+        def _rollback() -> None:
+            # Put the previous drop-in back (or remove ours) and best-effort
+            # restart, so a failed tune never leaves Redis wedged on our config.
+            try:
+                if prev is None:
+                    override.unlink(missing_ok=True)
+                else:
+                    override.write_text(prev)
+                _run(["systemctl", "daemon-reload"])
+                subprocess.run(["systemctl", "restart", f"{unit}.service"],
+                               capture_output=True, text=True)
+            except (RuntimeError, OSError):
+                pass
+
+        try:
+            _run(["systemctl", "daemon-reload"])
+            _run(["systemctl", "restart", f"{unit}.service"])
+        except RuntimeError as exc:
+            _rollback()
+            return False, f"Redis failed to restart, rolled back: {exc}"
+        try:
+            _run(["systemctl", "enable", f"{unit}.service"])
+        except RuntimeError:
+            pass  # already-enabled / masked shouldn't fail the tune
+        # Persist only after the daemon actually came back up.
+        try:
+            config.REDIS_TUNING_FILE.write_text(
+                json.dumps({"maxmemory_mb": maxmemory_mb, "policy": policy})
+            )
+        except OSError as exc:
+            return False, f"Redis tuned but could not save state: {exc}"
+        return True, f"Redis capped at {maxmemory_mb} MB, policy {policy}."
 
     # --- Panel self-update ------------------------------------------------
     # Admin-only: check for updates and upgrade the panel itself via git pull +

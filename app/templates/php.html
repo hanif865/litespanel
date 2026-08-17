@@ -110,11 +110,25 @@
     <input type="hidden" name="domain_id" value="{{ scope_domain.id if scope_domain else '' }}">
     <div class="ext-grid">
       {% for key in directive_order %}
+        {% if key not in ('session.save_handler', 'session.save_path') %}
         <div>
           <label class="small" style="display:block; margin-bottom:.25rem;"><code>{{ key }}</code></label>
           <input type="text" class="ini-value" name="dir_{{ key }}" value="{{ dir_state[key] }}">
         </div>
+        {% endif %}
       {% endfor %}
+    </div>
+    <div style="margin-top:.85rem; padding-top:.75rem; border-top:1px solid var(--border, #e5e7eb);">
+      <label class="small" style="display:flex; align-items:center; gap:.4rem;">
+        <input type="checkbox" name="sessions_redis" value="1"
+               {% if dir_state['session.save_handler'] == 'redis' %}checked{% endif %}>
+        Store PHP sessions in Redis (isolated per account)
+      </label>
+      <p class="muted small" style="margin:.35rem 0 0;">
+        Faster than file-based sessions and shared across PHP-FPM workers. Requires Redis
+        running (WHM &rsaquo; Service Manager) and the <code>redis</code> PHP extension. Each
+        account gets its own key prefix, so sessions never collide between accounts.
+      </p>
     </div>
     <div class="card-actions">
       <button type="submit" class="btn btn-sm btn-primary">Save Options</button>

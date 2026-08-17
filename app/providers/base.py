@@ -263,6 +263,33 @@ def web_fronting_enabled() -> bool:
     return bool(data.get("varnish", False))
 
 
+def redis_tuning() -> dict:
+    """The persisted Redis daemon tuning (maxmemory + eviction policy).
+
+    Mirrors web_fronting_enabled(): both the WHM card and the linux provider
+    read this one file so they never disagree on the current values. Missing,
+    unreadable, or malformed → safe defaults (256 MB / noeviction, matching
+    Redis's own conservative stance). The policy is validated against the
+    allowlist and a bad maxmemory is clamped, so a hand-edited file can never
+    feed an out-of-range value to the UI or a re-apply."""
+    data: dict = {}
+    try:
+        loaded = json.loads(config.REDIS_TUNING_FILE.read_text())
+        if isinstance(loaded, dict):
+            data = loaded
+    except (OSError, ValueError):
+        data = {}
+    try:
+        mb = int(data.get("maxmemory_mb", 256))
+    except (TypeError, ValueError):
+        mb = 256
+    mb = max(config.REDIS_MAXMEMORY_MIN_MB, min(config.REDIS_MAXMEMORY_MAX_MB, mb))
+    policy = str(data.get("policy", "noeviction"))
+    if policy not in config.REDIS_EVICTION_POLICIES:
+        policy = "noeviction"
+    return {"maxmemory_mb": mb, "policy": policy}
+
+
 class Provider(ABC):
     """OS-level operations for one hosting node."""
 
@@ -744,6 +771,22 @@ class Provider(ABC):
         the router so the provider never imports models. Node-app domains
         (is_node) stay direct. Validates the whole nginx config once and rolls
         back all files on failure. Admin-only at the router layer.
+        """
+
+    @abstractmethod
+    def tune_redis(self, maxmemory_mb: int, policy: str) -> tuple[bool, str]:
+        """Cap Redis's memory and set its eviction policy. Returns (ok, message).
+
+        `policy` MUST be one of config.REDIS_EVICTION_POLICIES (rejected
+        otherwise, before anything runs) and `maxmemory_mb` is clamped to
+        [config.REDIS_MAXMEMORY_MIN_MB, config.REDIS_MAXMEMORY_MAX_MB] — so a
+        client can never inject an arbitrary redis.conf/systemd directive nor an
+        out-of-range size. Writes a systemd drop-in mapping the two values onto
+        redis-server flags, reloads + restarts the unit, and persists the choice
+        to config.REDIS_TUNING_FILE. A restart failure rolls the drop-in back so
+        Redis is never left wedged. Returns (False, message) when Redis is not
+        installed. Admin-only at the router layer — this restarts a server-wide
+        daemon and clears the cache.
         """
 
     # --- Panel self-update (admin-only) -----------------------------------

@@ -171,6 +171,25 @@ NGINX_BACKEND_PORT = int(_env("PANEL_NGINX_BACKEND_PORT", "8080"))
 # nginx (which would break the sandwich). One directory covers all domains.
 ACME_WEBROOT = _env("PANEL_ACME_WEBROOT", "/var/www/letsencrypt")
 
+# --- Redis daemon tuning (admin-only) --------------------------------------
+# Redis is installable from the Service Manager and consumed at runtime by the
+# WordPress object cache and PHP sessions. These knobs let an admin cap its
+# memory and pick an eviction policy so a full cache can't OOM the box. The
+# chosen values are persisted here and applied via a systemd drop-in (the
+# provider maps them onto redis-server flags — the client never sends a raw
+# directive). Default 256 MB / noeviction matches Redis's own conservative
+# stance; the panel clamps to [MIN, MAX] so a bad number can't reach systemd.
+REDIS_TUNING_FILE = DATA_DIR / "redis_tuning.json"
+REDIS_EVICTION_POLICIES = (
+    "noeviction",
+    "allkeys-lru", "allkeys-lfu",
+    "volatile-lru", "volatile-lfu",
+    "allkeys-random", "volatile-random",
+    "volatile-ttl",
+)
+REDIS_MAXMEMORY_MIN_MB = 16
+REDIS_MAXMEMORY_MAX_MB = 1048576  # 1 TiB — a sane upper bound, not a real target
+
 
 def ensure_dirs() -> None:
     """Create the data directories on startup (idempotent)."""

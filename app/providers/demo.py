@@ -163,7 +163,13 @@ class DemoProvider(Provider):
             "[PHP]",
         ]
         for key in sorted(directives):
-            lines.append(f"{key} = {directives[key]}")
+            value = str(directives[key]).strip()
+            # Skip empties so a catalog directive defaulting to "" means "use
+            # PHP's built-in default" rather than writing a blank that overrides
+            # it (mirrors the linux pool writer's guard).
+            if not value:
+                continue
+            lines.append(f"{key} = {value}")
         lines.append("")
         lines.append("; extensions")
         for name in sorted(extensions):
@@ -1134,6 +1140,28 @@ class DemoProvider(Provider):
             return False, f"could not save fronting flag: {exc}"
         mode = "ON" if enabled else "OFF"
         return True, f"(demo) web fronting turned {mode}."
+
+    def tune_redis(self, maxmemory_mb: int, policy: str) -> tuple[bool, str]:
+        # No real redis-server on the dev box: validate + clamp exactly like the
+        # linux provider (so a verify script can exercise the guards), then just
+        # persist the choice so the WHM card round-trips.
+        import json
+
+        if policy not in config.REDIS_EVICTION_POLICIES:
+            return False, f"Unknown eviction policy: {policy}"
+        try:
+            maxmemory_mb = int(maxmemory_mb)
+        except (TypeError, ValueError):
+            return False, "maxmemory must be a whole number of MB."
+        maxmemory_mb = max(config.REDIS_MAXMEMORY_MIN_MB,
+                           min(config.REDIS_MAXMEMORY_MAX_MB, maxmemory_mb))
+        try:
+            config.REDIS_TUNING_FILE.write_text(
+                json.dumps({"maxmemory_mb": maxmemory_mb, "policy": policy})
+            )
+        except OSError as exc:
+            return False, f"could not save Redis tuning: {exc}"
+        return True, f"(demo) Redis tuned: {maxmemory_mb} MB, policy {policy}."
 
     # --- Panel self-update -------------------------------------------------
     # No real git/systemd on the dev box. A small JSON file simulates the

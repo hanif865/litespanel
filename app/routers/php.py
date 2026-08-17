@@ -186,6 +186,16 @@ async def set_directives(
         value = form.get(f"dir_{key}")
         if value is not None and value.strip() != "":
             directives[key] = value.strip()
+    # PHP sessions on Redis is a guided, per-account toggle — never a raw knob.
+    # A shared Redis has no session isolation by default, so one account could read
+    # another's session keys. Force the server-derived, per-account-prefixed DSN
+    # (overriding whatever session.* the form posted) so isolation can't be bypassed.
+    if form.get("sessions_redis"):
+        directives["session.save_handler"] = "redis"
+        directives["session.save_path"] = f"tcp://127.0.0.1:6379?prefix={_account_user(user)}:"
+    else:
+        directives.pop("session.save_handler", None)
+        directives.pop("session.save_path", None)
     cfg.directives = directives
     _apply(cfg, user, domain)
     db.commit()

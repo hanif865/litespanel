@@ -133,6 +133,45 @@ def _ensure_fs_direct(cfg: Path) -> bool:
     return True
 
 
+_WP_REDIS_RE = re.compile(r"""define\s*\(\s*['"]WP_REDIS_PREFIX['"]""")
+
+
+def _ensure_wp_redis(cfg: Path, prefix: str) -> bool:
+    """Point a wp-config.php at the local Redis for object caching, by injecting
+    the WP_REDIS_* defines the redis-cache plugin reads.
+
+    A single Redis is shared by every account, and its default keyspace has no
+    per-site separation — so we give each install a unique WP_REDIS_PREFIX
+    (server-derived, never client-supplied) rather than a WP_REDIS_DATABASE
+    (Redis only has 16 numbered DBs, which doesn't scale). Idempotent: returns
+    True only when the file was actually changed (no existing WP_REDIS_PREFIX).
+    The block is inserted just before the wp-settings.php require, matching
+    _ensure_fs_direct, so it takes effect for panel-generated and stock configs.
+    """
+    try:
+        text = cfg.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return False
+    if _WP_REDIS_RE.search(text):
+        return False
+    safe_prefix = prefix.replace("\\", "\\\\").replace("'", "\\'")
+    block = (
+        "define('WP_REDIS_HOST', '127.0.0.1');\n"
+        "define('WP_REDIS_PORT', 6379);\n"
+        f"define('WP_REDIS_PREFIX', '{safe_prefix}:');\n"
+    )
+    m = _WP_SETTINGS_RE.search(text)
+    if m:
+        new_text = text[:m.start()] + block + text[m.start():]
+    else:  # no wp-settings require (unusual) — append to the end of the file
+        new_text = text.rstrip() + "\n" + block
+    try:
+        cfg.write_text(new_text, encoding="utf-8")
+    except OSError:
+        return False
+    return True
+
+
 def _list_installs(db: Session, user: User) -> list[dict]:
     """Every WordPress install this account has — panel-managed ones (any
     domain root, subdirectory or subdomain) plus any set up outside the panel
@@ -529,6 +568,81 @@ def wp_fix_perms(
     where = (subdomain.fqdn if subdomain else domain.name) + (f"/{path}" if path else "")
     _flash(request, f"✅ Fixed permissions for {where} — WordPress can now install "
                     f"plugins/themes and upload files directly (no FTP prompt).")
+    return RedirectResponse("/wordpress", status_code=303)
+
+
+@router.post("/{domain_id}/enable-redis")
+def wp_enable_redis(
+    request: Request,
+    domain_id: int,
+    path: str = Form(""),
+    subdomain_id: int | None = Form(None),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """Turn on the Redis object cache for one WordPress install: point wp-config
+    at the local Redis (with a per-install key prefix so accounts never collide),
+    then install + activate the redis-cache plugin and drop in its object-cache.php.
+    Ownership-gated exactly like fix-perms; opt-in only, so installs never depend
+    on Redis being up."""
+    domain = db.get(Domain, domain_id)
+    if domain is None or domain.owner_id != user.id:
+        _flash(request, "❌ Site not found.")
+        return RedirectResponse("/wordpress", status_code=303)
+
+    path = path.strip().strip("/")
+    subdomain = None
+    if subdomain_id:
+        subdomain = db.get(Subdomain, subdomain_id)
+        if subdomain is None or subdomain.parent_id != domain.id:
+            _flash(request, "❌ Subdomain not found.")
+            return RedirectResponse("/wordpress", status_code=303)
+
+    docroot = Path(subdomain.docroot if subdomain else domain.docroot)
+    install_dir = docroot / path if path else docroot
+    cfg = install_dir / "wp-config.php"
+    if not cfg.exists():
+        _flash(request, "❌ No WordPress (wp-config.php) found there.")
+        return RedirectResponse("/wordpress", status_code=303)
+
+    # Read-only precheck: don't wire a site to a Redis that isn't there. This is
+    # ownership-gated, so a non-admin reading service state here is safe.
+    try:
+        svcs = {s["key"]: s for s in get_provider().list_services()}
+    except Exception:  # noqa: BLE001
+        svcs = {}
+    redis_svc = svcs.get("redis")
+    if not redis_svc or not redis_svc.get("available") or redis_svc.get("status") != "running":
+        _flash(request, "❌ Redis isn't running — ask an admin to install and start it "
+                        "in WHM › Service Manager first.")
+        return RedirectResponse("/wordpress", status_code=303)
+
+    sysuser = domain.owner.system_user or domain.owner.username
+    # A single Redis is shared by every install; namespace this one with a unique,
+    # server-derived prefix (never client input) so caches can't read each other.
+    raw = f"wp_{sysuser}_{domain_id}_{subdomain_id or 0}_{path or 'root'}"
+    prefix = re.sub(r"[^A-Za-z0-9_]", "_", raw)
+
+    # 1. Wire wp-config to Redis BEFORE set_owner so the rewritten file stays
+    #    owned by the account (same ordering as fix-perms).
+    _ensure_wp_redis(cfg, prefix)
+    # 2. Install + activate the drop-in via wp-cli (the plugin writes object-cache.php).
+    ok1, _out1 = get_provider().run_wp_cli(
+        install_dir, sysuser, ["plugin", "install", "redis-cache", "--activate"])
+    ok2, out2 = get_provider().run_wp_cli(install_dir, sysuser, ["redis", "enable"])
+    # 3. Hand everything back to the account's system user (the FPM pool user).
+    try:
+        get_provider().set_owner(install_dir, sysuser)
+    except Exception as exc:  # noqa: BLE001
+        _flash(request, f"❌ Could not update file ownership: {exc}")
+        return RedirectResponse("/wordpress", status_code=303)
+
+    where = (subdomain.fqdn if subdomain else domain.name) + (f"/{path}" if path else "")
+    if config.PROVIDER == "linux" and not (ok1 and ok2):
+        _flash(request, f"⚠️ Redis wired into wp-config for {where}, but the redis-cache "
+                        f"plugin step reported: {out2[:200]}")
+    else:
+        _flash(request, f"✅ Redis object cache enabled for {where} — pages now cache in Redis.")
     return RedirectResponse("/wordpress", status_code=303)
 
 

@@ -152,6 +152,11 @@ _DIRECTIVES: list[tuple[str, str]] = [
     ("upload_max_filesize", _UPLOAD_DEFAULT),
     ("session.gc_maxlifetime", "1440"),
     ("date.timezone", "UTC"),
+    # Session storage backend. Default "" means "leave PHP's built-in default"
+    # (files) — the pool writers skip empty values, so this is a no-op until an
+    # account opts into Redis sessions, which sets these to redis + a tcp:// DSN.
+    ("session.save_handler", ""),
+    ("session.save_path", ""),
 ]
 
 DEFAULT_DIRECTIVES: dict[str, str] = dict(_DIRECTIVES)

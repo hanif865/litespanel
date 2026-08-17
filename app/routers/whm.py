@@ -26,7 +26,7 @@ from ..db import get_db
 from ..limits import _count
 from ..models import Database, Domain, EmailAccount, NodeApp, Package, PgDatabase, Subdomain, User
 from ..providers import get_provider
-from ..providers.base import SiteVhost, web_fronting_enabled
+from ..providers.base import SiteVhost, redis_tuning, web_fronting_enabled
 from ..routers.dashboard import _meter
 from ..routers.disk_usage import _dir_size
 from ..routers.domains import _DOMAIN_RE
@@ -483,7 +483,9 @@ def services(request: Request, admin: User = Depends(require_admin), db: Session
         request, "whm/services.html",
         {"user": admin, "active": "services", "flash": flash, "services": rows,
          "installable": list(config.SERVICE_PACKAGES),
-         "web_fronting": web_fronting_enabled()},
+         "web_fronting": web_fronting_enabled(),
+         "redis_tuning": redis_tuning(),
+         "redis_policies": config.REDIS_EVICTION_POLICIES},
     )
 
 
@@ -563,6 +565,33 @@ async def services_varnish_fronting(
             return RedirectResponse("/whm/services", status_code=303)
     sites = _all_site_vhosts(db)
     ok, message = await run_in_threadpool(get_provider().set_web_fronting, want_on, sites)
+    _flash(request, ("✅ " if ok else "❌ ") + message)
+    return RedirectResponse("/whm/services", status_code=303)
+
+
+# Cap Redis's memory and pick its eviction policy (a systemd drop-in + restart,
+# as root). Admin only. maxmemory_mb is an int (non-int → 422) and clamped to a
+# sane range; policy is checked against the allowlist — so neither can inject a
+# raw redis.conf/systemd directive. Refuses unless Redis is installed + running.
+@router.post("/services/redis-tune")
+async def services_redis_tune(
+    request: Request, maxmemory_mb: int = Form(...), policy: str = Form(...),
+    admin: User = Depends(require_admin), db: Session = Depends(get_db),
+):
+    svcs = {s["key"]: s for s in get_provider().list_services()}
+    r = svcs.get("redis")
+    if not r or not r.get("available"):
+        _flash(request, "❌ Install Redis first, then tune it.")
+        return RedirectResponse("/whm/services", status_code=303)
+    if r.get("status") != "running":
+        _flash(request, "❌ Start Redis first — it must be running before it can be tuned.")
+        return RedirectResponse("/whm/services", status_code=303)
+    if policy not in config.REDIS_EVICTION_POLICIES:
+        _flash(request, "❌ Unknown eviction policy.")
+        return RedirectResponse("/whm/services", status_code=303)
+    maxmemory_mb = max(config.REDIS_MAXMEMORY_MIN_MB,
+                       min(config.REDIS_MAXMEMORY_MAX_MB, maxmemory_mb))
+    ok, message = await run_in_threadpool(get_provider().tune_redis, maxmemory_mb, policy)
     _flash(request, ("✅ " if ok else "❌ ") + message)
     return RedirectResponse("/whm/services", status_code=303)
 

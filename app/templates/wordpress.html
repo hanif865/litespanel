@@ -38,6 +38,12 @@
             {% if i.subdomain %}<input type="hidden" name="subdomain_id" value="{{ i.subdomain.id }}">{% endif %}
             <button type="submit" class="btn btn-sm" title="Let WordPress admins install plugins/themes and upload files without an FTP prompt">🔓 Fix installs</button>
           </form>
+          <form method="post" action="/wordpress/{{ i.domain.id }}/enable-redis"
+                onsubmit="return confirm('Enable the Redis object cache for {{ i.display_host }}{% if i.path %}/{{ i.path }}{% endif %}?\n\nRedis must be installed and running (WHM › Service Manager). This installs the redis-cache plugin and points wp-config at Redis.')">
+            <input type="hidden" name="path" value="{{ i.path }}">
+            {% if i.subdomain %}<input type="hidden" name="subdomain_id" value="{{ i.subdomain.id }}">{% endif %}
+            <button type="submit" class="btn btn-sm" title="Cache WordPress objects in Redis for faster page loads">⚡ Enable Redis cache</button>
+          </form>
           {% endif %}
           <form method="post" action="/wordpress/{{ i.domain.id }}/uninstall"
                 onsubmit="return confirm('UNINSTALL WordPress from {{ i.display_host }}{% if i.path %}/{{ i.path }}{% endif %}?\n\nThis permanently deletes ALL site files{% if i.db_name %} and drops the database {{ i.db_name }}{% endif %}. This cannot be undone.')">
@@ -53,6 +59,7 @@
   <p class="muted small" style="margin-top:.6rem"><strong>Uninstall</strong> deletes the site files and its database.
     <strong>Forget</strong> only removes it from this list.
     <strong>Fix installs</strong> lets WordPress admins install plugins/themes and upload files directly, with no FTP prompt (it corrects file ownership and sets <code>FS_METHOD</code> to direct).
+    <strong>Enable Redis cache</strong> installs the redis-cache plugin and points the site at Redis for a faster object cache (Redis must be running — see WHM › Service Manager).
     Sites marked <span class="badge">detected</span> were set up outside the panel — auto-login isn't available for them, but they can still be uninstalled.</p>
 </div>
 {% endif %}
