@@ -35,14 +35,54 @@ def _ssl_error_reason(exc: Exception) -> str:
     return reason[:300] or "certificate issuance failed"
 
 
+def _refresh_live_expiry(db: Session, provider, domains) -> None:
+    """Reconcile each stored cert expiry with the real on-disk certificate.
+
+    certbot's renewal timer rewrites the cert silently; the stored date is only
+    set at issue time, so without this the panel would show a stale (eventually
+    "expired") date even though the live cert is fine. Compared by calendar day
+    to avoid churny writes. Best-effort per cert — a single unreadable file must
+    not stop the others being refreshed."""
+    changed = False
+    for domain in domains:
+        for owner in (domain, *domain.subdomains):
+            cert = owner.certificate
+            if not cert or not cert.cert_path:
+                continue
+            try:
+                live = provider.live_cert_expiry(cert.cert_path)
+            except Exception:  # noqa: BLE001 — skip this cert, keep going
+                continue
+            if not live:
+                continue
+            cur = cert.expires_at
+            cur_naive = cur.replace(tzinfo=None) if (cur and cur.tzinfo) else cur
+            if cur_naive is None or live.replace(tzinfo=None).date() != cur_naive.date():
+                cert.expires_at = live
+                changed = True
+    if changed:
+        db.commit()
+
+
 @router.get("")
 def list_ssl(request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
     domains = db.scalars(
         select(Domain).where(Domain.owner_id == user.id).order_by(Domain.name)
     ).all()
+    provider = get_provider()
+    try:
+        _refresh_live_expiry(db, provider, domains)
+    except Exception:  # noqa: BLE001 — a refresh hiccup must never 500 the page
+        db.rollback()
+    try:
+        autorenew = provider.autorenew_active()
+    except Exception:  # noqa: BLE001
+        autorenew = False
     flash = request.session.pop("flash", None)
     return templates.TemplateResponse(
-        request, "ssl.html", {"user": user, "domains": domains, "active": "ssl", "flash": flash}
+        request, "ssl.html",
+        {"user": user, "domains": domains, "active": "ssl",
+         "flash": flash, "autorenew": autorenew},
     )
 
 

@@ -51,6 +51,12 @@ NGINX_LIMITS = Path("/etc/nginx/litespanel-limits")
 VARNISH_VCL = Path("/etc/varnish/litespanel.vcl")
 VARNISH_OVERRIDE = Path("/etc/systemd/system/varnish.service.d/litespanel.conf")
 
+# certbot runs every executable in this dir after a successful renewal. A single
+# global deploy hook (written at first issue) reloads nginx/varnish so a silently
+# auto-renewed cert is served immediately, no manual reload — the piece that makes
+# renewal truly hands-off, cPanel AutoSSL-style.
+_RENEW_HOOK_DIR = Path("/etc/letsencrypt/renewal-hooks/deploy")
+
 # Redis daemon tuning artifacts. The systemd drop-in resets ExecStart and
 # relaunches redis-server with our memory/eviction flags appended after the
 # stock config file (CLI options win over redis.conf, so we never edit the
@@ -1117,6 +1123,7 @@ class LinuxProvider(Provider):
             _run(base + ["-d", domain, "-d", f"www.{domain}"])
         except Exception:  # noqa: BLE001 — www may not resolve; retry apex only.
             _run(base + ["-d", domain])
+        self._ensure_renew_hook()  # so future auto-renewals reload the web stack
         now = datetime.now(timezone.utc)
         from datetime import timedelta
 
@@ -1129,6 +1136,56 @@ class LinuxProvider(Provider):
 
     def revoke_certificate(self, domain: str) -> None:
         _run(["certbot", "revoke", "--cert-name", domain, "--non-interactive"])
+
+    def _ensure_renew_hook(self) -> None:
+        """Drop a global certbot deploy hook that reloads the web stack after any
+        renewal. Best-effort: renewal still succeeds without it (the cert would
+        just need a manual reload), so a read-only /etc must never fail issuance."""
+        try:
+            _RENEW_HOOK_DIR.mkdir(parents=True, exist_ok=True)
+            hook = _RENEW_HOOK_DIR / "litespanel-reload.sh"
+            hook.write_text(
+                "#!/bin/sh\n"
+                "# Managed by LitesPanel: reload web services after a cert renewal\n"
+                "# so the freshly-issued certificate is served without manual action.\n"
+                "systemctl reload nginx 2>/dev/null || true\n"
+                "systemctl reload varnish 2>/dev/null || true\n"
+            )
+            hook.chmod(0o755)
+        except (OSError, PermissionError):
+            pass
+
+    def live_cert_expiry(self, cert_path: str) -> datetime | None:
+        """notAfter of the leaf cert on disk (via openssl), or None if unreadable.
+
+        openssl prints e.g. `notAfter=Nov 18 12:00:00 2026 GMT`; single-digit days
+        are space-padded, so whitespace is collapsed before parsing. Always GMT."""
+        if not cert_path or not Path(cert_path).exists():
+            return None
+        try:
+            out = _run(["openssl", "x509", "-enddate", "-noout", "-in", cert_path])
+        except (RuntimeError, FileNotFoundError, OSError):
+            return None
+        _, _, raw = out.partition("=")
+        raw = " ".join(raw.split())              # collapse the space-padded day
+        if raw.endswith(" GMT"):
+            raw = raw[:-4]
+        try:
+            return datetime.strptime(raw, "%b %d %H:%M:%S %Y").replace(tzinfo=timezone.utc)
+        except ValueError:
+            return None
+
+    def autorenew_active(self) -> bool:
+        """certbot's automatic renewal is on when its systemd timer is
+        enabled/active, or (older setups) the packaged cron job is present."""
+        for check in (["systemctl", "is-enabled", "certbot.timer"],
+                      ["systemctl", "is-active", "certbot.timer"]):
+            try:
+                if subprocess.run(check, capture_output=True, text=True).returncode == 0:
+                    return True
+            except (OSError, FileNotFoundError):
+                pass
+        return Path("/etc/cron.d/certbot").exists()
 
     def sync_zone(self, domain: str, records: list[dict]) -> None:
         # DNS is only served locally when BIND is installed on this host. Many

@@ -6,6 +6,22 @@
 <p class="muted">Issue free Let's Encrypt certificates for your domains.</p>
 
 {% if domains %}
+{% if autorenew %}
+<div class="ar-banner ar-on">
+  🔄 <strong>Auto-renew is ON.</strong>
+  Let's Encrypt certificates are valid for 90 days — there's no "unlimited"
+  option from any browser-trusted authority. Instead they renew
+  <strong>themselves</strong> automatically ~30 days before expiry, so your
+  sites stay secure with nothing to do. (Use <strong>Renew</strong> to refresh one now.)
+</div>
+{% else %}
+<div class="ar-banner ar-off">
+  ⚠️ <strong>Auto-renew is OFF on this server.</strong>
+  Turn on certbot's renewal timer (<code>systemctl enable --now certbot.timer</code>)
+  or click <strong>Renew</strong> before a certificate's expiry date.
+</div>
+{% endif %}
+
 <table class="table">
   <thead><tr><th>Domain</th><th>Status</th><th>Issuer</th><th>Expires</th><th>Actions</th></tr></thead>
   <tbody>
@@ -17,7 +33,11 @@
         {% else %}<span class="pill">🔓 None</span>{% endif %}
       </td>
       <td class="muted">{{ d.certificate.issuer if d.certificate else '—' }}</td>
-      <td class="muted">{{ d.certificate.expires_at.strftime('%Y-%m-%d') if d.certificate else '—' }}</td>
+      <td class="muted">
+        {% if d.certificate %}{{ d.certificate.expires_at.strftime('%Y-%m-%d') }}
+          {% if autorenew %}<div class="ar-tag">🔄 auto-renews</div>{% endif %}
+        {% else %}—{% endif %}
+      </td>
       <td class="actions">
         {% if d.certificate %}
           <form method="post" action="/ssl/{{ d.id }}/revoke"
@@ -42,7 +62,11 @@
         {% else %}<span class="pill">🔓 None</span>{% endif %}
       </td>
       <td class="muted">{{ s.certificate.issuer if s.certificate else '—' }}</td>
-      <td class="muted">{{ s.certificate.expires_at.strftime('%Y-%m-%d') if s.certificate else '—' }}</td>
+      <td class="muted">
+        {% if s.certificate %}{{ s.certificate.expires_at.strftime('%Y-%m-%d') }}
+          {% if autorenew %}<div class="ar-tag">🔄 auto-renews</div>{% endif %}
+        {% else %}—{% endif %}
+      </td>
       <td class="actions">
         {% if s.certificate %}
           <form method="post" action="/ssl/sub/{{ s.id }}/revoke"
@@ -66,4 +90,12 @@
 {% else %}
 <div class="empty">Add a domain first, then issue SSL for it.</div>
 {% endif %}
+
+<style>
+.ar-banner { border-radius:8px; padding:.7rem .9rem; margin:.2rem 0 1rem; font-size:.86rem; line-height:1.5; }
+.ar-banner code { font-size:.8rem; }
+.ar-on { background:rgba(46,160,67,.10); border:1px solid rgba(46,160,67,.35); }
+.ar-off { background:rgba(210,153,34,.12); border:1px solid rgba(210,153,34,.4); }
+.ar-tag { font-size:.7rem; color:var(--ok, #2ea043); margin-top:.15rem; white-space:nowrap; }
+</style>
 {% endblock %}

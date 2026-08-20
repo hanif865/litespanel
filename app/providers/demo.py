@@ -507,6 +507,16 @@ class DemoProvider(Provider):
     def revoke_certificate(self, domain: str) -> None:
         (config.CERTS_DIR / f"{domain}.pem").unlink(missing_ok=True)
 
+    def live_cert_expiry(self, cert_path: str) -> datetime | None:
+        # Demo certs are placeholder PEMs with no real notAfter, so the panel
+        # keeps the stored date. On a real host the linux provider reads the
+        # actual expiry with openssl.
+        return None
+
+    def autorenew_active(self) -> bool:
+        # Simulate a healthy Linux box where certbot's renewal timer is on.
+        return True
+
     # --- DNS --------------------------------------------------------------
     def sync_zone(self, domain: str, records: list[dict]) -> None:
         lines = [

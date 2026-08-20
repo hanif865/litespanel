@@ -541,6 +541,20 @@ class Provider(ABC):
     def revoke_certificate(self, domain: str) -> None:
         ...
 
+    @abstractmethod
+    def live_cert_expiry(self, cert_path: str) -> datetime | None:
+        """Real notAfter of the cert on disk, or None if it can't be read.
+
+        The stored expiry is only set at issue time; certbot's renewal timer
+        rewrites the on-disk cert silently. Reading the live file lets the panel
+        show the true date (and self-correct after an automatic renewal)."""
+
+    @abstractmethod
+    def autorenew_active(self) -> bool:
+        """True when the host's automatic certbot renewal is switched on (its
+        systemd timer or the packaged cron job) — i.e. certificates renew
+        themselves ~30 days before expiry with no operator action."""
+
     # --- DNS --------------------------------------------------------------
     @abstractmethod
     def sync_zone(self, domain: str, records: list[dict]) -> None:
