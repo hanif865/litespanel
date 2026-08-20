@@ -12,6 +12,7 @@ plus a couple of admin-only actions (create-with-domain, password modification).
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Form, Request
@@ -40,6 +41,41 @@ router = APIRouter(prefix="/whm", tags=["whm"])
 
 def _flash(request: Request, message: str) -> None:
     request.session["flash"] = message
+
+
+# WHM "Create a New Account" result flags — cosmetic fields that round out the
+# copy-paste credential block so it matches the cPanel/WHM account format.
+_ACCOUNT_HASCGI = "y"          # the panel serves CGI/PHP for every account
+_ACCOUNT_CPANEL_MOD = "jupiter"  # the panel's theme (like cPanel's Jupiter)
+_ACCOUNT_IP_FLAG = "n"         # (n) = shared IP — no dedicated IP assigned
+
+
+def _username_base(domain: str) -> str:
+    """A cPanel-style base username from a domain: the second-level label,
+    alphanumeric-only, lowercased, forced to start with a letter, and capped so
+    there's room for a uniqueness suffix. Returns "" if nothing usable remains."""
+    d = (domain or "").strip().lower().removeprefix("www.")
+    label = d.split(".")[0]
+    cleaned = re.sub(r"[^a-z0-9]", "", label)
+    if not cleaned:
+        return ""
+    if not cleaned[0].isalpha():
+        cleaned = "u" + cleaned
+    return cleaned[:16]
+
+
+def _suggest_username(db: Session, domain: str) -> str:
+    """A unique username suggestion for a domain — the base, plus the smallest
+    numeric suffix that isn't taken (webseojapan -> webseojapan2 -> ...)."""
+    base = _username_base(domain)
+    if not base:
+        return ""
+    candidate, n = base, 1
+    while db.scalar(select(User.id).where(User.username == candidate)):
+        n += 1
+        suffix = str(n)
+        candidate = f"{base[:16 - len(suffix)]}{suffix}"
+    return candidate
 
 
 # --- Dashboard ------------------------------------------------------------
@@ -156,9 +192,52 @@ def create_account(
                   php_version="8.3", is_primary=True))
     db.commit()
 
-    plan = f" on package '{pkg.name}'" if pkg else ""
-    _flash(request, f"✅ {role.capitalize()} '{username}' created{plan} with primary domain {domain}.")
-    return RedirectResponse("/whm/accounts", status_code=303)
+    # Stash the one-time credentials for the result page (WHM shows them once).
+    # The plaintext password lives only in the manager's own session and is
+    # popped on the very next view — never persisted anywhere.
+    request.session["new_account"] = {
+        "user_id": new_user.id,
+        "username": username,
+        "password": password,
+        "domain": domain,
+        "role": role,
+        "package": pkg.name if pkg else "",
+    }
+    return RedirectResponse("/whm/accounts/created", status_code=303)
+
+
+# --- Create-account helpers (declared before /accounts/{user_id}) ----------
+@router.get("/accounts/suggest")
+def suggest_username(
+    domain: str = "",
+    manager: User = Depends(require_manager),
+    db: Session = Depends(get_db),
+):
+    """Live, unique username suggestion for the create-account form as the admin
+    types the domain. Manager-gated like the rest of WHM (JSON response)."""
+    return {"username": _suggest_username(db, domain)}
+
+
+@router.get("/accounts/created")
+def account_created(request: Request, manager: User = Depends(require_manager),
+                    db: Session = Depends(get_db)):
+    """Show a just-created account's credentials once, in the copy-paste WHM
+    format. Pops the one-time session payload so a refresh (or a direct visit)
+    can't replay it — it falls back to the accounts list instead."""
+    data = request.session.pop("new_account", None)
+    if not data:
+        return RedirectResponse("/whm/accounts", status_code=303)
+    acct = {
+        **data,
+        "ip": config.SERVER_IP,
+        "ip_flag": _ACCOUNT_IP_FLAG,
+        "hascgi": _ACCOUNT_HASCGI,
+        "cpanel_mod": _ACCOUNT_CPANEL_MOD,
+    }
+    return templates.TemplateResponse(
+        request, "whm/account_created.html",
+        {"user": manager, "active": "create", "acct": acct},
+    )
 
 
 # --- Account Information (per-account detail) ------------------------------

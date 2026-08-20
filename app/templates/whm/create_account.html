@@ -1,19 +1,27 @@
 {% extends "whm_base.html" %}
 {% block title %}Create a New Account{% endblock %}
 {% block content %}
+<style>
+  .wa-inline{display:flex;gap:.4rem;align-items:center;flex-wrap:wrap}
+  .wa-inline input{flex:1 1 12rem;min-width:10rem}
+  .btn-sm{padding:.3rem .6rem;font-size:.85rem;line-height:1;white-space:nowrap}
+  .wa-strength{height:6px;background:var(--border,#e5e7eb);border-radius:4px;overflow:hidden;margin:.5rem 0 .25rem;max-width:22rem}
+  .wa-strength-bar{height:100%;width:0;background:#e5484d;transition:width .2s ease,background .2s ease}
+</style>
 <div class="whm-page-head">
   <h1>Create a New Account</h1>
   <p class="muted">Provision a new hosting account. Every account is created around its primary domain.</p>
 </div>
 
-<form method="post" action="/whm/accounts/create" class="whm-form" onsubmit="return whmCheckPw()">
+<form method="post" action="/whm/accounts/create" class="whm-form" onsubmit="return waCheckPw()">
   <fieldset class="whm-fs">
     <legend>Domain Information</legend>
     <div class="whm-row">
       <label for="wa-domain">Primary Domain</label>
       <div class="whm-field">
-        <input type="text" id="wa-domain" name="domain" placeholder="example.com" required autocomplete="off">
-        <p class="muted small">The account's main domain. It's created as a live site and, like cPanel, can't be removed without terminating the account.</p>
+        <input type="text" id="wa-domain" name="domain" placeholder="example.com" required autocomplete="off"
+               oninput="waDomainInput()" onblur="waSuggestUser(false)">
+        <p class="muted small">The account's main domain. It's created as a live site and, like cPanel, can't be removed without terminating the account. The username is generated from it automatically.</p>
       </div>
     </div>
   </fieldset>
@@ -23,8 +31,12 @@
     <div class="whm-row">
       <label for="wa-user">Username</label>
       <div class="whm-field">
-        <input type="text" id="wa-user" name="username" placeholder="janedoe" required autocomplete="off">
-        <p class="muted small">3–32 chars, start with a letter, lowercase letters/digits/underscore.</p>
+        <div class="wa-inline">
+          <input type="text" id="wa-user" name="username" placeholder="auto-generated from domain" required
+                 autocomplete="off" maxlength="16" oninput="waUserDirty = true">
+          <button type="button" class="btn btn-sm" onclick="waSuggestUser(true)" title="Regenerate from the domain">↻ Auto</button>
+        </div>
+        <p class="muted small">Auto-filled from the domain — 3–16 chars, starts with a letter, lowercase letters/digits/underscore. Edit it if you like.</p>
       </div>
     </div>
   </fieldset>
@@ -33,12 +45,22 @@
     <legend>Password</legend>
     <div class="whm-row">
       <label for="wa-pw">Password</label>
-      <div class="whm-field"><input type="password" id="wa-pw" name="password" placeholder="min 6 chars" required></div>
+      <div class="whm-field">
+        <div class="wa-inline">
+          <input type="password" id="wa-pw" name="password" placeholder="min 6 chars" required
+                 autocomplete="new-password" oninput="waPwHint(); waPwStrength()">
+          <button type="button" class="btn btn-sm" id="wa-pw-toggle" onclick="waPwShow()" title="Show / hide">👁</button>
+          <button type="button" class="btn btn-sm btn-primary" onclick="waGenPw()" title="Generate a strong password">🎲 Generate</button>
+          <button type="button" class="btn btn-sm" id="wa-pw-copy" onclick="waCopyPw()" title="Copy password">📋</button>
+        </div>
+        <div class="wa-strength"><div class="wa-strength-bar" id="wa-strength-bar"></div></div>
+        <p class="muted small" id="wa-strength-txt"></p>
+      </div>
     </div>
     <div class="whm-row">
       <label for="wa-pw2">Re-type Password</label>
       <div class="whm-field">
-        <input type="password" id="wa-pw2" name="password2" required oninput="whmPwHint()">
+        <input type="password" id="wa-pw2" name="password2" required autocomplete="new-password" oninput="waPwHint()">
         <p class="muted small" id="wa-pwhint"></p>
       </div>
     </div>
@@ -49,7 +71,7 @@
     <div class="whm-row">
       <label for="wa-pkg">Package</label>
       <div class="whm-field">
-        <select id="wa-pkg" name="package_id" onchange="whmPkg()">
+        <select id="wa-pkg" name="package_id" onchange="waPkg()">
           <option value="0">— custom limits →</option>
           {% for p in packages %}<option value="{{ p.id }}">{{ p.name }} ({{ p.max_domains or '∞' }}/{{ p.max_databases or '∞' }}/{{ p.max_email or '∞' }})</option>{% endfor %}
         </select>
@@ -85,20 +107,114 @@
 </form>
 
 <script>
-function whmPwHint() {
+var waUserDirty = false;   // true once the admin edits the username by hand
+var waSuggestTimer = null;
+
+// --- username auto-generation (from the domain) ---
+function waUserBase(domain) {
+  var d = (domain || '').trim().toLowerCase().replace(/^www\./, '');
+  var label = (d.split('.')[0] || '');
+  var c = label.replace(/[^a-z0-9]/g, '');
+  if (!c) return '';
+  if (!/^[a-z]/.test(c)) c = 'u' + c;
+  return c.slice(0, 16);
+}
+function waSuggestUser(force) {
+  // force = true when the ↻ Auto button is pressed (override a hand edit).
+  if (waUserDirty && !force) return;
+  var domain = document.getElementById('wa-domain').value;
+  var el = document.getElementById('wa-user');
+  var base = waUserBase(domain);
+  // Ask the server for a UNIQUE suggestion; fall back to the local base offline.
+  fetch('/whm/accounts/suggest?domain=' + encodeURIComponent(domain), { headers: { 'Accept': 'application/json' } })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (j) {
+      var name = (j && j.username) ? j.username : base;
+      if (name) { el.value = name; if (force) waUserDirty = false; }
+    })
+    .catch(function () { if (base) { el.value = base; if (force) waUserDirty = false; } });
+}
+function waDomainInput() {
+  if (waSuggestTimer) clearTimeout(waSuggestTimer);
+  waSuggestTimer = setTimeout(function () { waSuggestUser(false); }, 350);
+}
+
+// --- strong password generator ---
+function waGenPw() {
+  var lower = 'abcdefghijkmnpqrstuvwxyz', upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ',
+      digits = '23456789', sym = '!@#$%^&*()-_=+.?';   // no ambiguous 0/O/1/l/I
+  var all = lower + upper + digits + sym, n = 16, out = [];
+  var buf = new Uint32Array(n * 2);
+  (window.crypto || window.msCrypto).getRandomValues(buf);
+  out.push(lower[buf[0] % lower.length]);   // guarantee one of each class
+  out.push(upper[buf[1] % upper.length]);
+  out.push(digits[buf[2] % digits.length]);
+  out.push(sym[buf[3] % sym.length]);
+  for (var i = 4; i < n; i++) out.push(all[buf[i] % all.length]);
+  for (var i = out.length - 1; i > 0; i--) {   // Fisher–Yates shuffle
+    var j = buf[n + i] % (i + 1), t = out[i]; out[i] = out[j]; out[j] = t;
+  }
+  var pw = out.join('');
+  document.getElementById('wa-pw').value = pw;
+  document.getElementById('wa-pw2').value = pw;
+  document.getElementById('wa-pw').type = 'text';       // reveal what was made
+  document.getElementById('wa-pw2').type = 'text';
+  document.getElementById('wa-pw-toggle').textContent = '🙈';
+  waPwHint(); waPwStrength();
+}
+function waPwShow() {
+  var p1 = document.getElementById('wa-pw'), p2 = document.getElementById('wa-pw2');
+  var reveal = p1.type === 'password';
+  p1.type = p2.type = reveal ? 'text' : 'password';
+  document.getElementById('wa-pw-toggle').textContent = reveal ? '🙈' : '👁';
+}
+function waCopyPw() {
+  var pw = document.getElementById('wa-pw').value;
+  if (!pw) return;
+  var btn = document.getElementById('wa-pw-copy');
+  var restore = function () { setTimeout(function () { btn.textContent = '📋'; }, 1400); };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(pw).then(
+      function () { btn.textContent = '✓'; restore(); },
+      function () { btn.textContent = '✗'; restore(); });
+  } else {
+    var ta = document.createElement('textarea'); ta.value = pw;
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); btn.textContent = '✓'; } catch (e) { btn.textContent = '✗'; }
+    document.body.removeChild(ta); restore();
+  }
+}
+
+// --- match hint + strength meter ---
+function waPwHint() {
   var a = document.getElementById('wa-pw').value, b = document.getElementById('wa-pw2').value;
   var h = document.getElementById('wa-pwhint');
   if (!b) { h.textContent = ''; return; }
   if (a === b) { h.textContent = '✓ Passwords match'; h.style.color = 'var(--ok, #2f9e44)'; }
   else { h.textContent = '✗ Passwords do not match'; h.style.color = 'var(--danger, #e5484d)'; }
 }
-function whmCheckPw() {
+function waPwStrength() {
+  var pw = document.getElementById('wa-pw').value;
+  var bar = document.getElementById('wa-strength-bar'), txt = document.getElementById('wa-strength-txt');
+  var score = 0;
+  if (pw.length >= 8) score++;
+  if (pw.length >= 12) score++;
+  if (/[a-z]/.test(pw) && /[A-Z]/.test(pw)) score++;
+  if (/[0-9]/.test(pw)) score++;
+  if (/[^A-Za-z0-9]/.test(pw)) score++;
+  var colors = ['#e5484d', '#e5484d', '#f08c00', '#f7b500', '#2f9e44', '#2f9e44'];
+  var labels = ['Very weak', 'Very weak', 'Weak', 'Fair', 'Strong', 'Very strong'];
+  bar.style.width = Math.min(100, score * 20) + '%';
+  bar.style.background = colors[score];
+  txt.textContent = pw ? labels[score] : '';
+}
+function waCheckPw() {
   var a = document.getElementById('wa-pw').value, b = document.getElementById('wa-pw2').value;
   if (a !== b) { alert('The two passwords do not match.'); return false; }
   if (a.length < 6) { alert('Password must be at least 6 characters.'); return false; }
   return true;
 }
-function whmPkg() {
+function waPkg() {
   // Grey out custom limits when a package is chosen (the package wins server-side).
   var custom = document.getElementById('wa-pkg').value === '0';
   document.getElementById('wa-limits').style.opacity = custom ? '1' : '.4';

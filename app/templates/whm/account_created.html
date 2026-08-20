@@ -1,0 +1,63 @@
+{% extends "whm_base.html" %}
+{% block title %}Account Created{% endblock %}
+{% block content %}
+<style>
+  .wa-done-head{display:flex;align-items:center;gap:.6rem;margin-bottom:.25rem}
+  .wa-done-badge{display:inline-flex;align-items:center;justify-content:center;width:2.2rem;height:2.2rem;border-radius:50%;background:var(--ok,#2f9e44);color:#fff;font-size:1.2rem;flex:0 0 auto}
+  .wa-warn{background:var(--warn-bg,#fff4e5);border:1px solid var(--warn,#f08c00);color:var(--warn-fg,#8a5a00);padding:.65rem .9rem;border-radius:8px;margin:.9rem 0}
+  .wa-cred{background:#0d1117;color:#c9d1d9;padding:1rem 1.15rem;border-radius:10px;font-family:Consolas,Menlo,monospace;font-size:.92rem;line-height:1.65;white-space:pre;overflow:auto;border:1px solid #30363d;margin:.4rem 0 0}
+  .wa-cred-wrap{position:relative;max-width:44rem}
+  .wa-actions{display:flex;gap:.5rem;flex-wrap:wrap;margin-top:1rem}
+</style>
+
+<div class="whm-page-head">
+  <div class="wa-done-head">
+    <span class="wa-done-badge">✓</span>
+    <h1 style="margin:0">Account Created</h1>
+  </div>
+  <p class="muted">
+    {{ acct.role|capitalize }} <strong>{{ acct.username }}</strong> was created with primary domain
+    <strong>{{ acct.domain }}</strong>{% if acct.package %} on package <strong>{{ acct.package }}</strong>{% endif %}.
+  </p>
+</div>
+
+<div class="wa-warn">
+  ⚠ <strong>Save these credentials now.</strong> For security the password is shown only once — it can't be retrieved later, only reset.
+</div>
+
+<div class="wa-cred-wrap">
+  <pre id="wa-cred" class="wa-cred">Domain: {{ acct.domain }}
+| Ip: {{ acct.ip }} ({{ acct.ip_flag }})
+| HasCgi: {{ acct.hascgi }}
+| UserName: {{ acct.username }}
+| PassWord: {{ acct.password }}
+| CpanelMod: {{ acct.cpanel_mod }}</pre>
+</div>
+
+<div class="wa-actions">
+  <button type="button" class="btn btn-primary" id="wa-copy" onclick="waCopyCred()">📋 Copy account details</button>
+  <a href="/whm/accounts/{{ acct.user_id }}" class="btn">View account</a>
+  <a href="/whm/accounts/new" class="btn">Create another</a>
+  <a href="/whm/accounts" class="btn">All accounts</a>
+</div>
+
+<script>
+function waCopyCred() {
+  var text = document.getElementById('wa-cred').textContent;
+  var btn = document.getElementById('wa-copy');
+  var restore = function (ok) {
+    btn.textContent = ok ? '✓ Copied!' : '✗ Copy failed — select and copy manually';
+    setTimeout(function () { btn.textContent = '📋 Copy account details'; }, 1900);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(function () { restore(true); }, function () { fallback(); });
+  } else { fallback(); }
+  function fallback() {
+    var ta = document.createElement('textarea');
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    var ok = false; try { ok = document.execCommand('copy'); } catch (e) {}
+    document.body.removeChild(ta); restore(ok);
+  }
+}
+</script>
+{% endblock %}
