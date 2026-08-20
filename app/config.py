@@ -142,6 +142,7 @@ MANAGED_SERVICES = (
     ("postfix",    "Postfix — SMTP",          "mail"),
     ("dovecot",    "Dovecot — IMAP/POP3",     "mail"),
     ("opendkim",   "OpenDKIM — DKIM signing", "mail"),
+    ("rspamd",     "Rspamd — spam filter",    "mail"),
 )
 
 # key -> label, for provider control_service messages and the status page.
@@ -153,6 +154,7 @@ SERVICE_LABELS = {key: label for key, label, _group in MANAGED_SERVICES}
 SERVICE_PACKAGES = {
     "redis":   ["redis-server"],
     "varnish": ["varnish"],
+    "rspamd":  ["rspamd"],
 }
 
 # --- Varnish front-end cache (admin-only, default OFF) ---------------------
@@ -189,6 +191,19 @@ REDIS_EVICTION_POLICIES = (
 )
 REDIS_MAXMEMORY_MIN_MB = 16
 REDIS_MAXMEMORY_MAX_MB = 1048576  # 1 TiB — a sane upper bound, not a real target
+
+
+# --- Spam filtering (Rspamd, admin-installable) ----------------------------
+# Rspamd runs as a *second* Postfix milter chained after OpenDKIM and tags spam
+# (v1 is tag-only — mail is never rejected at SMTP, only headered/subject-tagged,
+# so legit mail is never bounced). The server-wide on/off is a persisted flag
+# (demo provider); per-domain preferences live in the spam_settings table and
+# are materialized by the provider. Thresholds are clamped to [MIN, MAX] so a
+# bad score can't reach the daemon config.
+SPAM_FILTER_FILE = DATA_DIR / "spam_filter.json"   # demo server-wide enable flag
+SPAM_THRESHOLD_DEFAULT = 6
+SPAM_THRESHOLD_MIN = 1
+SPAM_THRESHOLD_MAX = 15
 
 
 def ensure_dirs() -> None:

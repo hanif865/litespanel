@@ -24,7 +24,7 @@ from .routers import (
     account, auth, autoresponders, backups, cron, dashboard, databases, dbconsole, dbwizard,
     deliverability, disk_usage, dns, domains, email, errors, files, firewall, forwarders, ftp, git,
     ip_blocker, logs, metrics, modsecurity, node,
-    packages, pg_databases, php, ssl, subdomains, users, webdisk, whm, wordpress,
+    packages, pg_databases, php, spamfilters, ssl, subdomains, users, webdisk, whm, wordpress,
 )
 
 app = FastAPI(title=config.APP_NAME, docs_url=None, redoc_url=None)
@@ -58,6 +58,7 @@ app.include_router(email.router)
 app.include_router(deliverability.router)
 app.include_router(forwarders.router)
 app.include_router(autoresponders.router)
+app.include_router(spamfilters.router)
 app.include_router(files.router)
 app.include_router(disk_usage.router)
 app.include_router(ftp.router)

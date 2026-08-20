@@ -102,6 +102,7 @@ _SERVICE_UNITS: dict[str, list[str]] = {
     "postfix": ["postfix"],
     "dovecot": ["dovecot"],
     "opendkim": ["opendkim"],
+    "rspamd": ["rspamd"],
 }
 
 # OpenDKIM's config dir (setup-mail.sh lays it down). Overridable so the
@@ -1955,6 +1956,232 @@ class LinuxProvider(Provider):
         if not enabled:
             return True, "ModSecurity turned off"
         return True, f"ModSecurity turned on ({mode})"
+
+    # --- Spam filtering (Rspamd) ------------------------------------------
+    # Rspamd runs as a SECOND Postfix milter, chained AFTER OpenDKIM
+    # (inet:localhost:8891), so DKIM signing is untouched — enabling only
+    # *appends* the Rspamd milter (inet:localhost:11332) to smtpd_milters. v1 is
+    # tag-only: reject is disabled globally (reject = null), so spam is only
+    # headered/subject-tagged and never bounced. The panel owns config under
+    # /etc/rspamd/local.d/ (server defaults) and /etc/rspamd/litespanel/
+    # (per-domain settings + allow/block maps). Toggling mirrors the ModSecurity
+    # write -> `postfix check` gate -> rollback -> reload sequence.
+    _RSPAMD_DIR = Path("/etc/rspamd")
+    _RSPAMD_MILTER = "inet:localhost:11332"
+    # Domain must be safe to embed in a filename (defense-in-depth; the DB value
+    # was validated at domain creation, but this guards path traversal).
+    _RSPAMD_DOMAIN_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$")
+
+    def _rspamd_active(self) -> bool:
+        try:
+            r = subprocess.run(["systemctl", "is-active", "rspamd"],
+                               capture_output=True, text=True)
+        except (FileNotFoundError, OSError):
+            return False
+        return r.stdout.strip() == "active"
+
+    def _postconf_get(self, key: str) -> str:
+        """Return a single main.cf value (empty string if unset/unavailable)."""
+        try:
+            r = subprocess.run(["postconf", "-h", key], capture_output=True, text=True)
+        except (FileNotFoundError, OSError):
+            return ""
+        return r.stdout.strip() if r.returncode == 0 else ""
+
+    def spam_status(self) -> dict:
+        available = self._RSPAMD_DIR.is_dir()
+        wired = self._RSPAMD_MILTER in self._postconf_get("smtpd_milters")
+        return {
+            "available": available,
+            "enabled": bool(available and wired and self._rspamd_active()),
+            "engine": "Rspamd (Postfix milter)",
+        }
+
+    def _write_rspamd_tagonly_config(self) -> None:
+        """Write the managed tag-only server defaults (idempotent)."""
+        local = self._RSPAMD_DIR / "local.d"
+        local.mkdir(parents=True, exist_ok=True)
+        (self._RSPAMD_DIR / "litespanel").mkdir(parents=True, exist_ok=True)
+        # reject disabled -> spam is NEVER bounced; only add_header/rewrite_subject.
+        (local / "actions.conf").write_text(
+            "# Managed by LitesPanel - tag-only spam filtering.\n"
+            "# reject is disabled so spam is NEVER rejected at SMTP; it is only\n"
+            "# tagged. Per-domain thresholds are applied via the settings module.\n"
+            "reject = null;\n"
+            "add_header = 6;\n"
+            "rewrite_subject = 6;\n"
+            "greylist = null;\n",
+            encoding="utf-8",
+        )
+        # Emit X-Spam* headers on scanned mail so clients/webmail can sort on them.
+        (local / "milter_headers.conf").write_text(
+            "# Managed by LitesPanel - add X-Spam* headers to scanned mail.\n"
+            "extended_spam_headers = true;\n"
+            'use = ["x-spamd-bar", "x-spam-level", "spam-header", "authentication-results"];\n',
+            encoding="utf-8",
+        )
+
+    def set_spam_filter(self, enabled: bool) -> tuple[bool, str]:
+        import os
+
+        if enabled:
+            # Install Rspamd on demand (same apt idiom as install_service).
+            if not self._RSPAMD_DIR.is_dir():
+                env = {**os.environ, "DEBIAN_FRONTEND": "noninteractive"}
+                proc = subprocess.run(
+                    ["apt-get", "install", "-y", "rspamd"],
+                    capture_output=True, text=True, env=env, timeout=600,
+                )
+                if proc.returncode != 0 or not self._RSPAMD_DIR.is_dir():
+                    return False, (proc.stderr or proc.stdout).strip()[-500:] or "rspamd install failed"
+            try:
+                self._write_rspamd_tagonly_config()
+            except OSError as exc:
+                return False, f"could not write rspamd config: {exc}"
+
+            # Chain the milter AFTER OpenDKIM, preserving every existing entry.
+            previous = self._postconf_get("smtpd_milters")
+            entries = [e.strip() for e in previous.replace(",", " ").split() if e.strip()]
+            if self._RSPAMD_MILTER not in entries:
+                entries.append(self._RSPAMD_MILTER)
+            try:
+                _run(["postconf", "-e", f"smtpd_milters={', '.join(entries)}"])
+            except (RuntimeError, FileNotFoundError, OSError) as exc:
+                return False, f"could not update Postfix milters: {exc}"
+            # Validate; roll the milter line back if Postfix rejects the config.
+            check = subprocess.run(["postfix", "check"], capture_output=True, text=True)
+            if check.returncode != 0:
+                subprocess.run(["postconf", "-e", f"smtpd_milters={previous}"],
+                               capture_output=True, text=True, check=False)
+                return False, "postfix check failed: " + (check.stderr or check.stdout).strip()[-400:]
+            subprocess.run(["systemctl", "enable", "--now", "rspamd"],
+                           capture_output=True, text=True, check=False)
+            subprocess.run(["systemctl", "reload", "postfix"],
+                           capture_output=True, text=True, check=False)
+            return True, "Spam filtering turned on (Rspamd)."
+
+        # Disable: unchain the milter, leave Rspamd installed/running.
+        previous = self._postconf_get("smtpd_milters")
+        entries = [e.strip() for e in previous.replace(",", " ").split()
+                   if e.strip() and e.strip() != self._RSPAMD_MILTER]
+        try:
+            _run(["postconf", "-e", f"smtpd_milters={', '.join(entries)}"])
+        except (RuntimeError, FileNotFoundError, OSError) as exc:
+            return False, f"could not update Postfix milters: {exc}"
+        subprocess.run(["systemctl", "reload", "postfix"],
+                       capture_output=True, text=True, check=False)
+        return True, "Spam filtering turned off."
+
+    def sync_spam_settings(self, domain: str, settings: dict) -> None:
+        # Guard: if /etc/rspamd doesn't exist, spam filtering isn't set up -> no-op
+        # (mirrors _register_opendkim's stack-presence guard). Also refuse a domain
+        # that isn't filename-safe so we can never write outside the managed dir.
+        if not self._RSPAMD_DIR.is_dir():
+            return
+        if not self._RSPAMD_DOMAIN_RE.match(domain):
+            return
+        lp = self._RSPAMD_DIR / "litespanel"
+        lp.mkdir(parents=True, exist_ok=True)
+
+        enabled = bool(settings.get("enabled", True))
+        threshold = int(settings.get("threshold", config.SPAM_THRESHOLD_DEFAULT))
+        rewrite = bool(settings.get("rewrite_subject", True))
+        whitelist = settings.get("whitelist") or []
+        blacklist = settings.get("blacklist") or []
+
+        # Per-domain settings block (settings module), scoped to the rcpt domain.
+        # tag-only is enforced globally (reject=null); here we only set the
+        # add_header/rewrite_subject thresholds, or skip scanning entirely.
+        if enabled:
+            apply = (
+                "    apply {\n"
+                "        actions {\n"
+                f"            add_header = {threshold};\n"
+                + (f"            rewrite_subject = {threshold};\n" if rewrite else "")
+                + "            reject = null;\n"
+                "        }\n"
+                + ('        subject = "[SPAM] %s";\n' if rewrite else "")
+                + "    }\n"
+            )
+        else:
+            # want_spam = yes -> skip filtering for mail to this domain.
+            apply = '    apply {\n        want_spam = "yes";\n    }\n'
+        block = (
+            f"litespanel_{domain} {{\n"
+            "    priority = 10;\n"
+            f'    rcpt = "@{domain}";\n'
+            f"{apply}"
+            "}\n"
+        )
+        (lp / f"settings_{domain}.conf").write_text(block, encoding="utf-8")
+
+        # Per-domain allow/block maps (one entry per line).
+        (lp / f"wl_{domain}.map").write_text(
+            "\n".join(str(e).strip() for e in whitelist if str(e).strip()) + "\n",
+            encoding="utf-8",
+        )
+        (lp / f"bl_{domain}.map").write_text(
+            "\n".join(str(e).strip() for e in blacklist if str(e).strip()) + "\n",
+            encoding="utf-8",
+        )
+
+        self._rebuild_rspamd_indexes()
+        subprocess.run(["systemctl", "reload", "rspamd"], capture_output=True, check=False)
+
+    def _rebuild_rspamd_indexes(self) -> None:
+        """Rebuild the combined settings + multimap config from per-domain files.
+
+        rspamd only reads local.d/settings.conf and local.d/multimap.conf, so we
+        concatenate every managed per-domain block/map reference into those two
+        files. Globbing the managed dir means a domain's slice is added or removed
+        just by writing/deleting its files. Whitelist -> force ham ("no action"
+        prefilter); blacklist -> a positive score that crosses the tag threshold
+        (never a reject — reject stays disabled). Recipient-domain scoping of the
+        maps is finalized during on-box testing.
+        """
+        lp = self._RSPAMD_DIR / "litespanel"
+        local = self._RSPAMD_DIR / "local.d"
+        local.mkdir(parents=True, exist_ok=True)
+
+        blocks = []
+        for f in sorted(lp.glob("settings_*.conf")):
+            try:
+                blocks.append(f.read_text(encoding="utf-8").rstrip())
+            except OSError:
+                continue
+        (local / "settings.conf").write_text(
+            "# Managed by LitesPanel - per-domain tag-only spam settings.\n"
+            "# Do not edit by hand; rebuilt from /etc/rspamd/litespanel/.\n"
+            + "\n\n".join(blocks) + ("\n" if blocks else ""),
+            encoding="utf-8",
+        )
+
+        rules = []
+        for f in sorted(lp.glob("wl_*.map")):
+            sym = "LITESPANEL_WL_" + f.stem[len("wl_"):].replace(".", "_").replace("-", "_").upper()
+            rules.append(
+                f"{sym} {{\n"
+                '    type = "from";\n'
+                f'    map = "{f}";\n'
+                "    prefilter = true;\n"
+                '    action = "no action";\n'
+                "}\n"
+            )
+        for f in sorted(lp.glob("bl_*.map")):
+            sym = "LITESPANEL_BL_" + f.stem[len("bl_"):].replace(".", "_").replace("-", "_").upper()
+            rules.append(
+                f"{sym} {{\n"
+                '    type = "from";\n'
+                f'    map = "{f}";\n'
+                "    score = 12.0;\n"
+                "}\n"
+            )
+        (local / "multimap.conf").write_text(
+            "# Managed by LitesPanel - per-domain allow/block lists (tag-only).\n"
+            "# Do not edit by hand; rebuilt from /etc/rspamd/litespanel/.\n"
+            + "\n".join(rules) + ("\n" if rules else ""),
+            encoding="utf-8",
+        )
 
     # --- Service Manager --------------------------------------------------
     def _resolve_unit(self, key: str) -> tuple[str | None, str]:

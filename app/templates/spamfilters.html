@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}Spam Filters{% endblock %}
+{% block content %}
+<div class="breadcrumb"><a href="/">🏠 Home</a> / Email / Spam Filters</div>
+<h1>Spam Filters</h1>
+<p class="muted">Tune how incoming spam is handled per domain, powered by Rspamd. Spam is
+<strong>tagged, never rejected</strong> — a suspicious message is still delivered, just marked
+so you can filter it in your mail client.</p>
+
+{# --- Server-wide state banner (admin can enable/disable) --- #}
+<div class="card">
+  <div style="display:flex; justify-content:space-between; align-items:center; gap:1rem; flex-wrap:wrap">
+    <div>
+      {% if status.enabled %}
+        <strong>✅ Spam filtering is active.</strong>
+        <span class="muted">Engine: {{ status.engine }}. Incoming mail is scanned and tagged.</span>
+      {% elif not status.available %}
+        <strong>Spam filtering isn't installed on this server yet.</strong>
+        <span class="muted">
+          {% if is_admin %}Install Rspamd with one click below.{% else %}Ask your administrator to enable it.{% endif %}
+        </span>
+      {% else %}
+        <strong>Spam filtering is installed but switched off.</strong>
+        <span class="muted">
+          {% if is_admin %}Turn it on below.{% else %}Ask your administrator to turn it on.{% endif %}
+        </span>
+      {% endif %}
+    </div>
+    {% if is_admin %}
+      {% if status.enabled %}
+      <form method="post" action="/spamfilters/server-toggle"
+            onsubmit="return confirm('Turn off spam filtering for the whole server? Mail will no longer be scanned.')">
+        <input type="hidden" name="enabled" value="0">
+        <button type="submit" class="btn">Turn off</button>
+      </form>
+      {% else %}
+      <form method="post" action="/spamfilters/server-toggle"
+            onsubmit="return confirm('Enable spam filtering server-wide? Rspamd will be installed (if needed) and chained after DKIM signing.')">
+        <input type="hidden" name="enabled" value="1">
+        <button type="submit" class="btn btn-primary">Enable spam filtering</button>
+      </form>
+      {% endif %}
+    {% endif %}
+  </div>
+</div>
+
+{% if not domains %}
+<div class="empty">Add a domain first to manage its spam filtering.</div>
+{% else %}
+
+<form method="get" action="/spamfilters" class="row-form" style="margin-bottom:1rem">
+  <select name="domain_id" onchange="this.form.submit()">
+    {% for d in domains %}
+      <option value="{{ d.id }}" {{ 'selected' if selected and d.id == selected.id }}>{{ d.name }}</option>
+    {% endfor %}
+  </select>
+  <span class="muted">Settings for <strong>{{ selected.name }}</strong></span>
+</form>
+
+<form method="post" action="/spamfilters/{{ selected.id }}/save" class="card">
+  <label style="display:flex; align-items:center; gap:.5rem; font-weight:600">
+    <input type="checkbox" name="enabled" value="1"
+           {{ 'checked' if setting is none or setting.enabled }}>
+    Enable spam filtering for {{ selected.name }}
+  </label>
+  <p class="muted" style="margin:.35rem 0 1rem">When off, mail to this domain is delivered without any spam scanning.</p>
+
+  <div style="margin-bottom:1rem">
+    <label for="threshold" style="font-weight:600; display:block; margin-bottom:.25rem">Spam score threshold</label>
+    <input type="number" id="threshold" name="threshold"
+           min="{{ threshold_min }}" max="{{ threshold_max }}" step="1"
+           value="{{ setting.threshold if setting else threshold_default }}"
+           style="max-width:8rem">
+    <p class="muted" style="margin:.35rem 0 0">
+      Messages scoring at or above this are tagged as spam. Lower = more aggressive
+      (range {{ threshold_min }}–{{ threshold_max }}; {{ threshold_default }} is a balanced default).
+    </p>
+  </div>
+
+  <label style="display:flex; align-items:center; gap:.5rem; font-weight:600">
+    <input type="checkbox" name="rewrite_subject" value="1"
+           {{ 'checked' if setting is none or setting.rewrite_subject }}>
+    Prefix the subject with <code>[SPAM]</code>
+  </label>
+  <p class="muted" style="margin:.35rem 0 1rem">Off = tag with an <code>X-Spam</code> header only (the subject is left unchanged).</p>
+
+  <div style="display:grid; grid-template-columns:1fr 1fr; gap:1rem">
+    <div>
+      <label for="whitelist" style="font-weight:600; display:block; margin-bottom:.25rem">Allow list (never spam)</label>
+      <textarea id="whitelist" name="whitelist" rows="6" style="width:100%; font-family:Consolas,Menlo,monospace; font-size:.85rem"
+                placeholder="friend@example.com&#10;trusted-domain.com">{{ setting.whitelist | join('\n') if setting }}</textarea>
+    </div>
+    <div>
+      <label for="blacklist" style="font-weight:600; display:block; margin-bottom:.25rem">Block list (always spam)</label>
+      <textarea id="blacklist" name="blacklist" rows="6" style="width:100%; font-family:Consolas,Menlo,monospace; font-size:.85rem"
+                placeholder="spammer@bad.com&#10;junk-domain.net">{{ setting.blacklist | join('\n') if setting }}</textarea>
+    </div>
+  </div>
+  <p class="muted" style="margin:.35rem 0 1rem">One address or domain per line. Block-listed senders are tagged (never rejected); allow-listed senders always bypass filtering.</p>
+
+  <button type="submit" class="btn btn-primary">Save settings</button>
+</form>
+
+{% endif %}
+{% endblock %}

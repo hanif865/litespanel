@@ -779,6 +779,40 @@ class Provider(ABC):
         the WAF filters every request to the host.
         """
 
+    # --- Spam filtering (Rspamd) ------------------------------------------
+    @abstractmethod
+    def spam_status(self) -> dict:
+        """Return the server-wide spam-filter (Rspamd) state.
+
+        Shape: {available, enabled, engine}. `available` is False when Rspamd
+        isn't configured on this host; `enabled` is True when Rspamd is wired
+        into Postfix as a milter AND the daemon is active. v1 is deliberately
+        tag-only — spam is never rejected at SMTP, only headered/subject-tagged.
+        """
+
+    @abstractmethod
+    def set_spam_filter(self, enabled: bool) -> tuple[bool, str]:
+        """Turn server-wide spam filtering on or off. Returns (ok, message).
+
+        Enabling installs Rspamd if missing, writes the managed tag-only config
+        (reject disabled), and chains it as a *second* Postfix milter after
+        OpenDKIM (DKIM signing is untouched); a `postfix check` failure rolls the
+        milter line back and returns (False, message). Disabling unchains the
+        milter and reloads Postfix, leaving Rspamd installed. Admin-only — it
+        affects mail for the whole host.
+        """
+
+    @abstractmethod
+    def sync_spam_settings(self, domain: str, settings: dict) -> None:
+        """Materialize one domain's spam preferences and reload Rspamd.
+
+        `settings` = {enabled, threshold, rewrite_subject, whitelist, blacklist}.
+        The panel DB is the source of truth; this writes that domain's slice of
+        the Rspamd config (per-domain thresholds + allow/block maps, scoped to
+        the recipient domain) and reloads best-effort. No-op when the mail stack
+        isn't installed.
+        """
+
     # --- Service Manager (admin-only) -------------------------------------
     @abstractmethod
     def list_services(self) -> list[dict]:

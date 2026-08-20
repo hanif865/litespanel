@@ -136,6 +136,9 @@ class Domain(Base):
     autoresponders: Mapped[list["Autoresponder"]] = relationship(
         back_populates="domain", cascade="all, delete-orphan"
     )
+    spam_setting: Mapped["SpamSetting | None"] = relationship(
+        back_populates="domain", cascade="all, delete-orphan", uselist=False
+    )
 
 
 class Subdomain(Base):
@@ -272,6 +275,36 @@ class Autoresponder(Base):
     @property
     def address(self) -> str:
         return f"{self.local_part}@{self.domain.name}"
+
+
+class SpamSetting(Base):
+    """Per-domain spam filtering (Rspamd) preferences — tag-only.
+
+    The panel DB is the source of truth; the provider materializes this into
+    Rspamd's per-domain config (settings + allow/block maps) and reloads the
+    daemon. v1 is deliberately *tag-only*: spam is never rejected at SMTP time,
+    only headered and (optionally) subject-tagged, so legitimate mail is never
+    bounced. One row per domain (created lazily the first time it's saved).
+    """
+    __tablename__ = "spam_settings"
+    __table_args__ = (UniqueConstraint("domain_id", name="uq_spam_domain"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    domain_id: Mapped[int] = mapped_column(ForeignKey("domains.id"), index=True)
+    enabled: Mapped[bool] = mapped_column(default=True, server_default="1")
+    # Spam score at/above which mail is tagged (Rspamd's add_header action).
+    threshold: Mapped[int] = mapped_column(default=6, server_default="6")
+    # Prefix a tagged message's subject with "[SPAM]" (vs. header-only tagging).
+    rewrite_subject: Mapped[bool] = mapped_column(default=True, server_default="1")
+    # Always-ham / always-spam senders or domains, one entry per list element.
+    whitelist: Mapped[list] = mapped_column(JSON, default=list)
+    blacklist: Mapped[list] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
+
+    domain: Mapped["Domain"] = relationship(back_populates="spam_setting")
 
 
 class WordPressApp(Base):

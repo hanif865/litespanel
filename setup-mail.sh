@@ -291,6 +291,56 @@ systemctl restart postfix
 ok "OpenDKIM signing enabled"
 
 # --------------------------------------------------------------------------
+step "Installing Rspamd (spam filtering)"
+# Rspamd scans inbound mail and tags spam. It runs as a SECOND Postfix milter,
+# chained AFTER OpenDKIM (inet:localhost:8891) so DKIM signing is untouched — we
+# only append Rspamd's milter (inet:localhost:11332) to smtpd_milters. v1 is
+# tag-only: reject is disabled, so spam is only headered/subject-tagged and never
+# bounced (there's no Junk folder yet). The panel's Spam Filters page tunes
+# per-domain thresholds and allow/block lists under /etc/rspamd/litespanel/.
+if apt-get install -y -qq rspamd >/dev/null 2>&1; then
+    mkdir -p /etc/rspamd/local.d /etc/rspamd/litespanel
+
+    # tag-only: reject disabled -> spam is never rejected at SMTP, only tagged.
+    cat > /etc/rspamd/local.d/actions.conf <<'EOF'
+# Managed by LitesPanel setup-mail.sh - tag-only spam filtering.
+# reject is disabled so spam is NEVER rejected at SMTP; it is only tagged.
+reject = null;
+add_header = 6;
+rewrite_subject = 6;
+greylist = null;
+EOF
+
+    # Emit X-Spam* headers on scanned mail so clients/webmail can sort on them.
+    cat > /etc/rspamd/local.d/milter_headers.conf <<'EOF'
+# Managed by LitesPanel setup-mail.sh - add X-Spam* headers to scanned mail.
+extended_spam_headers = true;
+use = ["x-spamd-bar", "x-spam-level", "spam-header", "authentication-results"];
+EOF
+
+    # Make the proxy worker (port 11332) scan mail itself and act as a milter.
+    cat > /etc/rspamd/local.d/worker-proxy.inc <<'EOF'
+# Managed by LitesPanel setup-mail.sh
+milter = yes;
+timeout = 120s;
+upstream "local" {
+  default = yes;
+  self_scan = yes;
+}
+EOF
+
+    systemctl enable --now rspamd >/dev/null 2>&1 || warn "rspamd did not start — check 'journalctl -u rspamd'"
+
+    # Chain Rspamd after OpenDKIM for inbound SMTP. Leave non_smtpd_milters as
+    # OpenDKIM-only so locally-generated mail isn't spam-scanned (just signed).
+    postconf -e "smtpd_milters = inet:localhost:8891, inet:localhost:11332"
+    systemctl restart postfix
+    ok "Rspamd spam filtering enabled (tag-only)"
+else
+    warn "Rspamd install failed — spam filtering not enabled (install later from the panel)"
+fi
+
+# --------------------------------------------------------------------------
 step "Installing Roundcube ${RC_VERSION}"
 if [ ! -f "$RC_DIR/index.php" ]; then
     tmp="$(mktemp -d)"

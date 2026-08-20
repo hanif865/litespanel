@@ -1081,6 +1081,47 @@ class DemoProvider(Provider):
             return True, "(demo) ModSecurity turned off"
         return True, f"(demo) ModSecurity turned on ({mode})"
 
+    # --- Spam filtering (Rspamd) ------------------------------------------
+    # Tag-only, like the modsec toggle: a server-wide flag in one JSON file, plus
+    # per-domain preferences written to MAIL_DIR/spam/<domain>.json so the demo
+    # state is inspectable (and the verify script can read the materialized slice
+    # straight back). No real Rspamd on the dev box.
+    def _spam_flag_load(self) -> bool:
+        import json
+
+        try:
+            data = json.loads(config.SPAM_FILTER_FILE.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return False
+        return bool(data.get("enabled", False)) if isinstance(data, dict) else False
+
+    def spam_status(self) -> dict:
+        return {
+            "available": True,
+            "enabled": self._spam_flag_load(),
+            "engine": "Rspamd (demo)",
+        }
+
+    def set_spam_filter(self, enabled: bool) -> tuple[bool, str]:
+        import json
+
+        config.SPAM_FILTER_FILE.parent.mkdir(parents=True, exist_ok=True)
+        config.SPAM_FILTER_FILE.write_text(
+            json.dumps({"enabled": bool(enabled)}, indent=2), encoding="utf-8"
+        )
+        if enabled:
+            return True, "(demo) spam filtering turned on"
+        return True, "(demo) spam filtering turned off"
+
+    def sync_spam_settings(self, domain: str, settings: dict) -> None:
+        import json
+
+        spam_dir = config.MAIL_DIR / "spam"
+        spam_dir.mkdir(parents=True, exist_ok=True)
+        (spam_dir / f"{domain}.json").write_text(
+            json.dumps(settings, indent=2), encoding="utf-8"
+        )
+
     # --- Service Manager --------------------------------------------------
     # No real systemd here, so a small JSON file records each managed service's
     # running/stopped state (defaulting to running). Inspectable and survives a
