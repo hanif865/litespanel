@@ -76,6 +76,7 @@
       <input type="hidden" name="name" id="fm-name">
       <input type="hidden" name="new_name" id="fm-new_name">
       <input type="hidden" name="dest" id="fm-dest">
+      <input type="hidden" name="dest_domain_id" id="fm-dest_domain_id">
       <input type="hidden" name="perms" id="fm-perms">
       <input type="hidden" name="archive_name" id="fm-archive_name">
       <table class="table fm-table">
@@ -141,6 +142,13 @@
 <!-- folder-select modal (Move / Copy) -->
 <div id="fm-fmodal" class="fm-modal"><div class="fm-modal-box">
   <div class="fm-modal-title" id="fm-fmodal-title"></div>
+  <label class="fm-fld-label">Destination site</label>
+  <select id="fm-dest-domain" style="width:100%;margin-bottom:.7rem" onchange="fmPopulateFolders()">
+    {% for d in domains %}
+    <option value="{{ d.id }}" {{ 'selected' if selected and d.id == selected.id }}>{{ d.name }}</option>
+    {% endfor %}
+  </select>
+  <label class="fm-fld-label">Destination folder</label>
   <select id="fm-folder-select" style="width:100%;margin-bottom:1rem">
     <option value="">🏠 public_html (root)</option>
     {% for node in tree %}<option value="{{ node.rel }}">{{ '  ' * node.depth }}📁 {{ node.name }}</option>{% endfor %}
@@ -186,6 +194,7 @@
 .fm-modal { display:none; position:fixed; inset:0; background:rgba(15,20,26,.5); z-index:200; align-items:center; justify-content:center; }
 .fm-modal-box { background:var(--card); border-radius:12px; padding:1.4rem; width:100%; max-width:400px; box-shadow:0 20px 50px rgba(0,0,0,.35); }
 .fm-modal-title { font-weight:600; color:var(--ink); margin-bottom:.8rem; }
+.fm-fld-label { display:block; font-size:.72rem; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.02em; margin-bottom:.25rem; }
 .fm-modal-box input[type=text] { width:100%; margin-bottom:1rem; }
 .fm-modal-actions { display:flex; gap:.5rem; justify-content:flex-end; }
 @media (max-width:760px){ .fm-tree{display:none;} }
@@ -206,10 +215,21 @@ var _cb=null;
 function fmModal(t,d,cb){ $('fm-modal-title').textContent=t; var i=$('fm-modal-input'); i.value=d||''; _cb=cb; $('fm-modal').style.display='flex'; setTimeout(function(){i.focus();i.select();},40); }
 function fmModalClose(){ $('fm-modal').style.display='none'; _cb=null; }
 function fmModalOk(){ var v=$('fm-modal-input').value.trim(); var cb=_cb; fmModalClose(); if(v&&cb) cb(v); }
-// folder modal
+// folder modal (Move / Copy) — destination can be another domain on the account
 var _fact=null;
-function fmFolderModal(t,a){ if(!needSel())return; $('fm-fmodal-title').textContent=t; _fact=a; $('fm-fmodal').style.display='flex'; }
-function fmFolderOk(){ fmSetField('dest', $('fm-folder-select').value); $('fm-fmodal').style.display='none'; fmSubmit(_fact); }
+var DOMAIN_TREES = {{ domain_trees|tojson }};
+function fmPopulateFolders(){
+  var sel=$('fm-folder-select'); sel.innerHTML='';
+  var root=document.createElement('option'); root.value=''; root.textContent='🏠 public_html (root)'; sel.appendChild(root);
+  var did=parseInt($('fm-dest-domain').value,10);
+  var d=DOMAIN_TREES.find(function(x){ return x.id===did; });
+  if(d){ d.tree.forEach(function(node){ var o=document.createElement('option'); o.value=node.rel;
+    o.textContent=Array(node.depth+1).join('  ')+'📁 '+node.name; sel.appendChild(o); }); }
+}
+function fmFolderModal(t,a){ if(!needSel())return; $('fm-fmodal-title').textContent=t; _fact=a;
+  $('fm-dest-domain').value=String(DID); fmPopulateFolders(); $('fm-fmodal').style.display='flex'; }
+function fmFolderOk(){ fmSetField('dest', $('fm-folder-select').value);
+  fmSetField('dest_domain_id', $('fm-dest-domain').value); $('fm-fmodal').style.display='none'; fmSubmit(_fact); }
 
 function actNewFile(){ fmModal('New file name','index.php',function(v){ fmSetField('name',v); fmSubmit('newfile'); }); }
 function actNewFolder(){ fmModal('New folder name','new-folder',function(v){ fmSetField('name',v); fmSubmit('mkdir'); }); }
@@ -237,7 +257,7 @@ document.querySelectorAll('#fm tbody tr[data-rel]').forEach(function(tr){
     tr.addEventListener('dragover', function(e){ if(_drag.length){ e.preventDefault(); tr.classList.add('drop'); } });
     tr.addEventListener('dragleave', function(){ tr.classList.remove('drop'); });
     tr.addEventListener('drop', function(e){ e.preventDefault(); tr.classList.remove('drop'); if(!_drag.length||_drag.indexOf(tr.dataset.rel)!==-1)return;
-      fmToggle(false); _drag.forEach(function(rel){ var cb=document.querySelector('#fm input[name=targets][value="'+CSS.escape(rel)+'"]'); if(cb)cb.checked=true; }); fmSetField('dest',tr.dataset.rel); fmSubmit('move'); });
+      fmToggle(false); _drag.forEach(function(rel){ var cb=document.querySelector('#fm input[name=targets][value="'+CSS.escape(rel)+'"]'); if(cb)cb.checked=true; }); fmSetField('dest_domain_id',''); fmSetField('dest',tr.dataset.rel); fmSubmit('move'); });
   }
 });
 document.addEventListener('click', function(){ $('fm-ctx').style.display='none'; });

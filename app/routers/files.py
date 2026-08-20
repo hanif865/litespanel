@@ -126,6 +126,14 @@ def browse(
         "selected": domain, "entries": entries, "path": path, "parent": parent,
         "crumbs": crumbs, "tree": _folder_tree(docroot), "in_trash": in_trash,
         "show_hidden": bool(hidden),
+        # Folder tree of every domain on this account, so the Copy/Move dialog
+        # can offer another domain as the destination (cross-domain within the
+        # same account). Guard non-existent docroots so no stray dirs are made.
+        "domain_trees": [
+            {"id": d.id, "name": d.name,
+             "tree": _folder_tree(Path(d.docroot)) if Path(d.docroot).is_dir() else []}
+            for d in domains
+        ],
     })
     return templates.TemplateResponse(request, "files.html", ctx)
 
@@ -333,6 +341,46 @@ def _resolve_targets(docroot: Path, rels: list[str]) -> list[Path]:
     return items
 
 
+def _resolve_dest(
+    request: Request,
+    db: Session,
+    user: User,
+    src_domain: Domain,
+    dest_domain_id: int | None,
+    dest: str,
+) -> tuple[Domain | None, Path | None]:
+    """Resolve the Copy/Move destination as (domain, folder).
+
+    The destination defaults to the source domain. A different `dest_domain_id`
+    must belong to the *same account* (same owner) — cross-domain within an
+    account is fine (shared system user), cross-account is never allowed. The
+    folder is still sandboxed under the destination domain's docroot via
+    `_safe_join`. On any problem we flash a message and return (None, None) so
+    the caller can bail out cleanly.
+    """
+    dest_domain = src_domain
+    if dest_domain_id and dest_domain_id != src_domain.id:
+        cand = db.get(Domain, dest_domain_id)
+        if cand is None or cand.owner_id != user.id:
+            _flash(request, "❌ Destination domain not found.")
+            return None, None
+        dest_domain = cand
+    dest_root = Path(dest_domain.docroot)
+    dest_root.mkdir(parents=True, exist_ok=True)
+    dest_dir = _safe_join(dest_root, dest.strip().lstrip("/"))
+    if not dest_dir.is_dir():
+        _flash(request, "❌ Destination folder not found.")
+        return None, None
+    return dest_domain, dest_dir
+
+
+def _dest_label(dest_domain: Domain, src_domain: Domain, dest: str) -> str:
+    """Human label for the flash message: 'public_html/sub' within the same
+    domain, or 'other.com/public_html/sub' when it's a different domain."""
+    inner = f"public_html/{dest}" if dest else "public_html"
+    return inner if dest_domain.id == src_domain.id else f"{dest_domain.name}/{inner}"
+
+
 @router.post("/newfile")
 def new_file(
     request: Request,
@@ -474,15 +522,15 @@ def copy_entries(
     domain_id: int = Form(...),
     path: str = Form(""),
     targets: list[str] = Form(default=[]),
-    dest: str = Form(...),
+    dest: str = Form(""),
+    dest_domain_id: int | None = Form(None),
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
     domain = _owned_domain(db, user, domain_id)
     docroot = Path(domain.docroot)
-    dest_dir = _safe_join(docroot, dest.strip().lstrip("/"))
-    if not dest_dir.is_dir():
-        _flash(request, "❌ Destination folder not found.")
+    dest_domain, dest_dir = _resolve_dest(request, db, user, domain, dest_domain_id, dest)
+    if dest_dir is None:
         return _redir(domain_id, path)
     n = 0
     for src in _resolve_targets(docroot, targets):
@@ -493,9 +541,9 @@ def copy_entries(
             shutil.copytree(src, out)
         else:
             shutil.copy2(src, out)
-        _own(domain, out)
+        _own(dest_domain, out)
         n += 1
-    _flash(request, f"📋 Copied {n} item(s) into '{dest or 'public_html'}'.")
+    _flash(request, f"📋 Copied {n} item(s) into '{_dest_label(dest_domain, domain, dest)}'.")
     return _redir(domain_id, path)
 
 
@@ -505,24 +553,24 @@ def move_entries(
     domain_id: int = Form(...),
     path: str = Form(""),
     targets: list[str] = Form(default=[]),
-    dest: str = Form(...),
+    dest: str = Form(""),
+    dest_domain_id: int | None = Form(None),
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
     domain = _owned_domain(db, user, domain_id)
     docroot = Path(domain.docroot)
-    dest_dir = _safe_join(docroot, dest.strip().lstrip("/"))
-    if not dest_dir.is_dir():
-        _flash(request, "❌ Destination folder not found.")
+    dest_domain, dest_dir = _resolve_dest(request, db, user, domain, dest_domain_id, dest)
+    if dest_dir is None:
         return _redir(domain_id, path)
     n = 0
     for t in _resolve_targets(docroot, targets):
         target = dest_dir / t.name
         if target != t and not target.exists():
             shutil.move(str(t), str(target))
-            _own(domain, target)
+            _own(dest_domain, target)
             n += 1
-    _flash(request, f"➡️ Moved {n} item(s) to '{dest}'.")
+    _flash(request, f"➡️ Moved {n} item(s) to '{_dest_label(dest_domain, domain, dest)}'.")
     return _redir(domain_id, path)
 
 
