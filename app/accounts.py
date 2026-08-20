@@ -45,6 +45,12 @@ def terminate_account(db: Session, target: User) -> str:
         provider.remove_site(domain.name)
     for database in list(target.databases):
         provider.drop_database(database.name, database.db_user)
+    # Drop the account's standalone DB users/roles too (their grants go with
+    # them). The panel rows cascade off the User row below.
+    for db_user in list(target.db_users):
+        provider.drop_db_user(db_user.username)
+    for pg_user in list(target.pg_users):
+        provider.drop_pg_user(pg_user.username)
     for backup in list(target.backups):
         (config.BACKUPS_DIR / backup.filename).unlink(missing_ok=True)
     # Remove the whole isolated account (system user, /home, PHP-FPM pool).
@@ -55,7 +61,7 @@ def terminate_account(db: Session, target: User) -> str:
             shutil.rmtree(Path(domain.docroot).parent, ignore_errors=True)
 
     username = target.username
-    db.delete(target)          # cascades domains/databases/cron/backups + nested rows
+    db.delete(target)          # cascades domains/databases/cron/backups/db-users + nested rows
     db.commit()
     provider.reload_web()
     # Re-sync the crontab now that this user's jobs are gone.

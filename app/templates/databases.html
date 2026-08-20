@@ -1,9 +1,10 @@
 {% extends "base.html" %}
+{% from "_db_privs.html" import checklist, assets %}
 {% block title %}Databases{% endblock %}
 {% block content %}
 <div class="breadcrumb"><a href="/">🏠 Home</a> / MySQL® Databases</div>
 <h1>Databases</h1>
-<p class="muted">Create a MySQL/MariaDB database with a dedicated user.</p>
+<p class="muted">Create MySQL/MariaDB databases and users, then grant each user the privileges it needs.</p>
 
 {% if new_cred %}
 <div class="card cred-card">
@@ -24,14 +25,40 @@
   </form>
 </div>
 
+{# ===== Current databases + their attached users ===== #}
 {% if databases %}
 <table class="table">
-  <thead><tr><th>Database</th><th>User</th><th>Created</th><th>Actions</th></tr></thead>
+  <thead><tr><th>Database</th><th>Primary user</th><th>Users &amp; privileges</th><th>Created</th><th>Actions</th></tr></thead>
   <tbody>
   {% for row in databases %}
     <tr>
       <td><strong>{{ row.name }}</strong></td>
       <td><code>{{ row.db_user }}</code></td>
+      <td>
+        {% if row.grants %}
+          {% for g in row.grants %}
+          <div class="grant-row">
+            <div class="grant-head">
+              <code>{{ g.user.username }}</code>
+              <span class="grant-privs">{{ g.privileges or '—' }}</span>
+              <form method="post" action="/databases/grants/{{ g.id }}/delete"
+                    onsubmit="return confirm('Revoke {{ g.user.username }} from {{ row.name }}?')">
+                <button type="submit" class="btn btn-sm btn-danger">Revoke</button>
+              </form>
+            </div>
+            <details class="manage">
+              <summary>Manage privileges</summary>
+              <form method="post" action="/databases/grants/{{ g.id }}/update">
+                {{ checklist(privileges, all_priv, g.privileges.split(',')) }}
+                <button type="submit" class="btn btn-sm btn-primary">Save privileges</button>
+              </form>
+            </details>
+          </div>
+          {% endfor %}
+        {% else %}
+          <span class="muted small">No extra users</span>
+        {% endif %}
+      </td>
       <td class="muted">{{ row.created_at.strftime('%Y-%m-%d') }}</td>
       <td class="actions">
         <form method="post" action="/databases/{{ row.id }}/delete"
@@ -46,4 +73,77 @@
 {% else %}
 <div class="empty">No databases yet.</div>
 {% endif %}
+
+{# ===== MySQL users ===== #}
+<div class="subhead">MySQL Users</div>
+<div class="card">
+  <form method="post" action="/databases/users/create" class="stack-form">
+    <div class="inline">
+      <input type="text" name="username" placeholder="username" required>
+      <input type="text" id="nu_pw" name="password" placeholder="password" required>
+      <input type="text" id="nu_pw2" name="password2" placeholder="confirm password" required>
+      <button type="button" class="btn btn-sm btn-secondary" onclick="dbGenPw('nu_pw','nu_pw2')">Generate</button>
+      <button type="submit" class="btn btn-primary">+ Create user</button>
+    </div>
+    <span class="muted small">The password is stored encrypted — note it now; it is shown only here.</span>
+  </form>
+</div>
+
+{% if db_users %}
+<table class="table">
+  <thead><tr><th>User</th><th>Created</th><th>Actions</th></tr></thead>
+  <tbody>
+  {% for u in db_users %}
+    <tr>
+      <td><code>{{ u.username }}</code></td>
+      <td class="muted">{{ u.created_at.strftime('%Y-%m-%d') }}</td>
+      <td class="actions">
+        <details class="manage">
+          <summary>Change password</summary>
+          <form method="post" action="/databases/users/{{ u.id }}/password" class="stack-form">
+            <div class="inline">
+              <input type="text" id="pw_{{ u.id }}" name="password" placeholder="new password" required>
+              <input type="text" id="pw2_{{ u.id }}" name="password2" placeholder="confirm" required>
+              <button type="button" class="btn btn-sm btn-secondary" onclick="dbGenPw('pw_{{ u.id }}','pw2_{{ u.id }}')">Generate</button>
+              <button type="submit" class="btn btn-sm btn-primary">Save</button>
+            </div>
+          </form>
+        </details>
+        <form method="post" action="/databases/users/{{ u.id }}/delete"
+              onsubmit="return confirm('Delete user {{ u.username }}? Its grants are revoked.')">
+          <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="empty">No standalone users yet.</div>
+{% endif %}
+
+{# ===== Add user to database ===== #}
+{% if db_users and databases %}
+<div class="subhead">Add User To Database</div>
+<div class="card">
+  <form method="post" action="/databases/grants/create" class="stack-form">
+    <div class="inline">
+      <label class="fld">User
+        <select name="user_id" required>
+          {% for u in db_users %}<option value="{{ u.id }}">{{ u.username }}</option>{% endfor %}
+        </select>
+      </label>
+      <label class="fld">Database
+        <select name="database_id" required>
+          {% for row in databases %}<option value="{{ row.id }}">{{ row.name }}</option>{% endfor %}
+        </select>
+      </label>
+    </div>
+    {{ checklist(privileges, all_priv) }}
+    <button type="submit" class="btn btn-primary">Add</button>
+  </form>
+</div>
+{% endif %}
+
+{{ assets() }}
 {% endblock %}

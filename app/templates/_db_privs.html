@@ -1,0 +1,70 @@
+{#
+  Shared privilege UI for the standalone-user / "Add User To Database" flow on
+  both the MySQL (databases.html) and PostgreSQL (pg_databases.html) pages.
+
+  - checklist(privileges, all_priv, selected): the per-token checkbox grid with
+    an ALL PRIVILEGES master toggle. `selected` is a list of already-granted
+    tokens (or ["ALL PRIVILEGES"]); pass [] for a fresh grant.
+  - assets(): the scoped CSS + tiny toggle/password-generator JS, emitted once
+    per page at the bottom.
+#}
+{% macro checklist(privileges, all_priv, selected=[]) %}
+<div class="privlist">
+  <label class="priv-master">
+    <input type="checkbox" class="priv-all" onchange="pvAll(this)"
+           {% if all_priv in selected %}checked{% endif %}>
+    <strong>ALL PRIVILEGES</strong>
+  </label>
+  <div class="priv-items">
+    {% for p in privileges %}
+    <label class="priv-item">
+      <input type="checkbox" name="privileges" value="{{ p }}" onchange="pvOne(this)"
+             {% if all_priv in selected or p in selected %}checked{% endif %}>
+      <span>{{ p }}</span>
+    </label>
+    {% endfor %}
+  </div>
+</div>
+{% endmacro %}
+
+{% macro assets() %}
+<style>
+.privlist { margin:.4rem 0 .2rem; }
+.priv-master { display:inline-flex; align-items:center; gap:.4rem; margin-bottom:.5rem; cursor:pointer; }
+.priv-items { display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:.3rem .9rem; }
+.priv-item { display:flex; align-items:center; gap:.4rem; font-size:.83rem; cursor:pointer; }
+.priv-item input, .priv-master input { margin:0; width:auto; flex:0 0 auto; }
+.grant-row { padding:.55rem 0; border-bottom:1px solid var(--border); }
+.grant-row:last-child { border-bottom:none; }
+.grant-head { display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; }
+.grant-privs { font-size:.76rem; color:var(--muted); }
+.subhead { font-size:.9rem; font-weight:600; margin:1.2rem 0 .5rem; }
+details.manage { margin-top:.5rem; }
+details.manage > summary { cursor:pointer; color:var(--orange); font-size:.8rem; list-style:none; }
+details.manage > summary::-webkit-details-marker { display:none; }
+.stack-form { display:flex; flex-direction:column; gap:.6rem; align-items:flex-start; max-width:640px; }
+.stack-form .inline { display:flex; gap:.5rem; flex-wrap:wrap; align-items:center; }
+.stack-form label.fld { display:flex; flex-direction:column; gap:.25rem; font-size:.8rem; color:var(--muted); }
+.stack-form select, .stack-form input[type=text] { min-width:200px; }
+</style>
+<script>
+// Master ALL toggle: check/uncheck every token box in this checklist.
+function pvAll(master){
+  master.closest('.privlist').querySelectorAll('.priv-items input[type=checkbox]')
+        .forEach(function(cb){ cb.checked = master.checked; });
+}
+// One token toggled: keep the master box in sync (checked only when all are).
+function pvOne(cb){
+  var list = cb.closest('.privlist');
+  var items = Array.prototype.slice.call(list.querySelectorAll('.priv-items input[type=checkbox]'));
+  list.querySelector('.priv-all').checked = items.every(function(x){ return x.checked; });
+}
+// Fill a pair of password fields with a fresh random value (shown once).
+function dbGenPw(id1, id2){
+  var c = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%^&*';
+  var p = ''; for (var i=0;i<16;i++) p += c[Math.floor(Math.random()*c.length)];
+  var a = document.getElementById(id1); if (a) a.value = p;
+  var b = document.getElementById(id2); if (b) b.value = p;
+}
+</script>
+{% endmacro %}

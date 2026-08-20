@@ -464,6 +464,31 @@ class Provider(ABC):
     def db_execute(self, name: str, sql: str) -> dict:
         """Run SQL. Returns {columns, rows, message, error}."""
 
+    # --- Standalone MySQL users + grants (cPanel "Add User To Database") --
+    # These are additive: they never touch the bundled per-database user that
+    # powers phpMyAdmin auto-login. `privileges` is always a list drawn from
+    # app.db_privileges (validated/normalized by the caller), so only allowlisted
+    # tokens ever reach a GRANT/REVOKE.
+    @abstractmethod
+    def create_db_user(self, username: str, password: str) -> None:
+        """Create a standalone MySQL user (no privileges until granted)."""
+
+    @abstractmethod
+    def set_db_user_password(self, username: str, password: str) -> None:
+        """Change a standalone MySQL user's password."""
+
+    @abstractmethod
+    def drop_db_user(self, username: str) -> None:
+        """Drop a standalone MySQL user (its grants go with it)."""
+
+    @abstractmethod
+    def grant_privileges(self, database: str, username: str, privileges: list[str]) -> None:
+        """Authoritatively set a user's privileges on a database (revoke-then-grant)."""
+
+    @abstractmethod
+    def revoke_privileges(self, database: str, username: str) -> None:
+        """Revoke all of a user's privileges on a database."""
+
     # --- PostgreSQL databases ---------------------------------------------
     @abstractmethod
     def create_pg_database(self, name: str, user: str, password: str) -> DbCredentials:
@@ -481,6 +506,31 @@ class Provider(ABC):
     @abstractmethod
     def pg_available(self) -> bool:
         """Whether PostgreSQL is usable on this host (server reachable / tools present)."""
+
+    # --- Standalone PostgreSQL roles + grants -----------------------------
+    # Mirror of the MySQL user/grant methods. `privileges` is a list drawn from
+    # app.db_privileges (PG's native vocabulary), applied database-scoped and
+    # across the public schema. Additive — the per-database owning role is
+    # untouched.
+    @abstractmethod
+    def create_pg_user(self, username: str, password: str) -> None:
+        """Create a standalone PostgreSQL login role."""
+
+    @abstractmethod
+    def set_pg_user_password(self, username: str, password: str) -> None:
+        """Change a standalone PostgreSQL role's password."""
+
+    @abstractmethod
+    def drop_pg_user(self, username: str) -> None:
+        """Drop a standalone PostgreSQL role (revoke its grants first)."""
+
+    @abstractmethod
+    def grant_pg_privileges(self, database: str, username: str, privileges: list[str]) -> None:
+        """Authoritatively set a role's privileges on a database (revoke-then-grant)."""
+
+    @abstractmethod
+    def revoke_pg_privileges(self, database: str, username: str) -> None:
+        """Revoke all of a role's privileges on a database + its public schema."""
 
     # --- SSL --------------------------------------------------------------
     @abstractmethod

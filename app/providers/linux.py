@@ -24,6 +24,7 @@ from .base import (
     node_exec_start, tail_file, txt_record_chunks, upload_cap_mb,
     web_fronting_enabled,
 )
+from .. import db_privileges
 
 # On Debian/Ubuntu these are the conventional locations.
 NGINX_SITES = Path("/etc/nginx/sites-enabled")
@@ -907,6 +908,62 @@ class LinuxProvider(Provider):
         _run(["mysql", "-e",
               f"ALTER USER '{user}'@'localhost' IDENTIFIED BY '{pw}'; FLUSH PRIVILEGES;"])
 
+    # --- Standalone MySQL users + grants ----------------------------------
+    # Additive to the bundled per-database user. Users are hard-scoped to
+    # '@localhost'; privileges are normalized against the allowlist here (defense
+    # in depth) so only vetted tokens are ever interpolated into a GRANT.
+    def create_db_user(self, username: str, password: str) -> None:
+        _ident(username, "database user")
+        pw = _mysql_str(password)
+        _run(["mysql", "-e",
+              f"CREATE USER '{username}'@'localhost' IDENTIFIED BY '{pw}'; FLUSH PRIVILEGES;"])
+
+    def set_db_user_password(self, username: str, password: str) -> None:
+        _ident(username, "database user")
+        pw = _mysql_str(password)
+        _run(["mysql", "-e",
+              f"ALTER USER '{username}'@'localhost' IDENTIFIED BY '{pw}'; FLUSH PRIVILEGES;"])
+
+    def drop_db_user(self, username: str) -> None:
+        _ident(username, "database user")
+        # Dropping the user also drops every privilege it held, so grants on any
+        # database vanish with it.
+        _run(["mysql", "-e", f"DROP USER IF EXISTS '{username}'@'localhost'; FLUSH PRIVILEGES;"])
+
+    def _mysql_revoke_all(self, database: str, username: str) -> None:
+        """Revoke a user's privileges on one database, tolerating 'no such grant'.
+
+        A first-time grant has nothing to revoke — MySQL error 1141 is expected
+        there and swallowed; any other failure is raised."""
+        proc = subprocess.run(
+            ["mysql", "-e",
+             f"REVOKE ALL PRIVILEGES, GRANT OPTION ON `{database}`.* "
+             f"FROM '{username}'@'localhost';"],
+            capture_output=True, text=True,
+        )
+        if proc.returncode != 0:
+            err = (proc.stderr or "").lower()
+            if "1141" not in err and "no such grant" not in err:
+                raise RuntimeError(f"mysql revoke failed: {proc.stderr.strip()}")
+
+    def grant_privileges(self, database: str, username: str, privileges: list[str]) -> None:
+        _ident(database, "database name")
+        _ident(username, "database user")
+        privs = db_privileges.normalize("mysql", privileges)
+        grant_list = "ALL PRIVILEGES" if db_privileges.is_all(privs) else ", ".join(privs)
+        # Authoritative: clear the existing grant first so "manage" can never
+        # leave a stale privilege behind, then grant exactly the requested set.
+        self._mysql_revoke_all(database, username)
+        _run(["mysql", "-e",
+              f"GRANT {grant_list} ON `{database}`.* TO '{username}'@'localhost'; "
+              f"FLUSH PRIVILEGES;"])
+
+    def revoke_privileges(self, database: str, username: str) -> None:
+        _ident(database, "database name")
+        _ident(username, "database user")
+        self._mysql_revoke_all(database, username)
+        _run(["mysql", "-e", "FLUSH PRIVILEGES;"])
+
     # --- PostgreSQL databases ---------------------------------------------
     # Administered as the postgres superuser over the local socket. Identifiers
     # are validated to plain names; the role password is escaped for a
@@ -962,6 +1019,85 @@ class LinuxProvider(Provider):
         except (FileNotFoundError, OSError):
             return False
         return proc.returncode == 0
+
+    # --- Standalone PostgreSQL roles + grants -----------------------------
+    # PG privileges are database-scoped (CONNECT/CREATE/TEMPORARY, granted ON
+    # DATABASE) and table-scoped (the rest, granted across schema public). The
+    # schema/table statements must run *inside* the target database, hence
+    # _psql_db. Revoke-then-grant makes "manage" authoritative. Privileges are
+    # normalized against the allowlist here (defense in depth).
+    def _psql_db(self, dbname: str, sql: str) -> subprocess.CompletedProcess:
+        """Run one statement as postgres, connected to a specific database."""
+        _ident(dbname, "database name")  # keeps a crafted name out of the -d argv
+        return subprocess.run(
+            ["sudo", "-u", "postgres", "psql", "-v", "ON_ERROR_STOP=1", "-d", dbname, "-c", sql],
+            capture_output=True, text=True,
+        )
+
+    def _psql_ck(self, sql: str) -> None:
+        proc = self._psql(sql)
+        if proc.returncode != 0:
+            raise RuntimeError("psql failed: " + (proc.stderr or proc.stdout).strip()[-400:])
+
+    def _psql_db_ck(self, dbname: str, sql: str) -> None:
+        proc = self._psql_db(dbname, sql)
+        if proc.returncode != 0:
+            raise RuntimeError("psql failed: " + (proc.stderr or proc.stdout).strip()[-400:])
+
+    def create_pg_user(self, username: str, password: str) -> None:
+        _ident(username, "database user")
+        pw = self._pg_lit(password)
+        self._psql_ck(f"CREATE ROLE \"{username}\" LOGIN PASSWORD E'{pw}';")
+
+    def set_pg_user_password(self, username: str, password: str) -> None:
+        _ident(username, "database user")
+        pw = self._pg_lit(password)
+        self._psql_ck(f"ALTER ROLE \"{username}\" WITH PASSWORD E'{pw}';")
+
+    def drop_pg_user(self, username: str) -> None:
+        _ident(username, "database user")
+        # The caller revokes the role's grants first; a role with no remaining
+        # privileges/owned objects then drops cleanly.
+        self._psql(f"DROP ROLE IF EXISTS \"{username}\";")
+
+    def _pg_revoke_all(self, database: str, username: str) -> None:
+        """Strip a role's DB + public-schema privileges. Tolerant: PG treats a
+        revoke of an unheld privilege as a no-op (a NOTICE, not an error)."""
+        self._psql(f'REVOKE ALL PRIVILEGES ON DATABASE "{database}" FROM "{username}";')
+        self._psql_db(database, f'REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM "{username}";')
+        self._psql_db(database, f'REVOKE ALL PRIVILEGES ON SCHEMA public FROM "{username}";')
+        self._psql_db(database,
+                      f'ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM "{username}";')
+
+    def grant_pg_privileges(self, database: str, username: str, privileges: list[str]) -> None:
+        _ident(database, "database name")
+        _ident(username, "database user")
+        privs = db_privileges.normalize("pg", privileges)
+        self._pg_revoke_all(database, username)  # authoritative reset
+        if db_privileges.is_all(privs):
+            self._psql_ck(f'GRANT ALL PRIVILEGES ON DATABASE "{database}" TO "{username}";')
+            self._psql_db_ck(database, f'GRANT ALL ON SCHEMA public TO "{username}";')
+            self._psql_db_ck(database, f'GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO "{username}";')
+            self._psql_db_ck(database,
+                             f'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO "{username}";')
+            return
+        db_scoped = [p for p in privs if p in db_privileges.PG_DATABASE_SCOPED]
+        table_scoped = [p for p in privs if p in db_privileges.PG_TABLE_SCOPED]
+        if db_scoped:
+            self._psql_ck(f'GRANT {", ".join(db_scoped)} ON DATABASE "{database}" TO "{username}";')
+        if table_scoped:
+            cols = ", ".join(table_scoped)
+            # USAGE on the schema is required before the role can touch any object.
+            self._psql_db_ck(database, f'GRANT USAGE ON SCHEMA public TO "{username}";')
+            self._psql_db_ck(database, f'GRANT {cols} ON ALL TABLES IN SCHEMA public TO "{username}";')
+            # Cover tables created later in this schema too.
+            self._psql_db_ck(database,
+                             f'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT {cols} ON TABLES TO "{username}";')
+
+    def revoke_pg_privileges(self, database: str, username: str) -> None:
+        _ident(database, "database name")
+        _ident(username, "database user")
+        self._pg_revoke_all(database, username)
 
     def issue_certificate(self, domain: str) -> CertInfo:
         if web_fronting_enabled():

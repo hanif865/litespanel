@@ -51,6 +51,8 @@ class User(Base):
     domains: Mapped[list["Domain"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
     databases: Mapped[list["Database"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
     pg_databases: Mapped[list["PgDatabase"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
+    db_users: Mapped[list["DatabaseUser"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
+    pg_users: Mapped[list["PgUser"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
     cron_jobs: Mapped[list["CronJob"]] = relationship(cascade="all, delete-orphan")
     backups: Mapped[list["Backup"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
     package: Mapped["Package | None"] = relationship(
@@ -442,6 +444,9 @@ class Database(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     owner: Mapped["User"] = relationship(back_populates="databases")
+    grants: Mapped[list["DatabaseGrant"]] = relationship(
+        back_populates="database", cascade="all, delete-orphan"
+    )
 
 
 class PgDatabase(Base):
@@ -463,6 +468,90 @@ class PgDatabase(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     owner: Mapped["User"] = relationship(back_populates="pg_databases")
+    grants: Mapped[list["PgGrant"]] = relationship(
+        back_populates="database", cascade="all, delete-orphan"
+    )
+
+
+class DatabaseUser(Base):
+    """A standalone MySQL/MariaDB user, created independently of any database.
+
+    cPanel-style: users and databases are separate objects; a user is then
+    *added to* one or more databases with chosen privileges (DatabaseGrant).
+    This is entirely additive — the bundled per-database `db_user` on the
+    Database row is untouched and still powers phpMyAdmin auto-login/WordPress.
+    The password is encrypted at rest so the login can be shown once and the
+    user re-materialized on the host.
+    """
+    __tablename__ = "database_users"
+    __table_args__ = (UniqueConstraint("username", name="uq_db_user_username"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    username: Mapped[str] = mapped_column(String(64), index=True)
+    db_password_enc: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    owner: Mapped["User"] = relationship(back_populates="db_users")
+    grants: Mapped[list["DatabaseGrant"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+
+
+class DatabaseGrant(Base):
+    """A (user, database) pairing with a privilege set — "Add User To Database".
+
+    `privileges` is a CSV of tokens from app.db_privileges (or "ALL PRIVILEGES").
+    One row per (user, database); "manage" edits the row in place (revoke-then-
+    grant on the server), so a user is never attached to a database twice.
+    """
+    __tablename__ = "database_grants"
+    __table_args__ = (
+        UniqueConstraint("user_id", "database_id", name="uq_db_grant"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("database_users.id"))
+    database_id: Mapped[int] = mapped_column(ForeignKey("databases.id"))
+    privileges: Mapped[str] = mapped_column(String(255), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    user: Mapped["DatabaseUser"] = relationship(back_populates="grants")
+    database: Mapped["Database"] = relationship(back_populates="grants")
+
+
+class PgUser(Base):
+    """A standalone PostgreSQL login role (mirror of DatabaseUser for MySQL)."""
+    __tablename__ = "pg_users"
+    __table_args__ = (UniqueConstraint("username", name="uq_pg_user_username"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    username: Mapped[str] = mapped_column(String(64), index=True)
+    db_password_enc: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    owner: Mapped["User"] = relationship(back_populates="pg_users")
+    grants: Mapped[list["PgGrant"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+
+
+class PgGrant(Base):
+    """A (pg_user, pg_database) privilege pairing (mirror of DatabaseGrant)."""
+    __tablename__ = "pg_grants"
+    __table_args__ = (
+        UniqueConstraint("user_id", "database_id", name="uq_pg_grant"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("pg_users.id"))
+    database_id: Mapped[int] = mapped_column(ForeignKey("pg_databases.id"))
+    privileges: Mapped[str] = mapped_column(String(255), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    user: Mapped["PgUser"] = relationship(back_populates="grants")
+    database: Mapped["PgDatabase"] = relationship(back_populates="grants")
 
 
 class Certificate(Base):

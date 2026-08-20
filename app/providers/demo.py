@@ -17,6 +17,7 @@ from .base import (
     CertInfo, DbCredentials, Provider, dkim_generate, node_env_lines,
     node_exec_start, txt_record_chunks, upload_cap_mb,
 )
+from .. import db_privileges
 
 _NGINX_TEMPLATE = """# Managed by {app} — do not edit by hand.
 server {{
@@ -387,6 +388,25 @@ class DemoProvider(Provider):
         # Demo databases are SQLite files with no user auth — nothing to change.
         return None
 
+    # --- Standalone MySQL users + grants ----------------------------------
+    # SQLite has no users/privileges, so these are no-ops — the panel DB rows
+    # (DatabaseUser/DatabaseGrant) drive the UI. They still normalize the
+    # privilege list so a bogus token is rejected here exactly as on linux.
+    def create_db_user(self, username: str, password: str) -> None:
+        return None
+
+    def set_db_user_password(self, username: str, password: str) -> None:
+        return None
+
+    def drop_db_user(self, username: str) -> None:
+        return None
+
+    def grant_privileges(self, database: str, username: str, privileges: list[str]) -> None:
+        db_privileges.normalize("mysql", privileges)
+
+    def revoke_privileges(self, database: str, username: str) -> None:
+        return None
+
     def db_tables(self, name: str) -> list[str]:
         import sqlite3
 
@@ -448,6 +468,22 @@ class DemoProvider(Provider):
 
     def pg_available(self) -> bool:
         return True
+
+    # --- Standalone PostgreSQL roles + grants (no-op demo stubs) ----------
+    def create_pg_user(self, username: str, password: str) -> None:
+        return None
+
+    def set_pg_user_password(self, username: str, password: str) -> None:
+        return None
+
+    def drop_pg_user(self, username: str) -> None:
+        return None
+
+    def grant_pg_privileges(self, database: str, username: str, privileges: list[str]) -> None:
+        db_privileges.normalize("pg", privileges)
+
+    def revoke_pg_privileges(self, database: str, username: str) -> None:
+        return None
 
     # --- SSL --------------------------------------------------------------
     def issue_certificate(self, domain: str) -> CertInfo:
