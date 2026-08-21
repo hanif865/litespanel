@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% block title %}Email Filters{% endblock %}
+{% block content %}
+{% set op_labels = {"contains":"contains","is":"is exactly","matches":"matches (wildcards)","begins_with":"begins with","ends_with":"ends with","exists":"exists","not_contains":"does not contain"} %}
+{% set act_labels = {"fileinto":"Move to folder","redirect":"Redirect to address","discard":"Discard (delete)","keep":"Keep in Inbox","seen":"Mark as read","stop":"Stop processing"} %}
+<div class="breadcrumb"><a href="/">🏠 Home</a> / Email / Email Filters</div>
+<h1>Email Filters</h1>
+<p class="muted">Automatically sort, redirect, or discard incoming mail per mailbox — cPanel-style
+rules compiled to Sieve. Rules run at delivery, before the message reaches the Inbox.</p>
+
+{# --- Server-wide spam -> Junk delivery (admin) --- #}
+<div class="card">
+  <div style="display:flex; justify-content:space-between; align-items:center; gap:1rem; flex-wrap:wrap">
+    <div>
+      {% if not status.available %}
+        <strong>Email filtering isn't available on this server yet.</strong>
+        <span class="muted">Install the mail stack (<code>setup-mail.sh</code>) to enable Sieve filtering.</span>
+      {% elif status.junk_enabled %}
+        <strong>✅ Spam is delivered to the Junk folder.</strong>
+        <span class="muted">Engine: {{ status.engine }}. Messages Rspamd tags as spam are filed into Junk automatically.</span>
+      {% else %}
+        <strong>Spam-to-Junk delivery is off.</strong>
+        <span class="muted">
+          Tagged spam still lands in the Inbox.
+          {% if user.role == 'admin' %}Turn on Junk delivery below.{% else %}Ask your administrator to enable it.{% endif %}
+        </span>
+      {% endif %}
+    </div>
+    {% if user.role == 'admin' and status.available %}
+      {% if status.junk_enabled %}
+      <form method="post" action="/mailfilters/junk/toggle"
+            onsubmit="return confirm('Stop delivering spam to Junk? Tagged spam will go to the Inbox again.')">
+        <input type="hidden" name="enabled" value="off">
+        <button type="submit" class="btn">Turn off</button>
+      </form>
+      {% else %}
+      <form method="post" action="/mailfilters/junk/toggle"
+            onsubmit="return confirm('Deliver spam to Junk server-wide? Pigeonhole (dovecot-sieve) will be installed if needed.')">
+        <input type="hidden" name="enabled" value="on">
+        <button type="submit" class="btn btn-primary">Enable spam → Junk</button>
+      </form>
+      {% endif %}
+    {% endif %}
+  </div>
+</div>
+
+{% if not domains %}
+<div class="empty">Add a domain first to create email filters.</div>
+{% else %}
+
+<form method="get" action="/mailfilters" class="row-form" style="margin-bottom:1rem">
+  <select name="domain_id" onchange="this.form.submit()">
+    {% for d in domains %}<option value="{{ d.id }}" {{ 'selected' if selected and d.id == selected.id }}>{{ d.name }}</option>{% endfor %}
+  </select>
+  <span class="muted">Filters on <strong>{{ selected.name }}</strong></span>
+</form>
+
+<div class="card">
+  <form method="post" action="/mailfilters/create">
+    <input type="hidden" name="domain_id" value="{{ selected.id }}">
+
+    <div class="row-form" style="margin-bottom:.75rem">
+      <input type="text" name="name" placeholder="Filter name (e.g. Newsletters)" required style="flex:1;min-width:200px">
+      <input type="text" name="local_part" placeholder="mailbox (e.g. info)" required style="max-width:160px">
+      <span class="muted">@{{ selected.name }}</span>
+    </div>
+
+    <div class="row-form" style="margin-bottom:.5rem; align-items:center">
+      <span class="muted">If</span>
+      <select name="cond_field" id="mf-field" onchange="mfUpd()">
+        {% for f in fields %}<option value="{{ f }}">{{ f }}</option>{% endfor %}
+      </select>
+      <input type="text" name="cond_header" id="mf-header" placeholder="Header name" style="max-width:150px; display:none">
+      <select name="cond_op" id="mf-op" onchange="mfUpd()">
+        {% for o in ops %}<option value="{{ o }}">{{ op_labels[o] }}</option>{% endfor %}
+      </select>
+      <input type="text" name="cond_value" id="mf-value" placeholder="text to match" style="flex:1;min-width:160px">
+    </div>
+
+    <div class="row-form" style="margin-bottom:.75rem; align-items:center">
+      <span class="muted">then</span>
+      <select name="act_type" id="mf-act" onchange="mfUpd()">
+        {% for a in actions %}<option value="{{ a }}">{{ act_labels[a] }}</option>{% endfor %}
+      </select>
+      <input type="text" name="act_value" id="mf-actval" placeholder="Junk" style="flex:1;min-width:160px">
+    </div>
+
+    <input type="hidden" name="match" value="all">
+    <label style="display:flex; align-items:center; gap:.5rem; margin-bottom:.75rem">
+      <input type="checkbox" name="stop" value="on">
+      <span class="muted">Stop processing further rules after this one</span>
+    </label>
+
+    <button type="submit" class="btn btn-primary">+ Create Filter</button>
+  </form>
+</div>
+
+{% if mailboxes %}
+<div class="muted" style="margin:.25rem 0 1rem">
+  Mailbox:
+  <a href="/mailfilters?domain_id={{ selected.id }}" class="{{ 'pill pill-ok' if not mailbox else 'pill' }}">all</a>
+  {% for m in mailboxes %}
+    <a href="/mailfilters?domain_id={{ selected.id }}&mailbox={{ m }}"
+       class="{{ 'pill pill-ok' if mailbox == m else 'pill' }}">{{ m }}</a>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if rows %}
+<table class="table">
+  <thead><tr><th>Mailbox</th><th>Name</th><th>Rule</th><th>Status</th><th>Actions</th></tr></thead>
+  <tbody>
+  {% for row in rows %}
+    <tr>
+      <td><strong>{{ row.mf.local_part }}@{{ selected.name }}</strong></td>
+      <td>{{ row.mf.name }}</td>
+      <td class="muted">{{ row.summary }}</td>
+      <td>{% if row.mf.enabled %}<span class="pill pill-ok">on</span>{% else %}<span class="pill">off</span>{% endif %}</td>
+      <td class="actions">
+        <form method="post" action="/mailfilters/{{ row.mf.id }}/toggle">
+          <button type="submit" class="btn btn-sm">{{ 'Disable' if row.mf.enabled else 'Enable' }}</button>
+        </form>
+        <form method="post" action="/mailfilters/{{ row.mf.id }}/delete" onsubmit="return confirm('Delete this filter?')">
+          <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="empty">No filters yet{% if mailbox %} for {{ mailbox }}@{{ selected.name }}{% else %} on {{ selected.name }}{% endif %}.</div>
+{% endif %}
+{% endif %}
+
+<script>
+  // Progressive enhancement: show only the inputs each choice needs. The server
+  // validates regardless, so this never gates submission — just reduces clutter.
+  function mfUpd() {
+    var field = document.getElementById("mf-field");
+    var op = document.getElementById("mf-op");
+    var act = document.getElementById("mf-act");
+    var header = document.getElementById("mf-header");
+    var value = document.getElementById("mf-value");
+    var actval = document.getElementById("mf-actval");
+    if (!field || !op || !act) return;
+    header.style.display = (field.value === "Any Header") ? "" : "none";
+    value.style.display = (op.value === "exists") ? "none" : "";
+    var needsVal = (act.value === "fileinto" || act.value === "redirect");
+    actval.style.display = needsVal ? "" : "none";
+    actval.placeholder = (act.value === "redirect") ? "destination@example.com" : "Junk";
+  }
+  mfUpd();
+</script>
+{% endblock %}

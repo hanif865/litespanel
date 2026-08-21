@@ -139,6 +139,9 @@ class Domain(Base):
     spam_setting: Mapped["SpamSetting | None"] = relationship(
         back_populates="domain", cascade="all, delete-orphan", uselist=False
     )
+    mail_filters: Mapped[list["MailFilter"]] = relationship(
+        back_populates="domain", cascade="all, delete-orphan"
+    )
 
 
 class Subdomain(Base):
@@ -305,6 +308,41 @@ class SpamSetting(Base):
     )
 
     domain: Mapped["Domain"] = relationship(back_populates="spam_setting")
+
+
+class MailFilter(Base):
+    """A cPanel-style per-mailbox email filter (compiled to Sieve).
+
+    One row = one named rule (a set of conditions + actions). The panel owns the
+    mailbox's `~/.dovecot.sieve`, compiling *all* of its enabled filters — plus
+    the mailbox's Autoresponder vacation block, if any — into that single script
+    (see app/providers/sieve.py). Rules are per-mailbox: `local_part` is required
+    (mirrors Autoresponder), scoped to `domain_id`.
+    """
+    __tablename__ = "mail_filters"
+    __table_args__ = (
+        UniqueConstraint("domain_id", "local_part", "name", name="uq_mailfilter"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    domain_id: Mapped[int] = mapped_column(ForeignKey("domains.id"), index=True)
+    local_part: Mapped[str] = mapped_column(String(64))     # the mailbox, before @
+    name: Mapped[str] = mapped_column(String(128))          # user-facing rule name
+    enabled: Mapped[bool] = mapped_column(default=True, server_default="1")
+    # Execution order within the mailbox's script (lower runs first).
+    priority: Mapped[int] = mapped_column(default=0, server_default="0")
+    # {"match": "all"|"any", "conditions": [...], "actions": [...]} — see sieve.py.
+    rules: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
+
+    domain: Mapped["Domain"] = relationship(back_populates="mail_filters")
+
+    @property
+    def address(self) -> str:
+        return f"{self.local_part}@{self.domain.name}"
 
 
 class WordPressApp(Base):

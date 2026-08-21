@@ -605,14 +605,6 @@ class Provider(ABC):
     def sync_forwarders(self, domain: str, pairs: list[tuple[str, str]]) -> None:
         """Rewrite the domain's forwarders from (source_local, destination) pairs."""
 
-    @abstractmethod
-    def set_autoresponder(self, address: str, subject: str, body: str, enabled: bool) -> None:
-        ...
-
-    @abstractmethod
-    def remove_autoresponder(self, address: str) -> None:
-        ...
-
     # --- FTP accounts -----------------------------------------------------
     @abstractmethod
     def create_ftp_account(self, username: str, password: str, home_dir: Path,
@@ -811,6 +803,41 @@ class Provider(ABC):
         the Rspamd config (per-domain thresholds + allow/block maps, scoped to
         the recipient domain) and reloads best-effort. No-op when the mail stack
         isn't installed.
+        """
+
+    # --- Email filters (Sieve / Pigeonhole) -------------------------------
+    @abstractmethod
+    def mail_filter_status(self) -> dict:
+        """Return the server-wide email-filter (Sieve) state.
+
+        Shape: {available, sieve_installed, junk_enabled, engine}. `available`
+        is False when Dovecot isn't present; `sieve_installed` is True when
+        Pigeonhole (`sievec`) is available; `junk_enabled` is True when the
+        global "spam -> Junk" delivery rule is active. Drives the page banner.
+        """
+
+    @abstractmethod
+    def set_junk_delivery(self, enabled: bool) -> tuple[bool, str]:
+        """Turn server-wide "move spam to Junk" delivery on or off. (ok, message).
+
+        Enabling installs Pigeonhole (dovecot-sieve) if missing, wires the Sieve
+        plugin + a Junk mailbox namespace, and installs a global `sieve_before`
+        rule that files any message Rspamd marked `Deliver-To: Junk` into the
+        Junk folder; a `doveconf -n` failure rolls back and returns (False, ...).
+        Disabling removes the global rule. Admin-only — affects the whole host.
+        """
+
+    @abstractmethod
+    def sync_mail_filters(self, address: str, rules: list[dict],
+                          vacation: dict | None) -> None:
+        """Recompile one mailbox's Sieve script from its filter rules + vacation.
+
+        The panel owns the mailbox's `~/.dovecot.sieve`; this compiles `rules`
+        (see app/providers/sieve.py) together with the optional autoresponder
+        `vacation` block into that one script, or removes it when both are empty.
+        The router gathers the payload (this stays DB-agnostic). Per-user scripts
+        need no daemon reload — Pigeonhole recompiles at delivery on mtime change.
+        No-op when the mail stack isn't installed.
         """
 
     # --- Service Manager (admin-only) -------------------------------------

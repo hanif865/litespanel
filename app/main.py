@@ -23,7 +23,7 @@ from .web import TEMPLATES_DIR, templates
 from .routers import (
     account, auth, autoresponders, backups, cron, dashboard, databases, dbconsole, dbwizard,
     deliverability, disk_usage, dns, domains, email, errors, files, firewall, forwarders, ftp, git,
-    ip_blocker, logs, metrics, modsecurity, node,
+    ip_blocker, logs, mailfilters, metrics, modsecurity, node,
     packages, pg_databases, php, spamfilters, ssl, subdomains, users, webdisk, whm, wordpress,
 )
 
@@ -59,6 +59,7 @@ app.include_router(deliverability.router)
 app.include_router(forwarders.router)
 app.include_router(autoresponders.router)
 app.include_router(spamfilters.router)
+app.include_router(mailfilters.router)
 app.include_router(files.router)
 app.include_router(disk_usage.router)
 app.include_router(ftp.router)

@@ -206,6 +206,16 @@ SPAM_THRESHOLD_MIN = 1
 SPAM_THRESHOLD_MAX = 15
 
 
+# --- Email filters (Sieve / Pigeonhole) ------------------------------------
+# Per-mailbox filter rules (mail_filters table) are compiled to a single Sieve
+# script the panel owns (~/.dovecot.sieve), merged with the mailbox's
+# autoresponder vacation block. The server-wide "spam -> Junk" delivery (a
+# global sieve_before rule keyed on Rspamd's `Deliver-To: Junk` header) is an
+# admin toggle; its demo enable-flag lives here. The demo provider writes the
+# compiled per-mailbox scripts under MAIL_DIR/filters/ for inspection.
+JUNK_DELIVERY_FILE = DATA_DIR / "junk_delivery.json"
+
+
 def ensure_dirs() -> None:
     """Create the data directories on startup (idempotent)."""
     for d in (DATA_DIR, SITES_DIR, NGINX_DIR, CERTS_DIR, DB_SANDBOX_DIR, PG_DIR, DNS_DIR,

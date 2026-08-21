@@ -17,6 +17,7 @@ from .base import (
     CertInfo, DbCredentials, Provider, dkim_generate, node_env_lines,
     node_exec_start, txt_record_chunks, upload_cap_mb,
 )
+from .sieve import compile_sieve
 from .. import db_privileges
 
 _NGINX_TEMPLATE = """# Managed by {app} — do not edit by hand.
@@ -633,19 +634,6 @@ class DemoProvider(Provider):
             lines.append(f"{source}@{domain}\t{dest}")
         (maildir / "forwarders").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-    def set_autoresponder(self, address: str, subject: str, body: str, enabled: bool) -> None:
-        local, _, domain = address.partition("@")
-        ar_dir = config.MAIL_DIR / domain / "autoresponders"
-        ar_dir.mkdir(parents=True, exist_ok=True)
-        status = "on" if enabled else "off"
-        (ar_dir / f"{local}.txt").write_text(
-            f"status: {status}\nsubject: {subject}\n\n{body}\n", encoding="utf-8"
-        )
-
-    def remove_autoresponder(self, address: str) -> None:
-        local, _, domain = address.partition("@")
-        (config.MAIL_DIR / domain / "autoresponders" / f"{local}.txt").unlink(missing_ok=True)
-
     # --- FTP accounts -----------------------------------------------------
     def _ftp_passwd(self) -> Path:
         # Single pure-ftpd-style virtual-users file, one tab-delimited line per
@@ -1121,6 +1109,51 @@ class DemoProvider(Provider):
         (spam_dir / f"{domain}.json").write_text(
             json.dumps(settings, indent=2), encoding="utf-8"
         )
+
+    # --- Email filters (Sieve / Pigeonhole) -------------------------------
+    # The demo has no Dovecot, so we compile each mailbox's rules (+ its vacation
+    # block) to a real Sieve script under MAIL_DIR/filters/<address>.sieve — the
+    # exact string the linux provider would drop at ~/.dovecot.sieve — so the
+    # output is inspectable and the verify script can read it straight back. The
+    # server-wide "spam -> Junk" delivery is a single JSON enable-flag.
+    def _junk_flag_load(self) -> bool:
+        import json
+
+        try:
+            data = json.loads(config.JUNK_DELIVERY_FILE.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return False
+        return bool(data.get("enabled", False)) if isinstance(data, dict) else False
+
+    def mail_filter_status(self) -> dict:
+        return {
+            "available": True,
+            "sieve_installed": True,
+            "junk_enabled": self._junk_flag_load(),
+            "engine": "Pigeonhole (demo)",
+        }
+
+    def set_junk_delivery(self, enabled: bool) -> tuple[bool, str]:
+        import json
+
+        config.JUNK_DELIVERY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        config.JUNK_DELIVERY_FILE.write_text(
+            json.dumps({"enabled": bool(enabled)}, indent=2), encoding="utf-8"
+        )
+        if enabled:
+            return True, "(demo) spam is now delivered to the Junk folder"
+        return True, "(demo) spam-to-Junk delivery turned off"
+
+    def sync_mail_filters(self, address: str, rules: list[dict],
+                          vacation: dict | None) -> None:
+        filters_dir = config.MAIL_DIR / "filters"
+        filters_dir.mkdir(parents=True, exist_ok=True)
+        script = filters_dir / f"{address}.sieve"
+        text = compile_sieve(rules, vacation)
+        if text:
+            script.write_text(text, encoding="utf-8")
+        else:
+            script.unlink(missing_ok=True)
 
     # --- Service Manager --------------------------------------------------
     # No real systemd here, so a small JSON file records each managed service's

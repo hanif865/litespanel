@@ -24,6 +24,7 @@ from .base import (
     node_exec_start, tail_file, txt_record_chunks, upload_cap_mb,
     web_fronting_enabled,
 )
+from .sieve import compile_sieve
 from .. import db_privileges
 
 # On Debian/Ubuntu these are the conventional locations.
@@ -1372,23 +1373,6 @@ class LinuxProvider(Provider):
         vmap.write_text("\n".join(kept) + "\n")
         _run(["postmap", str(vmap)])
 
-    def set_autoresponder(self, address: str, subject: str, body: str, enabled: bool) -> None:
-        # Production would install a Sieve vacation script for the mailbox.
-        local, _, domain = address.partition("@")
-        sieve = Path(f"/var/mail/vhosts/{domain}/{local}/.dovecot.sieve")
-        if not enabled:
-            sieve.unlink(missing_ok=True)
-            return
-        sieve.parent.mkdir(parents=True, exist_ok=True)
-        sieve.write_text(
-            'require ["vacation"];\n'
-            f'vacation :days 1 :subject "{subject}" "{body}";\n'
-        )
-
-    def remove_autoresponder(self, address: str) -> None:
-        local, _, domain = address.partition("@")
-        Path(f"/var/mail/vhosts/{domain}/{local}/.dovecot.sieve").unlink(missing_ok=True)
-
     # --- FTP accounts -----------------------------------------------------
     # Virtual FTP users via pure-ftpd's pure-pw (no system account per login).
     # The login name is validated so it can never inject extra pure-pw argv, and
@@ -2182,6 +2166,162 @@ class LinuxProvider(Provider):
             + "\n".join(rules) + ("\n" if rules else ""),
             encoding="utf-8",
         )
+
+    # --- Email filters (Sieve / Pigeonhole) -------------------------------
+    # Two independent surfaces, mirroring the Rspamd write -> gate -> reload
+    # idiom above:
+    #   * Per-mailbox rules compile (via the pure `compile_sieve`) to the
+    #     mailbox's own ~/.dovecot.sieve. Pigeonhole recompiles that per-user
+    #     script at delivery time when its mtime changes, so NO dovecot reload is
+    #     needed — we only precompile with `sievec` (best-effort) and chown it to
+    #     vmail. The panel is the sole owner of that file (the autoresponder
+    #     vacation block is merged into the same script upstream).
+    #   * The server-wide "spam -> Junk" delivery is a single global script in a
+    #     `sieve_before` directory, keyed on Rspamd's `Deliver-To: Junk` header;
+    #     enabling it installs dovecot-sieve, wires the plugin into dovecot.conf
+    #     (idempotent, marker-guarded), and reloads dovecot behind a `doveconf -n`
+    #     gate with rollback.
+    _DOVECOT_DIR = Path("/etc/dovecot")
+    _SIEVE_BEFORE_DIR = _DOVECOT_DIR / "sieve" / "before.d"
+    _SPAM_TO_JUNK = _SIEVE_BEFORE_DIR / "spam-to-junk.sieve"
+    _SIEVE_WIRING_MARKER = "# --- LitesPanel Sieve wiring (managed) ---"
+    # Local-part must be safe to embed in a mailbox path (defense-in-depth; the
+    # value was validated when the mailbox was created).
+    _MAIL_LOCAL_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9])?$")
+
+    _SPAM_TO_JUNK_SCRIPT = (
+        "# Managed by LitesPanel - deliver Rspamd-tagged spam to Junk.\n"
+        'require ["fileinto", "mailbox"];\n'
+        'if header :contains "Deliver-To" "Junk" {\n'
+        '    fileinto :create "Junk";\n'
+        "    stop;\n"
+        "}\n"
+    )
+
+    def _sievec(self, script: Path) -> None:
+        """Best-effort precompile of a .sieve to .svbin (never fatal)."""
+        try:
+            subprocess.run(["sievec", str(script)], capture_output=True,
+                           text=True, timeout=30, check=False)
+        except (FileNotFoundError, OSError, subprocess.SubprocessError):
+            pass
+
+    def mail_filter_status(self) -> dict:
+        import shutil
+
+        available = self._DOVECOT_DIR.is_dir()
+        return {
+            "available": available,
+            "sieve_installed": shutil.which("sievec") is not None,
+            "junk_enabled": self._SPAM_TO_JUNK.is_file(),
+            "engine": "Pigeonhole (Dovecot Sieve)",
+        }
+
+    def _ensure_sieve_wiring(self) -> str | None:
+        """Append the managed Sieve plugin wiring to dovecot.conf if missing.
+
+        Returns the previous file contents when we changed it (so the caller can
+        roll back on a failed `doveconf -n`), or None when no change was made.
+        Idempotent: skips if our marker or an existing `sieve_before` is present
+        (a box built by the new setup-mail.sh already wires this inline).
+        """
+        conf = self._DOVECOT_DIR / "dovecot.conf"
+        try:
+            text = conf.read_text(encoding="utf-8")
+        except OSError:
+            return None
+        if self._SIEVE_WIRING_MARKER in text or "sieve_before" in text:
+            return None
+        block = (
+            f"\n{self._SIEVE_WIRING_MARKER}\n"
+            "protocol lmtp {\n"
+            "  mail_plugins = $mail_plugins sieve\n"
+            "}\n"
+            "plugin {\n"
+            "  sieve = ~/.dovecot.sieve\n"
+            f"  sieve_before = {self._SIEVE_BEFORE_DIR}\n"
+            "}\n"
+        )
+        conf.write_text(text + block, encoding="utf-8")
+        return text
+
+    def set_junk_delivery(self, enabled: bool) -> tuple[bool, str]:
+        import os
+        import shutil
+
+        if not self._DOVECOT_DIR.is_dir():
+            return False, "Dovecot is not installed (run setup-mail.sh first)."
+
+        if not enabled:
+            # Remove only the global spam rule; leave the per-user Sieve wiring in
+            # place (per-mailbox filters still use it).
+            self._SPAM_TO_JUNK.unlink(missing_ok=True)
+            self._SPAM_TO_JUNK.with_suffix(".svbin").unlink(missing_ok=True)
+            subprocess.run(["systemctl", "reload", "dovecot"],
+                           capture_output=True, text=True, check=False)
+            return True, "Spam-to-Junk delivery turned off."
+
+        # Install Pigeonhole on demand (same apt idiom as set_spam_filter).
+        if shutil.which("sievec") is None:
+            env = {**os.environ, "DEBIAN_FRONTEND": "noninteractive"}
+            proc = subprocess.run(
+                ["apt-get", "install", "-y", "dovecot-sieve"],
+                capture_output=True, text=True, env=env, timeout=600,
+            )
+            if proc.returncode != 0 or shutil.which("sievec") is None:
+                return False, (proc.stderr or proc.stdout).strip()[-500:] or "dovecot-sieve install failed"
+
+        # Wire the sieve plugin into dovecot.conf (idempotent) and write+compile
+        # the global spam->Junk script.
+        try:
+            prev_conf = self._ensure_sieve_wiring()
+            self._SIEVE_BEFORE_DIR.mkdir(parents=True, exist_ok=True)
+            self._SPAM_TO_JUNK.write_text(self._SPAM_TO_JUNK_SCRIPT, encoding="utf-8")
+        except OSError as exc:
+            return False, f"could not write Sieve config: {exc}"
+        self._sievec(self._SPAM_TO_JUNK)
+
+        # Validate; roll the dovecot.conf change back if the config is rejected.
+        check = subprocess.run(["doveconf", "-n"], capture_output=True, text=True)
+        if check.returncode != 0:
+            if prev_conf is not None:
+                (self._DOVECOT_DIR / "dovecot.conf").write_text(prev_conf, encoding="utf-8")
+            self._SPAM_TO_JUNK.unlink(missing_ok=True)
+            self._SPAM_TO_JUNK.with_suffix(".svbin").unlink(missing_ok=True)
+            return False, "doveconf check failed: " + (check.stderr or check.stdout).strip()[-400:]
+        subprocess.run(["systemctl", "reload", "dovecot"],
+                       capture_output=True, text=True, check=False)
+        return True, "Spam is now delivered to the Junk folder."
+
+    def sync_mail_filters(self, address: str, rules: list[dict],
+                          vacation: dict | None) -> None:
+        # Stack guard: no vhost store -> mail isn't set up here, nothing to do.
+        vhosts = Path("/var/mail/vhosts")
+        if not vhosts.is_dir():
+            return
+        local, _, domain = address.partition("@")
+        # Defense-in-depth: never write outside the managed mailbox tree.
+        if not (self._MAIL_LOCAL_RE.match(local) and self._RSPAMD_DOMAIN_RE.match(domain)):
+            return
+
+        box = vhosts / domain / local
+        script = box / ".dovecot.sieve"
+        text = compile_sieve(rules, vacation)
+        if not text:
+            script.unlink(missing_ok=True)
+            script.with_suffix(".svbin").unlink(missing_ok=True)
+            return
+
+        box.mkdir(parents=True, exist_ok=True)
+        script.write_text(text, encoding="utf-8")
+        # The maildir is owned by vmail; the script must be too, so Pigeonhole can
+        # read it at delivery. chown the box in case we just created it.
+        if subprocess.run(["id", "vmail"], capture_output=True).returncode == 0:
+            subprocess.run(["chown", "-R", "vmail:vmail", str(box)],
+                           capture_output=True, check=False)
+        # Precompile (best-effort). Pigeonhole recompiles on mtime change at
+        # delivery anyway, so NO dovecot reload is needed for a per-user script.
+        self._sievec(script)
 
     # --- Service Manager --------------------------------------------------
     def _resolve_unit(self, key: str) -> tuple[str | None, str]:

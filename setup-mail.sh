@@ -38,6 +38,7 @@ debconf-set-selections <<< "postfix postfix/mailname string ${MYHOST}"
 debconf-set-selections <<< "postfix postfix/main_mailer_type string 'Internet Site'"
 apt-get update -qq
 apt-get install -y -qq postfix dovecot-core dovecot-imapd dovecot-pop3d dovecot-lmtpd \
+    dovecot-sieve \
     ssl-cert \
     "php${PHP_VER}-imap" "php${PHP_VER}-mbstring" "php${PHP_VER}-xml" \
     "php${PHP_VER}-intl" "php${PHP_VER}-zip" "php${PHP_VER}-gd" "php${PHP_VER}-mysql" \
@@ -122,6 +123,23 @@ first_valid_uid = 5000
 
 namespace inbox {
   inbox = yes
+  # Auto-create + subscribe a Junk folder so the spam->Junk Sieve rule (below)
+  # has somewhere to file to and clients show it without manual creation.
+  mailbox Junk {
+    special_use = \Junk
+    auto = subscribe
+  }
+}
+
+# Sieve filtering (Pigeonhole). Delivery is via LMTP, so the sieve plugin loads
+# there. Each mailbox's rules + autoresponder compile to ~/.dovecot.sieve (owned
+# by the panel); the global sieve_before dir holds server-wide rules (spam->Junk).
+protocol lmtp {
+  mail_plugins = $mail_plugins sieve
+}
+plugin {
+  sieve = ~/.dovecot.sieve
+  sieve_before = /etc/dovecot/sieve/before.d
 }
 
 passdb {
@@ -172,8 +190,23 @@ service auth {
   }
 }
 EOF
+
+# Global Sieve rule: file anything Rspamd marked "Deliver-To: Junk" into the Junk
+# folder for every mailbox (runs before per-user scripts). sievec precompiles it
+# to .svbin; harmless if dovecot-sieve somehow isn't present (|| warn).
+mkdir -p /etc/dovecot/sieve/before.d
+cat > /etc/dovecot/sieve/before.d/spam-to-junk.sieve <<'EOF'
+# Managed by LitesPanel setup-mail.sh - deliver Rspamd-tagged spam to Junk.
+require ["fileinto", "mailbox"];
+if header :contains "Deliver-To" "Junk" {
+    fileinto :create "Junk";
+    stop;
+}
+EOF
+sievec /etc/dovecot/sieve/before.d/spam-to-junk.sieve 2>/dev/null || warn "sievec not available — spam->Junk compiles at first delivery"
+
 systemctl restart dovecot
-ok "Dovecot configured (IMAP 143/993, POP3 110/995, TLS on)"
+ok "Dovecot configured (IMAP 143/993, POP3 110/995, TLS on, Sieve spam->Junk)"
 
 # --------------------------------------------------------------------------
 step "Configuring Postfix (virtual mailbox delivery via Dovecot LMTP)"

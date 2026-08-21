@@ -82,6 +82,9 @@
       <a href="/spamfilters" class="jnav-item {{ 'is-active' if active == 'spamfilters' }}" data-tip="Spam Filters">
         <span class="jnav-ico">{{ icon("spam-filters", 20) }}</span><span class="jnav-label">Spam Filters</span>
       </a>
+      <a href="/mailfilters" class="jnav-item {{ 'is-active' if active == 'mailfilters' }}" data-tip="Email Filters">
+        <span class="jnav-ico">{{ icon("email-filters", 20) }}</span><span class="jnav-label">Email Filters</span>
+      </a>
       {% if WEBMAIL_URL %}
       <a href="{{ WEBMAIL_URL }}" target="_blank" rel="noopener" class="jnav-item" data-tip="Webmail">
         <span class="jnav-ico">{{ icon("email", 20) }}</span><span class="jnav-label">Webmail</span>

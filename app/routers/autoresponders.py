@@ -10,9 +10,9 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..models import Autoresponder, Domain, User
-from ..providers import get_provider
 from ..security import current_user
 from ..web import templates
+from .mailfilters import resync_mailbox_sieve
 
 router = APIRouter(prefix="/autoresponders", tags=["autoresponders"])
 
@@ -78,7 +78,7 @@ def create_autoresponder(
     ar = Autoresponder(domain_id=domain.id, local_part=local_part, subject=subject, body=body, enabled=True)
     db.add(ar)
     db.commit()
-    get_provider().set_autoresponder(ar.address, subject, body, True)
+    resync_mailbox_sieve(db, domain, local_part)
     _flash(request, f"✅ Autoresponder for {ar.address} created.")
     return RedirectResponse(f"/autoresponders?domain_id={domain_id}", status_code=303)
 
@@ -96,7 +96,7 @@ def toggle_autoresponder(
         return RedirectResponse("/autoresponders", status_code=303)
     ar.enabled = not ar.enabled
     db.commit()
-    get_provider().set_autoresponder(ar.address, ar.subject, ar.body, ar.enabled)
+    resync_mailbox_sieve(db, ar.domain, ar.local_part)
     _flash(request, f"{'▶️ Enabled' if ar.enabled else '⏸️ Disabled'} autoresponder for {ar.address}.")
     return RedirectResponse(f"/autoresponders?domain_id={ar.domain_id}", status_code=303)
 
@@ -112,9 +112,9 @@ def delete_autoresponder(
     if ar is None or ar.domain.owner_id != user.id:
         _flash(request, "❌ Not found.")
         return RedirectResponse("/autoresponders", status_code=303)
-    domain_id, address = ar.domain_id, ar.address
-    get_provider().remove_autoresponder(address)
+    domain, local_part, domain_id, address = ar.domain, ar.local_part, ar.domain_id, ar.address
     db.delete(ar)
     db.commit()
+    resync_mailbox_sieve(db, domain, local_part)
     _flash(request, f"🗑️ Autoresponder for {address} removed.")
     return RedirectResponse(f"/autoresponders?domain_id={domain_id}", status_code=303)
