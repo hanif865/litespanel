@@ -1261,6 +1261,12 @@ class DemoProvider(Provider):
         mode = "ON" if enabled else "OFF"
         return True, f"(demo) web fronting turned {mode}."
 
+    def regenerate_all_sites(self, sites) -> tuple[bool, str]:
+        # No real nginx on the dev box: nothing to rewrite. Report success so the
+        # WHM button round-trips in demo mode.
+        n = len(list(sites)) if sites is not None else 0
+        return True, f"(demo) re-applied config to {n} site(s)."
+
     def tune_redis(self, maxmemory_mb: int, policy: str) -> tuple[bool, str]:
         # No real redis-server on the dev box: validate + clamp exactly like the
         # linux provider (so a verify script can exercise the guards), then just

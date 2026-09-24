@@ -648,6 +648,22 @@ async def services_varnish_fronting(
     return RedirectResponse("/whm/services", status_code=303)
 
 
+# Re-apply the current-mode vhost template to every hosted site in one click.
+# Rolls an updated vhost/Varnish template out to all existing sites without
+# changing the fronting mode (new template logic otherwise only lands when a
+# site's vhost is individually regenerated). Admin-only (rewrites all vhosts,
+# and re-applies the Varnish drop-in + restart when fronting is on).
+@router.post("/services/regenerate-vhosts")
+async def services_regenerate_vhosts(
+    request: Request,
+    admin: User = Depends(require_admin), db: Session = Depends(get_db),
+):
+    sites = _all_site_vhosts(db)
+    ok, message = await run_in_threadpool(get_provider().regenerate_all_sites, sites)
+    _flash(request, ("✅ " if ok else "❌ ") + message)
+    return RedirectResponse("/whm/services", status_code=303)
+
+
 # Cap Redis's memory and pick its eviction policy (a systemd drop-in + restart,
 # as root). Admin only. maxmemory_mb is an int (non-int → 422) and clamped to a
 # sane range; policy is checked against the allowlist — so neither can inject a

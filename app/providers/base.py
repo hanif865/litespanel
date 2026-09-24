@@ -899,6 +899,22 @@ class Provider(ABC):
         """
 
     @abstractmethod
+    def regenerate_all_sites(self, sites: Sequence[SiteVhost]) -> tuple[bool, str]:
+        """Rewrite every hosted vhost in the CURRENT mode, without changing it.
+
+        Used by the WHM "Re-apply config to all sites" button so an admin can
+        roll a fixed/updated vhost template (or a corrected Varnish drop-in) out
+        to every existing site in one click — new template logic only lands on a
+        site when its vhost is regenerated, so without this button an operator
+        would have to touch each site (PHP-version/SSL toggle) individually.
+        When web-fronting is ON this also re-writes the Varnish systemd drop-in
+        and restarts Varnish, so a corrected unit override reaches the box too.
+        `sites` is the same DB-free snapshot set_web_fronting takes. Validates
+        the whole nginx config once and rolls back on failure. Admin-only at the
+        router layer.
+        """
+
+    @abstractmethod
     def tune_redis(self, maxmemory_mb: int, policy: str) -> tuple[bool, str]:
         """Cap Redis's memory and set its eviction policy. Returns (ok, message).
 
