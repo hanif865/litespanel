@@ -332,9 +332,58 @@ class LinuxProvider(Provider):
     # an internal nginx backend (127.0.0.1:NGINX_BACKEND_PORT) that runs PHP-FPM.
     # When OFF, _vhost / set_https_redirect emit exactly today's direct blocks,
     # so the mode flag being unset is fully regression-safe.
-    def _php_location(self, username: str) -> str:
-        return (f"location ~ \\.php$ {{ fastcgi_pass unix:{self._php_sock(username)};"
-                f" include fastcgi_params; fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name; }}")
+    def _php_location(self, username: str, *, https: str | None = None) -> str:
+        """The `~ \\.php$` FastCGI block.
+
+        `https` is the nginx value to pass as the FastCGI `HTTPS` param so PHP
+        (and WordPress) knows the *front-end* connection was TLS even though this
+        hop to PHP-FPM is plain HTTP:
+          - "on"                  a real `listen 443 ssl` vhost (direct TLS)
+          - "$litespanel_fcgi_https"  a backend behind Varnish/an edge nginx that
+                                   terminates TLS — derived from X-Forwarded-Proto
+                                   via the map in _ensure_fcgi_https_map().
+          - None                  plain-HTTP vhost; PHP correctly sees no HTTPS.
+        Without this a WordPress site whose Site URL is https:// enters an
+        infinite redirect loop (PHP thinks it's on http and 301s to https, which
+        arrives back here as http again). `try_files $uri =404` also stops a
+        request for a non-existent .php path from reaching FPM.
+        """
+        https_param = f" fastcgi_param HTTPS {https};" if https else ""
+        return (f"location ~ \\.php$ {{ try_files $uri =404;"
+                f" fastcgi_pass unix:{self._php_sock(username)};"
+                f" include fastcgi_params;"
+                f" fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;"
+                f"{https_param} }}")
+
+    def _root_location(self) -> str:
+        """Front-controller fallback for pretty permalinks.
+
+        Serve a real file/dir if it exists, else hand the path to index.php with
+        the query string. This is the standard WordPress rule; without it every
+        pretty permalink (e.g. /2024/hello-world/) 404s because nginx has no
+        `location /` and won't route unknown paths to index.php. Harmless for
+        plain static sites (real files still win via $uri/$uri/)."""
+        return "location / { try_files $uri $uri/ /index.php?$args; }"
+
+    # nginx map (http context) that translates the edge terminator's
+    # X-Forwarded-Proto into a FastCGI HTTPS value for the Varnish backend block.
+    # Kept in conf.d so it loads once at http scope; referenced as
+    # $litespanel_fcgi_https from the backend `~ \.php$` block.
+    _FCGI_HTTPS_MAP = Path("/etc/nginx/conf.d/litespanel-forwarded-proto.conf")
+
+    def _ensure_fcgi_https_map(self) -> None:
+        try:
+            if not self._FCGI_HTTPS_MAP.exists():
+                self._FCGI_HTTPS_MAP.write_text(
+                    "map $http_x_forwarded_proto $litespanel_fcgi_https {\n"
+                    "    default off;\n"
+                    "    https   on;\n"
+                    "}\n"
+                )
+        except OSError:
+            # Non-fatal: only the Varnish-backend block references the variable,
+            # and nginx -t will surface a missing map before any reload applies.
+            pass
 
     def _varnish_location(self) -> str:
         return (
@@ -396,7 +445,8 @@ class LinuxProvider(Provider):
             f"    root {docroot};\n    index index.php index.html;\n"
             f"    include {self._limits_conf(username)};\n"
             f"    error_log /var/log/litespanel/{primary}.error.log;\n"
-            f"    {self._php_location(username)}\n}}\n"
+            f"    {self._root_location()}\n"
+            f"    {self._php_location(username, https='$litespanel_fcgi_https')}\n}}\n"
         )
 
     def _sandwich_vhost(self, primary: str, names: str, docroot: Path, username: str,
@@ -423,8 +473,8 @@ class LinuxProvider(Provider):
             f"    access_log /var/log/litespanel/{server_name}.access.log;\n"
             f"    error_log /var/log/litespanel/{server_name}.error.log;\n"
             f"    location /lpanel {{ return 301 {config.PANEL_URL}/login; }}\n"
-            f"    location ~ \\.php$ {{ fastcgi_pass unix:{self._php_sock(username)};"
-            f" include fastcgi_params; fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name; }}\n}}\n"
+            f"    {self._root_location()}\n"
+            f"    {self._php_location(username)}\n}}\n"
         )
 
     # --- Web hosting ------------------------------------------------------
@@ -448,6 +498,7 @@ class LinuxProvider(Provider):
         self.reload_web()
 
     def reload_web(self) -> None:
+        self._ensure_fcgi_https_map()  # map the Varnish backend block references
         _run(["nginx", "-t"])          # validate before applying
         _run(["systemctl", "reload", "nginx"])
 
@@ -583,8 +634,9 @@ class LinuxProvider(Provider):
         logs = (f" access_log /var/log/litespanel/{domain}.access.log;"
                 f" error_log /var/log/litespanel/{domain}.error.log;")
         body = f" include {self._limits_conf(system_user)};"
-        php = (f"location ~ \\.php$ {{ fastcgi_pass unix:{self._php_sock(system_user)};"
-               f" include fastcgi_params; fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name; }}")
+        root_loc = self._root_location()
+        php = self._php_location(system_user)                     # plain HTTP (:80)
+        php_tls = self._php_location(system_user, https="on")     # real TLS (:443)
         lpanel = f"location /lpanel {{ return 301 {config.PANEL_URL}/login; }}"
         blocks = []
         if has_ssl:
@@ -594,13 +646,13 @@ class LinuxProvider(Provider):
                               f"{logs} return 301 https://$host$request_uri; }}")
             else:
                 blocks.append(f"server {{ listen 80; server_name {names}; root {docroot};"
-                              f" index index.php index.html;{body}{logs} {lpanel} {php} }}")
+                              f" index index.php index.html;{body}{logs} {lpanel} {root_loc} {php} }}")
             blocks.append(f"server {{ listen 443 ssl; server_name {names};"
                           f" ssl_certificate {cert}/fullchain.pem; ssl_certificate_key {cert}/privkey.pem;"
-                          f" root {docroot}; index index.php index.html;{body}{logs} {lpanel} {php} }}")
+                          f" root {docroot}; index index.php index.html;{body}{logs} {lpanel} {root_loc} {php_tls} }}")
         else:
             blocks.append(f"server {{ listen 80; server_name {names}; root {docroot};"
-                          f" index index.php index.html;{body}{logs} {lpanel} {php} }}")
+                          f" index index.php index.html;{body}{logs} {lpanel} {root_loc} {php} }}")
         (NGINX_SITES / f"{domain}.conf").write_text("\n".join(blocks) + "\n")
         self.reload_web()
 
@@ -2490,10 +2542,19 @@ class LinuxProvider(Provider):
     def _varnish_override(self) -> str:
         # Clear ExecStart first (systemd appends otherwise), then rebind varnishd
         # to loopback only and load the panel VCL. Public ports stay untouched.
+        #
+        # -F (foreground) is REQUIRED: the stock varnish.service is Type=simple,
+        # so systemd treats the ExecStart process as the service's main process.
+        # Without -F, varnishd daemonizes — the parent forks a child and exits
+        # 0/SUCCESS immediately, systemd sees the "main" process gone and tears
+        # down the whole cgroup (SIGTERM to the surviving child) about a second
+        # after start. Varnish then flaps start→die on every restart and nginx's
+        # :443 proxy_pass to :6081 returns 502. -F keeps varnishd in the
+        # foreground as the real main process so the unit stays up.
         return (
             "[Service]\n"
             "ExecStart=\n"
-            f"ExecStart=/usr/sbin/varnishd -a 127.0.0.1:{config.VARNISH_PORT} "
+            f"ExecStart=/usr/sbin/varnishd -F -a 127.0.0.1:{config.VARNISH_PORT} "
             f"-f {VARNISH_VCL} -s malloc,256m\n"
         )
 
@@ -2532,6 +2593,7 @@ class LinuxProvider(Provider):
         if not NGINX_SITES.is_dir():
             return True, "no vhosts to regenerate."
         self._ensure_weblog_dir()
+        self._ensure_fcgi_https_map()  # backend blocks reference $litespanel_fcgi_https
         changed: dict[Path, str | None] = {}   # path -> original text (None = new)
         for site in sites:
             if site.is_node:
@@ -2555,18 +2617,19 @@ class LinuxProvider(Provider):
                 logs = (f" access_log /var/log/litespanel/{site.name}.access.log;"
                         f" error_log /var/log/litespanel/{site.name}.error.log;")
                 body = f" include {self._limits_conf(site.system_user)};"
-                php = (f"location ~ \\.php$ {{ fastcgi_pass unix:{self._php_sock(site.system_user)};"
-                       f" include fastcgi_params; fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name; }}")
+                root_loc = self._root_location()
+                php = self._php_location(site.system_user)                 # plain HTTP (:80)
+                php_tls = self._php_location(site.system_user, https="on")  # real TLS (:443)
                 lpanel = f"location /lpanel {{ return 301 {config.PANEL_URL}/login; }}"
                 if site.force_https:
                     top = (f"server {{ listen 80; server_name {names};"
                            f"{logs} return 301 https://$host$request_uri; }}")
                 else:
                     top = (f"server {{ listen 80; server_name {names}; root {docroot};"
-                           f" index index.php index.html;{body}{logs} {lpanel} {php} }}")
+                           f" index index.php index.html;{body}{logs} {lpanel} {root_loc} {php} }}")
                 tls = (f"server {{ listen 443 ssl; server_name {names};"
                        f" ssl_certificate {cert}/fullchain.pem; ssl_certificate_key {cert}/privkey.pem;"
-                       f" root {docroot}; index index.php index.html;{body}{logs} {lpanel} {php} }}")
+                       f" root {docroot}; index index.php index.html;{body}{logs} {lpanel} {root_loc} {php_tls} }}")
                 content = top + "\n" + tls + "\n"
             else:
                 content = self._vhost(site.name, site.extra_names, docroot, site.system_user)
