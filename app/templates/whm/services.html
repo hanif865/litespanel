@@ -138,6 +138,22 @@
   {% endif %}
 </div>
 
+<div class="card">
+  <h2 style="margin-top:0">Re-apply config to all sites</h2>
+  <p class="muted">
+    Rewrites <strong>every hosted site's nginx vhost</strong> from the current
+    template in the current mode (direct or Varnish) &mdash; without changing any
+    setting. Use this after a panel update so fixes to the generated config reach
+    every existing site at once, instead of touching each site one by one. While
+    web fronting is ON it also re-writes the Varnish service override and restarts
+    Varnish. Node.js sites are left untouched.
+  </p>
+  <form method="post" action="/whm/services/regenerate-vhosts" class="inline-form"
+        onsubmit="return confirm('Re-apply the current config template to every site now? All vhosts are rewritten and nginx is reloaded (Varnish is restarted too if fronting is on).');">
+    <button class="btn btn-primary">Re-apply to all sites</button>
+  </form>
+</div>
+
 {% set redis = services | selectattr('key', 'equalto', 'redis') | list | first %}
 <div class="card">
   <h2 style="margin-top:0">Redis tuning</h2>

@@ -2682,6 +2682,25 @@ class LinuxProvider(Provider):
         mode = "ON" if enabled else "OFF"
         return True, f"Web fronting turned {mode} — {msg}"
 
+    def regenerate_all_sites(self, sites: Sequence[SiteVhost]) -> tuple[bool, str]:
+        """Re-apply the current-mode vhost template to every site (no mode change).
+
+        Lets an admin push an updated vhost/Varnish template out to all existing
+        sites at once. When fronting is ON, also rewrite the Varnish drop-in +
+        restart Varnish so a corrected unit override (e.g. the -F fix) lands too.
+        """
+        try:
+            if web_fronting_enabled():
+                ok, msg = self._ensure_varnish_config()
+                if not ok:
+                    return False, msg
+            ok, msg = self._regenerate_all_vhosts(sites)
+        except Exception as exc:  # noqa: BLE001 — surface, never crash the request.
+            return False, str(exc)
+        if not ok:
+            return False, msg
+        return True, f"Re-applied config to all sites — {msg}"
+
     # --- Redis daemon tuning (admin-only) ---------------------------------
     def _redis_override(self, maxmemory_mb: int, policy: str) -> str:
         # Clear ExecStart first (systemd appends otherwise), then relaunch
