@@ -252,6 +252,15 @@ define('DB_COLLATE', '');
 $table_prefix = 'wp_';
 define('WP_DEBUG', false);
 define('FS_METHOD', 'direct');
+/* Trust the SSL-terminating edge (nginx :443 / Varnish sandwich forwards plain
+   HTTP to PHP). Without this WordPress sees $_SERVER['HTTPS'] unset, thinks the
+   request is http, and 301s an https:// Site URL back to https:// forever
+   (ERR_TOO_MANY_REDIRECTS). nginx also sets fastcgi_param HTTPS, but honoring
+   X-Forwarded-Proto here keeps the site correct behind any TLS-terminating
+   front end. */
+if (!empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') {{
+    $_SERVER['HTTPS'] = 'on';
+}}
 {extra}
 if (!defined('ABSPATH')) define('ABSPATH', __DIR__ . '/');
 require_once ABSPATH . 'wp-settings.php';
