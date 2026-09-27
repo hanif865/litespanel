@@ -5,6 +5,7 @@ document root, so a crafted "../.." can never escape the sandbox.
 """
 from __future__ import annotations
 
+import logging
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -42,10 +43,23 @@ def _owned_domain(db: Session, user: User, domain_id: int) -> Domain:
 
 
 def _own(domain: Domain, path: Path) -> None:
-    """Hand a newly created file/folder to the site's isolated account user."""
+    """Hand a newly created file/folder to the site's isolated account user.
+
+    Best-effort: the file/folder has already been written by the time we get
+    here, so a failing `chown` (missing account user, panel not running as
+    root, unusual mount) must never turn a successful operation into a 500 —
+    that made uploads look broken even though the bytes landed on disk. We log
+    it instead so an admin can spot a genuine ownership problem.
+    """
     sysuser = domain.owner.system_user
-    if sysuser:
+    if not sysuser:
+        return
+    try:
         get_provider().set_owner(path, sysuser)
+    except Exception:  # noqa: BLE001 — ownership is best-effort, never fatal
+        logging.getLogger("litespanel").warning(
+            "set_owner failed for %s (user %s)", path, sysuser, exc_info=True
+        )
 
 
 def _safe_join(docroot: Path, rel: str) -> Path:

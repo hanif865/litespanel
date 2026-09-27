@@ -266,12 +266,31 @@ document.addEventListener('click', function(){ $('fm-ctx').style.display='none';
 var main=$('fm-main');
 main.addEventListener('dragover', function(e){ if(e.dataTransfer.types.indexOf('Files')!==-1){ e.preventDefault(); main.classList.add('dragging'); } });
 main.addEventListener('dragleave', function(e){ if(e.target===main) main.classList.remove('dragging'); });
+var UPPATH = {{ path|tojson }};
+async function ddUpload(file, overwrite){
+  var fd=new FormData();
+  fd.append('domain_id',DID); fd.append('path',UPPATH); fd.append('ajax','1');
+  fd.append('overwrite', overwrite ? '1':'0'); fd.append('file',file);
+  var res, data={};
+  try{ res=await fetch('/files/upload',{method:'POST',body:fd,credentials:'same-origin'}); }
+  catch(err){ return {ok:false, status:0, file:file, error:'network error'}; }
+  try{ data=await res.json(); }catch(e){}
+  return {ok:res.status===200, status:res.status, file:file,
+          error:data.error||('upload failed ('+res.status+')')};
+}
 main.addEventListener('drop', async function(e){
   if(e.dataTransfer.types.indexOf('Files')===-1) return;
   e.preventDefault(); main.classList.remove('dragging');
   var files=e.dataTransfer.files; if(!files.length) return;
-  for(var i=0;i<files.length;i++){ var fd=new FormData(); fd.append('domain_id',DID); fd.append('path','{{ path }}'); fd.append('file',files[i]);
-    await fetch('/files/upload',{method:'POST',body:fd,credentials:'same-origin'}); }
+  var conflicts=[], errors=[];
+  for(var i=0;i<files.length;i++){ var r=await ddUpload(files[i],false);
+    if(!r.ok){ (r.status===409?conflicts:errors).push(r); } }
+  // Offer to replace any files that already existed, then re-upload them.
+  if(conflicts.length && confirm('These already exist — replace them?\n\n'+conflicts.map(function(c){return c.file.name;}).join('\n'))){
+    for(var j=0;j<conflicts.length;j++){ var r2=await ddUpload(conflicts[j].file,true);
+      if(!r2.ok) errors.push(r2); }
+  } else if(conflicts.length){ errors=errors.concat(conflicts); }
+  if(errors.length) alert('Some files were not uploaded:\n\n'+errors.map(function(x){return x.file.name+': '+x.error;}).join('\n'));
   location.reload();
 });
 
