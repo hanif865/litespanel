@@ -288,24 +288,41 @@ class LinuxProvider(Provider):
         _run(["systemctl", "reload", f"php{version}-fpm"])
 
     def php_fpm_installed(self, version: str) -> bool:
-        """True when php<version>-fpm is installed (its pool.d dir exists)."""
+        """True only when the php<version>-fpm SAPI is really installed.
+
+        The /etc/php/<v>/fpm tree can exist from php<v>-common alone (no FPM),
+        so a dir check gives false positives — which is exactly how a version
+        with no php<v>-fpm.service slipped into the Selector and then failed on
+        `systemctl reload`. Check the artifacts the FPM package actually
+        installs: its binary and/or its systemd unit.
+        """
         try:
             v = self._php_ver(version)
         except ValueError:
             return False
-        return Path(f"/etc/php/{v}/fpm/pool.d").is_dir()
+        if Path(f"/usr/sbin/php-fpm{v}").exists():
+            return True
+        return any(Path(p).exists() for p in (
+            f"/lib/systemd/system/php{v}-fpm.service",
+            f"/usr/lib/systemd/system/php{v}-fpm.service",
+            f"/etc/systemd/system/php{v}-fpm.service",
+        ))
+
+    def _effective_php_version(self, version: str | None) -> str:
+        """The version to actually serve with: the requested one if its FPM is
+        installed, else the default. Keeps a vhost from pointing at a dead socket
+        when a site was left on a version that isn't (or is no longer) installed."""
+        v = self._php_ver(version)
+        return v if self.php_fpm_installed(v) else self._php_ver(config.PHP_FPM_VERSION)
 
     def _installed_php_versions(self) -> list[str]:
-        """PHP versions with an FPM pool dir present on the box (i.e. installed).
-        Used to clean up every pool an account might own across versions."""
+        """Every PHP version whose FPM SAPI is installed on the box. Used to find
+        the pools an account might own across versions (e.g. account removal)."""
         base = Path("/etc/php")
         if not base.is_dir():
             return []
-        out = []
-        for d in base.iterdir():
-            if re.match(r"^\d+\.\d+$", d.name) and (d / "fpm" / "pool.d").is_dir():
-                out.append(d.name)
-        return out
+        return [d.name for d in base.iterdir()
+                if re.match(r"^\d+\.\d+$", d.name) and self.php_fpm_installed(d.name)]
 
     def _ensure_weblog_dir(self) -> None:
         """Make sure /var/log/litespanel exists before nginx opens a log there."""
@@ -423,6 +440,11 @@ class LinuxProvider(Provider):
         request for a non-existent .php path from reaching FPM.
         """
         https_param = f" fastcgi_param HTTPS {https};" if https else ""
+        # Never point a vhost at a version whose FPM isn't installed — that socket
+        # would never exist and the site would 502. Fall back to the default
+        # (always-installed) version's socket so the site stays up even if it was
+        # left on a since-removed version.
+        version = self._effective_php_version(version)
         return (f"location ~ \\.php$ {{ try_files $uri =404;"
                 f" fastcgi_pass unix:{self._php_sock(username, version)};"
                 f" include fastcgi_params;"
