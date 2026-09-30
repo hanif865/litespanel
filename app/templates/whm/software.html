@@ -3,9 +3,38 @@
 {% block content %}
 <div class="whm-page-head">
   <h1>Server Software</h1>
-  <p class="muted">Install system-wide software: PHP extensions and the Node.js
-    runtime. These run as root on the server and affect every account — so they
-    live here in WHM, not in the user panel.</p>
+  <p class="muted">Install system-wide software: PHP versions, PHP extensions and
+    the Node.js runtime. These run as root on the server and affect every account
+    — so they live here in WHM, not in the user panel.</p>
+</div>
+
+<!-- PHP versions -->
+<div class="card">
+  <h2>PHP Versions</h2>
+  <p class="muted small">
+    Install additional PHP versions (via the ondrej/php repo) so accounts can run
+    a domain or subdomain on a specific version from the <strong>PHP Selector</strong>.
+    Each install pulls <code>php&lt;ver&gt;-fpm</code> plus a WordPress-ready module set
+    and starts its service. Installing runs <code>apt</code> as root and can take a minute.
+  </p>
+  <div class="ext-grid">
+    {% for v in php_versions %}
+      <div class="ext-item {{ 'on' if php_installed[v] }}">
+        <div class="ext-toggle" style="justify-content:space-between;">
+          <span class="ext-name">PHP {{ v }}</span>
+          {% if php_installed[v] %}
+            <span class="pill pill-ok">Installed</span>
+          {% else %}
+            <form method="post" action="/whm/software/php-version/install" class="inline-form"
+                  onsubmit="return confirm('Install PHP {{ v }} (php{{ v }}-fpm + common modules) now? This runs apt as root and may take a minute.');">
+              <input type="hidden" name="version" value="{{ v }}">
+              <button type="submit" class="btn btn-sm btn-primary">Install</button>
+            </form>
+          {% endif %}
+        </div>
+      </div>
+    {% endfor %}
+  </div>
 </div>
 
 <!-- PHP extensions -->

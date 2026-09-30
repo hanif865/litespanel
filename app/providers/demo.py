@@ -207,6 +207,12 @@ class DemoProvider(Provider):
         from .. import php_catalog
         return version in php_catalog.PHP_VERSIONS
 
+    def install_php_version(self, version: str) -> tuple[bool, str]:
+        from .. import php_catalog
+        if version not in php_catalog.PHP_VERSIONS:
+            return False, f"Unsupported PHP version: {version!r}"
+        return True, f"(demo) PHP {version} is available."
+
     # --- PHP extension packages (simulated) -------------------------------
     def _installed_ext_file(self) -> Path:
         return config.PHP_DIR / "installed_extensions.txt"

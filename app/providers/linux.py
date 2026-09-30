@@ -779,6 +779,62 @@ class LinuxProvider(Provider):
             raise ValueError(f"Unsafe node app name: {name!r}")
         return Path(f"/etc/systemd/system/litespanel-node-{name}.service")
 
+    # Sensible default module set for a new PHP version — enough to run
+    # WordPress and most PHP apps out of the box (mirrors what the default
+    # version ships). Per-site on/off still happens in the PHP Selector.
+    _PHP_BASE_MODULES = (
+        "fpm", "cli", "common", "mysql", "curl", "xml", "mbstring", "zip",
+        "gd", "intl", "bcmath", "soap", "opcache", "readline", "imagick",
+    )
+
+    def install_php_version(self, version: str) -> tuple[bool, str]:
+        """apt-install php<version>-fpm (+ a WordPress-ready module set) so the
+        PHP Selector can switch domains/subdomains to it. Adds the ondrej PPA,
+        which carries every PHP version for Ubuntu. Admin-only at the router.
+        Runs as root, is idempotent, and enables+starts the FPM service."""
+        import os
+
+        try:
+            v = self._php_ver(version)
+        except ValueError:
+            return False, f"Unsafe PHP version: {version!r}"
+        if self.php_fpm_installed(v):
+            return True, f"PHP {v} is already installed."
+
+        env = {**os.environ, "DEBIAN_FRONTEND": "noninteractive"}
+
+        def apt(cmd: list[str], timeout: int = 600) -> tuple[bool, str]:
+            proc = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=timeout)
+            return proc.returncode == 0, (proc.stderr or proc.stdout).strip()[-500:]
+
+        # Multiple PHP versions on Ubuntu come from the ondrej/php PPA. Make sure
+        # add-apt-repository exists, then add the PPA (idempotent) and refresh.
+        if not Path("/usr/bin/add-apt-repository").exists():
+            ok, out = apt(["apt-get", "install", "-y", "software-properties-common"])
+            if not ok:
+                return False, f"could not install software-properties-common: {out}"
+        ok, out = apt(["add-apt-repository", "-y", "ppa:ondrej/php"])
+        if not ok:
+            return False, f"could not add the ondrej/php PPA: {out}"
+        ok, out = apt(["apt-get", "update"])
+        if not ok:
+            return False, f"apt-get update failed: {out}"
+
+        pkgs = [f"php{v}-{mod}" for mod in self._PHP_BASE_MODULES]
+        ok, out = apt(["apt-get", "install", "-y", *pkgs])
+        if not ok:
+            return False, f"apt-get install of PHP {v} failed: {out}"
+
+        # Enable + start the FPM service so its socket is live immediately.
+        try:
+            _run(["systemctl", "enable", "--now", f"php{v}-fpm"])
+        except RuntimeError as exc:
+            return False, f"PHP {v} installed but its service wouldn't start: {exc}"
+
+        if not self.php_fpm_installed(v):
+            return False, f"PHP {v} install finished but php{v}-fpm isn't present."
+        return True, f"Installed PHP {v} (php{v}-fpm) and started its service."
+
     def install_node(self, version: str) -> tuple[bool, str]:
         import os
 

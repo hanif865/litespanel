@@ -350,6 +350,13 @@ class Provider(ABC):
         """
 
     @abstractmethod
+    def install_php_version(self, version: str) -> tuple[bool, str]:
+        """Install php<version>-fpm (+ a WordPress-ready module set) host-wide so
+        the PHP Selector can switch sites to it. Admin-only at the router; runs
+        the distro package install as root and is idempotent. Returns (ok, msg).
+        """
+
+    @abstractmethod
     def php_fpm_installed(self, version: str) -> bool:
         """True when php<version>-fpm is installed on the host.
 
