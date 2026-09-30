@@ -116,36 +116,51 @@ def _apply(cfg: PhpConfig, user: User,
     )
 
 
+def _apply_safe(cfg: PhpConfig, user: User,
+                domain: Domain | None, subdomain: Subdomain | None) -> str | None:
+    """Materialize the config to the provider, but never let a failing shell-out
+    (systemctl/nginx) bubble up as a 500. Returns an error message on failure so
+    the caller can flash it — the DB intent is still saved and can be retried."""
+    try:
+        _apply(cfg, user, domain, subdomain)
+        return None
+    except Exception as exc:  # noqa: BLE001 — surface the reason, don't 500.
+        return str(exc)
+
+
 def _rebuild_vhost(db: Session, user: User,
                    domain: Domain | None, subdomain: Subdomain | None) -> str | None:
     """After a version change, repoint the affected site's vhost at the new FPM
     socket (SSL/mode-safe). Returns an error message on failure, else None. No-op
     for the account-global scope (no single site) and for Node.js domains (they
     reverse-proxy to a process, not PHP-FPM)."""
-    account = _account_user(user)
-    if subdomain is not None:
-        has_ssl = subdomain.certificate is not None
-        site = SiteVhost(
-            name=subdomain.fqdn, docroot=subdomain.docroot, php_version=subdomain.php_version,
-            system_user=account, has_ssl=has_ssl, force_https=has_ssl,
-            extra_names="", is_node=False,
-        )
-    elif domain is not None:
-        is_node = db.scalar(
-            select(NodeApp.id).where(NodeApp.domain_id == domain.id)
-        ) is not None
-        if is_node:
+    try:
+        account = _account_user(user)
+        if subdomain is not None:
+            has_ssl = subdomain.certificate is not None
+            site = SiteVhost(
+                name=subdomain.fqdn, docroot=subdomain.docroot, php_version=subdomain.php_version,
+                system_user=account, has_ssl=has_ssl, force_https=has_ssl,
+                extra_names="", is_node=False,
+            )
+        elif domain is not None:
+            is_node = db.scalar(
+                select(NodeApp.id).where(NodeApp.domain_id == domain.id)
+            ) is not None
+            if is_node:
+                return None
+            site = SiteVhost(
+                name=domain.name, docroot=domain.docroot, php_version=domain.php_version,
+                system_user=account, has_ssl=domain.certificate is not None,
+                force_https=bool(domain.force_https), extra_names=f" www.{domain.name}",
+                is_node=False,
+            )
+        else:
             return None
-        site = SiteVhost(
-            name=domain.name, docroot=domain.docroot, php_version=domain.php_version,
-            system_user=account, has_ssl=domain.certificate is not None,
-            force_https=bool(domain.force_https), extra_names=f" www.{domain.name}",
-            is_node=False,
-        )
-    else:
-        return None
-    ok, message = get_provider().rebuild_site_vhost(site)
-    return None if ok else message
+        ok, message = get_provider().rebuild_site_vhost(site)
+        return None if ok else message
+    except Exception as exc:  # noqa: BLE001 — never 500 on a vhost rebuild.
+        return str(exc)
 
 
 @router.get("")
@@ -236,13 +251,15 @@ def set_version(
     elif domain is not None:
         domain.php_version = php_version
     # Materialize the FPM pool/extensions for the new version, then repoint the
-    # affected site's vhost at that version's socket (SSL/mode-safe).
-    _apply(cfg, user, domain, subdomain)
-    err = _rebuild_vhost(db, user, domain, subdomain)
+    # affected site's vhost at that version's socket (SSL/mode-safe). Neither step
+    # may 500 — any shell-out failure is surfaced as a flash instead.
+    apply_err = _apply_safe(cfg, user, domain, subdomain)
+    vhost_err = _rebuild_vhost(db, user, domain, subdomain)
     db.commit()
     label = _scope_label(domain, subdomain) or "account default"
+    err = apply_err or vhost_err
     if err:
-        _flash(request, f"⚠️ PHP {php_version} saved for {label}, but the vhost rewrite failed: {err}")
+        _flash(request, f"⚠️ PHP {php_version} saved for {label}, but applying it failed: {err}")
     else:
         _flash(request, f"✅ {label} now uses PHP {php_version}.")
     return _redirect(domain, subdomain)
@@ -260,9 +277,10 @@ async def set_extensions(
     # Checkboxes only post when checked; anything not present is disabled.
     checked = set(form.getlist("ext"))
     cfg.extensions = {name: (name in checked) for name in php_catalog.AVAILABLE_EXTENSIONS}
-    _apply(cfg, user, domain, subdomain)
+    err = _apply_safe(cfg, user, domain, subdomain)
     db.commit()
-    _flash(request, "✅ PHP extensions updated.")
+    _flash(request, f"⚠️ Extensions saved, but applying them failed: {err}" if err
+           else "✅ PHP extensions updated.")
     return _redirect(domain, subdomain)
 
 
@@ -291,9 +309,10 @@ async def set_directives(
         directives.pop("session.save_handler", None)
         directives.pop("session.save_path", None)
     cfg.directives = directives
-    _apply(cfg, user, domain, subdomain)
+    err = _apply_safe(cfg, user, domain, subdomain)
     db.commit()
-    _flash(request, "✅ php.ini options saved.")
+    _flash(request, f"⚠️ Options saved, but applying them failed: {err}" if err
+           else "✅ php.ini options saved.")
     return _redirect(domain, subdomain)
 
 
@@ -307,7 +326,8 @@ async def reset_extensions(
     domain, subdomain = _parse_scope(db, user, form.get("scope"))
     cfg = _get_or_create_config(db, user, domain, subdomain)
     cfg.extensions = php_catalog.default_extensions()
-    _apply(cfg, user, domain, subdomain)
+    err = _apply_safe(cfg, user, domain, subdomain)
     db.commit()
-    _flash(request, "↩️ PHP extensions reset to default.")
+    _flash(request, f"⚠️ Reset saved, but applying it failed: {err}" if err
+           else "↩️ PHP extensions reset to default.")
     return _redirect(domain, subdomain)
