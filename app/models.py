@@ -168,9 +168,10 @@ class Subdomain(Base):
 class PhpConfig(Base):
     """A PHP configuration profile: enabled extensions + php.ini directives.
 
-    Two scopes, mirroring cPanel's PHP Selector:
-      * Account global  — owner_id set, domain_id NULL. The account default.
+    Three scopes, mirroring cPanel's PHP Selector:
+      * Account global  — owner_id set, domain_id + subdomain_id NULL. The default.
       * Per domain      — domain_id set (owner_id still set for cheap lookups).
+      * Per subdomain   — subdomain_id set (domain_id NULL); its own PHP version.
 
     `extensions` is {ext_name: bool} and `directives` is {ini_key: str}. Both
     are stored as JSON so the schema doesn't churn as PHP's option set changes;
@@ -178,14 +179,18 @@ class PhpConfig(Base):
     """
     __tablename__ = "php_configs"
     __table_args__ = (
-        UniqueConstraint("owner_id", "domain_id", name="uq_phpconfig_scope"),
+        UniqueConstraint("owner_id", "domain_id", "subdomain_id", name="uq_phpconfig_scope"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
-    # NULL => this row is the account-global profile.
+    # domain_id set => per-domain override; subdomain_id set => per-subdomain
+    # override; both NULL => the account-global profile. At most one is set.
     domain_id: Mapped[int | None] = mapped_column(
         ForeignKey("domains.id"), nullable=True, index=True
+    )
+    subdomain_id: Mapped[int | None] = mapped_column(
+        ForeignKey("subdomains.id"), nullable=True, index=True
     )
     php_version: Mapped[str] = mapped_column(String(16), default="8.3")
     extensions: Mapped[dict] = mapped_column(JSON, default=dict)
@@ -197,6 +202,7 @@ class PhpConfig(Base):
 
     owner: Mapped["User"] = relationship()
     domain: Mapped["Domain | None"] = relationship()
+    subdomain: Mapped["Subdomain | None"] = relationship()
 
 
 class CronJob(Base):

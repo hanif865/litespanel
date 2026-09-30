@@ -152,6 +152,20 @@ class DemoProvider(Provider):
     def set_php_version(self, domain: str, docroot: str, php_version: str, system_user: str) -> None:
         self._write_vhost(domain, Path(docroot), php_version, system_user)
 
+    def rebuild_site_vhost(self, site) -> tuple[bool, str]:
+        # Re-render one site's vhost at its (possibly new) PHP version. The demo
+        # template already embeds the version, so this makes the change visible in
+        # the inspectable nginx conf. Honors the site's HTTPS-redirect state.
+        try:
+            if site.has_ssl and site.force_https:
+                self.set_https_redirect(site.name, site.docroot, site.php_version,
+                                        site.system_user, True, True)
+            else:
+                self._write_vhost(site.name, Path(site.docroot), site.php_version, site.system_user)
+        except Exception as exc:  # noqa: BLE001
+            return False, str(exc)
+        return True, f"(demo) {site.name} now serves PHP {site.php_version}."
+
     def apply_php_config(self, system_user: str, php_version: str,
                          extensions: dict[str, bool], directives: dict[str, str],
                          domain: str | None = None) -> None:

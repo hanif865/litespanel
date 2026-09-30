@@ -154,8 +154,9 @@ class LinuxProvider(Provider):
                   "--shell", "/usr/sbin/nologin", "--no-user-group",
                   "--gid", group, username])
         # A dedicated PHP-FPM pool makes this account's PHP run AS this user,
-        # so its sites can't read another account's files.
-        self._write_php_pool(username)
+        # so its sites can't read another account's files. Seed the default
+        # version's pool; other versions get one on demand when a site picks them.
+        self._write_php_pool(username, config.PHP_FPM_VERSION)
         # Seed the per-account nginx upload cap so the include target exists
         # before this account's first vhost references it.
         self._ensure_limits(username)
@@ -176,26 +177,53 @@ class LinuxProvider(Provider):
 
     def remove_account(self, username: str) -> None:
         _ident(username, "account username")
-        pool = Path(f"/etc/php/{config.PHP_FPM_VERSION}/fpm/pool.d/{username}.conf")
-        pool.unlink(missing_ok=True)
-        self._reload_php()
+        # An account may own a pool under several PHP versions (one per version
+        # its sites used) — remove them all and reload each affected FPM master.
+        for version in self._installed_php_versions():
+            pool = self._pool_path(username, version)
+            if pool.exists():
+                pool.unlink(missing_ok=True)
+                self._reload_php(version)
         # Only delete real per-account homes, never a pre-existing system user.
         if (Path("/home") / username).is_dir():
             subprocess.run(["userdel", "--remove", username], capture_output=True)
 
-    def _php_sock(self, username: str) -> str:
-        return f"/run/php/{username}.sock"
+    def _php_ver(self, version: str | None) -> str:
+        """Validate a PHP version to digits.digits before it reaches a path,
+        socket or systemd unit. Falls back to the configured default for blanks."""
+        v = (version or "").strip() or config.PHP_FPM_VERSION
+        if not re.match(r"^\d+\.\d+$", v):
+            raise ValueError(f"Unsafe PHP version: {version!r}")
+        return v
+
+    def _php_sock(self, username: str, version: str | None = None) -> str:
+        # One socket per (account, version). Different versions run as separate
+        # FPM pools, so a domain on 8.1 and one on 8.3 under the same account
+        # truly serve different PHP runtimes (not just a cosmetic version label).
+        return f"/run/php/{username}-{self._php_ver(version)}.sock"
+
+    def _pool_path(self, username: str, version: str | None = None) -> Path:
+        return Path(f"/etc/php/{self._php_ver(version)}/fpm/pool.d/{username}.conf")
+
+    def _ensure_php_pool(self, username: str, version: str | None = None) -> None:
+        """Create the (account, version) FPM pool if it doesn't exist yet, so a
+        vhost pointed at that version's socket has something listening. Leaves an
+        existing pool (and its saved php.ini directives) untouched."""
+        if not self._pool_path(username, version).exists():
+            self._write_php_pool(username, version)
 
     def _write_php_pool(self, username: str,
+                        version: str | None = None,
                         directives: dict[str, str] | None = None,
                         reload: bool = True) -> None:
-        pool = Path(f"/etc/php/{config.PHP_FPM_VERSION}/fpm/pool.d/{username}.conf")
+        version = self._php_ver(version)
+        pool = self._pool_path(username, version)
         group = self._primary_group(username)
         lines = [
             f"[{username}]",
             f"user = {username}",
             f"group = {group}",
-            f"listen = {self._php_sock(username)}",
+            f"listen = {self._php_sock(username, version)}",
             "listen.owner = www-data",
             "listen.group = www-data",
             "pm = ondemand",
@@ -232,12 +260,25 @@ class LinuxProvider(Provider):
                 lines.append(f"php_admin_flag[{key}] = {value}")
             else:
                 lines.append(f"php_admin_value[{key}] = {value}")
+        pool.parent.mkdir(parents=True, exist_ok=True)
         pool.write_text("\n".join(lines) + "\n")
         if reload:
-            self._reload_php()
+            self._reload_php(version)
 
-    def _reload_php(self) -> None:
-        _run(["systemctl", "reload", f"php{config.PHP_FPM_VERSION}-fpm"])
+    def _reload_php(self, version: str | None = None) -> None:
+        _run(["systemctl", "reload", f"php{self._php_ver(version)}-fpm"])
+
+    def _installed_php_versions(self) -> list[str]:
+        """PHP versions with an FPM pool dir present on the box (i.e. installed).
+        Used to clean up every pool an account might own across versions."""
+        base = Path("/etc/php")
+        if not base.is_dir():
+            return []
+        out = []
+        for d in base.iterdir():
+            if re.match(r"^\d+\.\d+$", d.name) and (d / "fpm" / "pool.d").is_dir():
+                out.append(d.name)
+        return out
 
     def _ensure_weblog_dir(self) -> None:
         """Make sure /var/log/litespanel exists before nginx opens a log there."""
@@ -285,7 +326,9 @@ class LinuxProvider(Provider):
         if not NGINX_SITES.is_dir():
             return
         include_path = str(self._limits_conf(username))
-        marker = f"unix:{self._php_sock(username)}"   # this account's FPM socket
+        # This account's FPM sockets are /run/php/<user>-<version>.sock — match the
+        # per-account prefix so every version's vhost is recognised as ours.
+        marker = f"unix:/run/php/{username}-"
         # Strip the hardcoded directive together with its leading indent/space so
         # neither a blank-but-harmless line (multi-line vhost) nor a token merge
         # like `index.html;access_log` (inline SSL vhost) can result.
@@ -332,8 +375,12 @@ class LinuxProvider(Provider):
     # an internal nginx backend (127.0.0.1:NGINX_BACKEND_PORT) that runs PHP-FPM.
     # When OFF, _vhost / set_https_redirect emit exactly today's direct blocks,
     # so the mode flag being unset is fully regression-safe.
-    def _php_location(self, username: str, *, https: str | None = None) -> str:
-        """The `~ \\.php$` FastCGI block.
+    def _php_location(self, username: str, version: str | None = None, *,
+                      https: str | None = None) -> str:
+        """The `~ \\.php$` FastCGI block for a site on PHP `version`.
+
+        Passes the request to this (account, version) FPM socket, so the site
+        runs exactly the PHP version chosen for it in the Selector.
 
         `https` is the nginx value to pass as the FastCGI `HTTPS` param so PHP
         (and WordPress) knows the *front-end* connection was TLS even though this
@@ -350,7 +397,7 @@ class LinuxProvider(Provider):
         """
         https_param = f" fastcgi_param HTTPS {https};" if https else ""
         return (f"location ~ \\.php$ {{ try_files $uri =404;"
-                f" fastcgi_pass unix:{self._php_sock(username)};"
+                f" fastcgi_pass unix:{self._php_sock(username, version)};"
                 f" include fastcgi_params;"
                 f" fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;"
                 f"{https_param} }}")
@@ -435,7 +482,8 @@ class LinuxProvider(Provider):
             f"{self._varnish_location()}}}\n"
         )
 
-    def _backend_block(self, primary: str, names: str, docroot: Path, username: str) -> str:
+    def _backend_block(self, primary: str, names: str, docroot: Path, username: str,
+                       version: str | None = None) -> str:
         # Internal nginx Varnish forwards to: server_name-routed, talks to PHP-FPM.
         # Not publicly reachable (loopback:NGINX_BACKEND_PORT). Carries the body
         # cap too, so a large upload accepted at the edge isn't 413'd here.
@@ -446,26 +494,27 @@ class LinuxProvider(Provider):
             f"    include {self._limits_conf(username)};\n"
             f"    error_log /var/log/litespanel/{primary}.error.log;\n"
             f"    {self._root_location()}\n"
-            f"    {self._php_location(username, https='$litespanel_fcgi_https')}\n}}\n"
+            f"    {self._php_location(username, version, https='$litespanel_fcgi_https')}\n}}\n"
         )
 
     def _sandwich_vhost(self, primary: str, names: str, docroot: Path, username: str,
-                        has_ssl: bool, force_https: bool) -> str:
+                        has_ssl: bool, force_https: bool, version: str | None = None) -> str:
         """Full sandwich config for one site: public terminator(s) + backend."""
         if has_ssl:
             cert = f"/etc/letsencrypt/live/{primary}"
             http = self._terminator_http(primary, names, username, redirect_https=force_https)
             return (http
                     + self._terminator_https(primary, names, username, cert)
-                    + self._backend_block(primary, names, docroot, username))
+                    + self._backend_block(primary, names, docroot, username, version))
         return (self._terminator_http(primary, names, username, redirect_https=False)
-                + self._backend_block(primary, names, docroot, username))
+                + self._backend_block(primary, names, docroot, username, version))
 
-    def _vhost(self, server_name: str, extra_names: str, docroot: Path, username: str) -> str:
+    def _vhost(self, server_name: str, extra_names: str, docroot: Path, username: str,
+               version: str | None = None) -> str:
         names = f"{server_name}{extra_names}"
         if web_fronting_enabled():
             return self._sandwich_vhost(server_name, names, docroot, username,
-                                        has_ssl=False, force_https=False)
+                                        has_ssl=False, force_https=False, version=version)
         return (
             f"server {{\n    listen 80;\n    server_name {names};\n"
             f"    root {docroot};\n    index index.php index.html;\n"
@@ -474,7 +523,7 @@ class LinuxProvider(Provider):
             f"    error_log /var/log/litespanel/{server_name}.error.log;\n"
             f"    location /lpanel {{ return 301 {config.PANEL_URL}/login; }}\n"
             f"    {self._root_location()}\n"
-            f"    {self._php_location(username)}\n}}\n"
+            f"    {self._php_location(username, version)}\n}}\n"
         )
 
     # --- Web hosting ------------------------------------------------------
@@ -482,13 +531,15 @@ class LinuxProvider(Provider):
         _ident(system_user, "account username")
         self._ensure_weblog_dir()
         self._ensure_limits(system_user)
+        # Make sure this site's chosen PHP version has a pool/socket to talk to.
+        self._ensure_php_pool(system_user, php_version)
         docroot.mkdir(parents=True, exist_ok=True)
         # Hand ownership of the whole site tree to the account (its real primary
         # group, which may be a panel-namespaced fallback on a name collision).
         group = self._primary_group(system_user)
         _run(["chown", "-R", f"{system_user}:{group}", str(Path(docroot).parent)])
         (NGINX_SITES / f"{domain}.conf").write_text(
-            self._vhost(domain, f" www.{domain}", docroot, system_user)
+            self._vhost(domain, f" www.{domain}", docroot, system_user, php_version)
         )
         self.reload_web()
         return docroot
@@ -503,10 +554,13 @@ class LinuxProvider(Provider):
         _run(["systemctl", "reload", "nginx"])
 
     def set_php_version(self, domain: str, docroot: str, php_version: str, system_user: str) -> None:
-        # The socket is per-account (not per-version); rewrite the whole vhost.
+        # Point this domain's vhost at the chosen version's FPM socket (ensuring
+        # that pool exists first). Plain rewrite — SSL sites go through
+        # rebuild_site_vhost, which preserves the :443 block.
         self._ensure_limits(system_user)
+        self._ensure_php_pool(system_user, php_version)
         (NGINX_SITES / f"{domain}.conf").write_text(
-            self._vhost(domain, f" www.{domain}", Path(docroot), system_user)
+            self._vhost(domain, f" www.{domain}", Path(docroot), system_user, php_version)
         )
         self.reload_web()
 
@@ -516,14 +570,14 @@ class LinuxProvider(Provider):
         _ident(system_user, "account username")
         from .. import php_catalog
 
-        # php.ini directives are enforced through the account's PHP-FPM pool
-        # (php_admin_value / php_admin_flag). Rewrite the pool with them baked
+        # php.ini directives are enforced through this (account, version) PHP-FPM
+        # pool (php_admin_value / php_admin_flag). Rewrite the pool with them baked
         # in; a single reload at the end applies both directives and extensions.
-        self._write_php_pool(system_user, directives=directives, reload=False)
+        self._write_php_pool(system_user, php_version, directives=directives, reload=False)
 
         # Remove the stale override file written by an earlier buggy version:
         # it lived in conf.d as pool syntax, which php.ini silently ignored.
-        old = Path(f"/etc/php/{config.PHP_FPM_VERSION}/fpm/conf.d/zz-panel-{system_user}.ini")
+        old = Path(f"/etc/php/{self._php_ver(php_version)}/fpm/conf.d/zz-panel-{system_user}.ini")
         old.unlink(missing_ok=True)
 
         # Extensions are enabled/disabled with Debian's phpenmod/phpdismod,
@@ -547,7 +601,7 @@ class LinuxProvider(Provider):
                 except RuntimeError:
                     pass
 
-        self._reload_php()
+        self._reload_php(php_version)
         # Keep nginx's body cap in lock-step with the account's PHP upload limits
         # so neither layer becomes the silent 413. Rewrites the one per-account
         # include and reloads nginx; every vhost that includes it now honours the
@@ -606,7 +660,7 @@ class LinuxProvider(Provider):
         )
         if proc.returncode != 0:
             return False, (proc.stderr or proc.stdout).strip()[-500:]
-        self._reload_php()
+        self._reload_php(php_version)
         verb = "Installed" if action == "install" else "Removed"
         return True, f"{verb} {pkg}."
 
@@ -623,11 +677,12 @@ class LinuxProvider(Provider):
         self._ensure_limits(system_user)
         docroot = Path(docroot)
         names = f"{domain} www.{domain}"
+        self._ensure_php_pool(system_user, php_version)
         if web_fronting_enabled():
             # Sandwich mode: same TLS/redirect semantics, but every request path
             # runs edge nginx -> Varnish -> backend nginx -> PHP-FPM.
             text = self._sandwich_vhost(domain, names, docroot, system_user,
-                                        has_ssl=has_ssl, force_https=enabled)
+                                        has_ssl=has_ssl, force_https=enabled, version=php_version)
             (NGINX_SITES / f"{domain}.conf").write_text(text)
             self.reload_web()
             return
@@ -635,8 +690,8 @@ class LinuxProvider(Provider):
                 f" error_log /var/log/litespanel/{domain}.error.log;")
         body = f" include {self._limits_conf(system_user)};"
         root_loc = self._root_location()
-        php = self._php_location(system_user)                     # plain HTTP (:80)
-        php_tls = self._php_location(system_user, https="on")     # real TLS (:443)
+        php = self._php_location(system_user, php_version)                  # plain HTTP (:80)
+        php_tls = self._php_location(system_user, php_version, https="on")  # real TLS (:443)
         lpanel = f"location /lpanel {{ return 301 {config.PANEL_URL}/login; }}"
         blocks = []
         if has_ssl:
@@ -660,9 +715,12 @@ class LinuxProvider(Provider):
         _ident(system_user, "account username")
         self._ensure_weblog_dir()
         self._ensure_limits(system_user)
+        self._ensure_php_pool(system_user, php_version)
         docroot.mkdir(parents=True, exist_ok=True)
         _run(["chown", "-R", f"{system_user}:{system_user}", str(docroot)])
-        (NGINX_SITES / f"{fqdn}.conf").write_text(self._vhost(fqdn, "", docroot, system_user))
+        (NGINX_SITES / f"{fqdn}.conf").write_text(
+            self._vhost(fqdn, "", docroot, system_user, php_version)
+        )
         self.reload_web()
         return docroot
 
@@ -2585,6 +2643,70 @@ class LinuxProvider(Provider):
             except OSError:
                 pass
 
+    def _vhost_for_site(self, site: SiteVhost) -> str:
+        """Render one site's full vhost text in the current mode, SSL- and
+        version-aware. Shared by _regenerate_all_vhosts and rebuild_site_vhost so
+        a bulk rebuild and a single-site rebuild can never diverge."""
+        names = f"{site.name}{site.extra_names}"
+        docroot = Path(site.docroot)
+        version = site.php_version
+        if web_fronting_enabled():
+            return self._sandwich_vhost(site.name, names, docroot, site.system_user,
+                                        has_ssl=site.has_ssl, force_https=site.force_https,
+                                        version=version)
+        if site.has_ssl:
+            # Direct mode with a cert: the panel-owned :80(+redirect)/:443 pair,
+            # built from the cert on disk so HTTPS survives the rewrite.
+            cert = f"/etc/letsencrypt/live/{site.name}"
+            logs = (f" access_log /var/log/litespanel/{site.name}.access.log;"
+                    f" error_log /var/log/litespanel/{site.name}.error.log;")
+            body = f" include {self._limits_conf(site.system_user)};"
+            root_loc = self._root_location()
+            php = self._php_location(site.system_user, version)                 # plain HTTP (:80)
+            php_tls = self._php_location(site.system_user, version, https="on")  # real TLS (:443)
+            lpanel = f"location /lpanel {{ return 301 {config.PANEL_URL}/login; }}"
+            if site.force_https:
+                top = (f"server {{ listen 80; server_name {names};"
+                       f"{logs} return 301 https://$host$request_uri; }}")
+            else:
+                top = (f"server {{ listen 80; server_name {names}; root {docroot};"
+                       f" index index.php index.html;{body}{logs} {lpanel} {root_loc} {php} }}")
+            tls = (f"server {{ listen 443 ssl; server_name {names};"
+                   f" ssl_certificate {cert}/fullchain.pem; ssl_certificate_key {cert}/privkey.pem;"
+                   f" root {docroot}; index index.php index.html;{body}{logs} {lpanel} {root_loc} {php_tls} }}")
+            return top + "\n" + tls + "\n"
+        return self._vhost(site.name, site.extra_names, docroot, site.system_user, version)
+
+    def rebuild_site_vhost(self, site: SiteVhost) -> tuple[bool, str]:
+        """Rewrite ONE site's vhost (its PHP version changed), SSL- and mode-safe.
+
+        Ensures the (account, version) FPM pool exists, re-renders the vhost from
+        the same builder the bulk regenerate uses, validates with `nginx -t` and
+        rolls back on failure so a version switch can never leave nginx broken."""
+        try:
+            if not NGINX_SITES.is_dir():
+                return False, "no nginx sites directory."
+            self._ensure_weblog_dir()
+            self._ensure_fcgi_https_map()
+            self._ensure_limits(site.system_user)
+            self._ensure_php_pool(site.system_user, site.php_version)
+            conf = NGINX_SITES / f"{site.name}.conf"
+            try:
+                original: str | None = conf.read_text()
+            except OSError:
+                original = None
+            conf.write_text(self._vhost_for_site(site))
+            try:
+                subprocess.run(["nginx", "-t"], capture_output=True, text=True, check=True)
+            except (subprocess.CalledProcessError, FileNotFoundError, OSError) as exc:
+                self._rollback_vhosts({conf: original})
+                detail = getattr(exc, "stderr", "") or str(exc)
+                return False, f"nginx test failed, rolled back: {str(detail).strip()[-200:]}"
+            _run(["systemctl", "reload", "nginx"])
+        except Exception as exc:  # noqa: BLE001 — surface, never crash the request.
+            return False, str(exc)
+        return True, f"{site.name} now serves PHP {site.php_version}."
+
     def _regenerate_all_vhosts(self, sites: Sequence[SiteVhost]) -> tuple[bool, str]:
         """Rewrite every hosted site's vhost in the current mode as one atomic
         batch: write all files, validate once with `nginx -t`, roll them all
@@ -2604,35 +2726,8 @@ class LinuxProvider(Provider):
             except OSError:
                 original = None
             self._ensure_limits(site.system_user)
-            names = f"{site.name}{site.extra_names}"
-            docroot = Path(site.docroot)
-            if web_fronting_enabled():
-                content = self._sandwich_vhost(site.name, names, docroot, site.system_user,
-                                               has_ssl=site.has_ssl, force_https=site.force_https)
-            elif site.has_ssl:
-                # Direct mode with a cert: rebuild the :80(+redirect)/:443 pair.
-                # This is set_https_redirect's non-sandwich output, inlined so the
-                # batch stays a single nginx -t.
-                cert = f"/etc/letsencrypt/live/{site.name}"
-                logs = (f" access_log /var/log/litespanel/{site.name}.access.log;"
-                        f" error_log /var/log/litespanel/{site.name}.error.log;")
-                body = f" include {self._limits_conf(site.system_user)};"
-                root_loc = self._root_location()
-                php = self._php_location(site.system_user)                 # plain HTTP (:80)
-                php_tls = self._php_location(site.system_user, https="on")  # real TLS (:443)
-                lpanel = f"location /lpanel {{ return 301 {config.PANEL_URL}/login; }}"
-                if site.force_https:
-                    top = (f"server {{ listen 80; server_name {names};"
-                           f"{logs} return 301 https://$host$request_uri; }}")
-                else:
-                    top = (f"server {{ listen 80; server_name {names}; root {docroot};"
-                           f" index index.php index.html;{body}{logs} {lpanel} {root_loc} {php} }}")
-                tls = (f"server {{ listen 443 ssl; server_name {names};"
-                       f" ssl_certificate {cert}/fullchain.pem; ssl_certificate_key {cert}/privkey.pem;"
-                       f" root {docroot}; index index.php index.html;{body}{logs} {lpanel} {root_loc} {php_tls} }}")
-                content = top + "\n" + tls + "\n"
-            else:
-                content = self._vhost(site.name, site.extra_names, docroot, site.system_user)
+            self._ensure_php_pool(site.system_user, site.php_version)
+            content = self._vhost_for_site(site)
             try:
                 conf.write_text(content)
                 changed[conf] = original

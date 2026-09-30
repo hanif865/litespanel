@@ -326,6 +326,18 @@ class Provider(ABC):
         """Rewrite the vhost so the site runs on a different PHP-FPM version."""
 
     @abstractmethod
+    def rebuild_site_vhost(self, site: SiteVhost) -> tuple[bool, str]:
+        """Rewrite ONE site's vhost after its PHP version changed, SSL/mode-safe.
+
+        The PHP Selector calls this for a domain or a subdomain when the chosen
+        PHP version changes: the site's vhost must repoint at the new version's
+        FPM socket while preserving its current SSL/redirect state and the active
+        web-fronting mode. Ensures the (account, version) pool exists, re-renders
+        the vhost from the same builder the bulk regenerate uses, validates once
+        and rolls back on failure. Returns (ok, message).
+        """
+
+    @abstractmethod
     def apply_php_config(self, system_user: str, php_version: str,
                          extensions: dict[str, bool], directives: dict[str, str],
                          domain: str | None = None) -> None:
