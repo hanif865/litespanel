@@ -54,11 +54,19 @@
     <span class="pill pill-ok">Current: PHP {{ current_version }}</span>
     <select name="php_version">
       {% for v in versions %}
-        <option value="{{ v }}" {{ 'selected' if v == current_version }}>PHP {{ v }}</option>
+        {% if v in installed_versions %}
+          <option value="{{ v }}" {{ 'selected' if v == current_version }}>PHP {{ v }}</option>
+        {% else %}
+          <option value="{{ v }}" disabled>PHP {{ v }} — not installed</option>
+        {% endif %}
       {% endfor %}
     </select>
     <button type="submit" class="btn btn-sm btn-primary">Apply</button>
   </form>
+  <p class="muted small" style="margin:.5rem 0 0;">
+    Only PHP versions installed on the server can be selected. An admin adds more
+    in <strong>WHM &rsaquo; Server Software</strong>.
+  </p>
 </div>
 
 <!-- Extensions -->
