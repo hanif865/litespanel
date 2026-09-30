@@ -48,7 +48,50 @@ var drop = document.getElementById('up-drop'), input = document.getElementById('
 drop.addEventListener('drop', function(e){ handle(e.dataTransfer.files); });
 input.addEventListener('change', function(){ handle(input.files); input.value=''; });
 
+// Chunk size: files are sliced into pieces this big and sent one at a time, so
+// no single request hits an nginx / Cloudflare body-size cap. 16 MB keeps the
+// request count sane even for multi-GB files (5 GB ≈ 320 chunks).
+var CHUNK = 16 * 1024 * 1024;
+
 function handle(files){ for(var i=0;i<files.length;i++) uploadOne(files[i]); }
+
+function randId(){
+  // 32 hex chars. Prefer crypto; fall back to Math.random on ancient browsers.
+  try {
+    var a = new Uint8Array(16); crypto.getRandomValues(a);
+    return Array.prototype.map.call(a, function(b){ return ('0'+b.toString(16)).slice(-2); }).join('');
+  } catch(e) {
+    var s=''; while(s.length<32){ s += Math.floor(Math.random()*16).toString(16); } return s;
+  }
+}
+
+// POST one chunk; resolves with the parsed JSON, rejects with an Error(message).
+function sendChunk(file, uploadId, index, total, onprog){
+  return new Promise(function(resolve, reject){
+    var start = index * CHUNK;
+    var blob = file.slice(start, Math.min(start + CHUNK, file.size));
+    var fd = new FormData();
+    fd.append('domain_id', DID); fd.append('path', PATH);
+    fd.append('filename', file.name);
+    fd.append('upload_id', uploadId);
+    fd.append('chunk_index', index);
+    fd.append('total_chunks', total);
+    fd.append('total_size', file.size);
+    fd.append('overwrite', document.getElementById('up-overwrite').checked ? '1':'0');
+    fd.append('chunk', blob, file.name);
+
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST','/files/upload-chunk');
+    xhr.upload.onprogress = function(e){ if(e.lengthComputable) onprog(start + e.loaded); };
+    xhr.onload = function(){
+      var data = {}; try { data = JSON.parse(xhr.responseText); } catch(e){}
+      if(xhr.status===200 && data.ok){ onprog(Math.min(start + CHUNK, file.size)); resolve(data); }
+      else { reject(new Error(data.error || ('failed ('+xhr.status+')'))); }
+    };
+    xhr.onerror = function(){ reject(new Error('network error')); };
+    xhr.send(fd);
+  });
+}
 
 function uploadOne(file){
   var item = document.createElement('div'); item.className='up-item';
@@ -58,22 +101,25 @@ function uploadOne(file){
   list.prepend(item);
   var fill=item.querySelector('.up-fill'), pct=item.querySelector('.up-item-pct');
 
-  var fd = new FormData();
-  fd.append('domain_id', DID); fd.append('path', PATH); fd.append('ajax','1');
-  fd.append('overwrite', document.getElementById('up-overwrite').checked ? '1':'0');
-  fd.append('file', file);
+  var uploadId = randId();
+  var total = Math.max(1, Math.ceil(file.size / CHUNK));  // empty file => 1 chunk
+  function onprog(loaded){
+    var p = file.size ? Math.round(loaded/file.size*100) : 100;
+    if(p>100) p=100;
+    fill.style.width=p+'%'; pct.textContent=p+'%';
+  }
 
-  var xhr = new XMLHttpRequest();
-  xhr.open('POST','/files/upload');
-  xhr.upload.onprogress = function(e){ if(e.lengthComputable){ var p=Math.round(e.loaded/e.total*100); fill.style.width=p+'%'; pct.textContent=p+'%'; } };
-  xhr.onload = function(){
-    var ok = xhr.status===200;
-    if(ok){ fill.style.width='100%'; fill.classList.add('done'); fill.textContent='✓'; pct.textContent='complete'; }
-    else { fill.style.width='100%'; fill.classList.add('err'); pct.textContent='failed';
-      try{ pct.textContent = JSON.parse(xhr.responseText).error || 'failed'; }catch(e){} }
-  };
-  xhr.onerror = function(){ fill.classList.add('err'); pct.textContent='error'; };
-  xhr.send(fd);
+  var index = 0;
+  function next(){
+    sendChunk(file, uploadId, index, total, onprog).then(function(){
+      index++;
+      if(index < total){ next(); }
+      else { fill.style.width='100%'; fill.classList.add('done'); fill.textContent='✓'; pct.textContent='complete'; }
+    }).catch(function(e){
+      fill.style.width='100%'; fill.classList.add('err'); pct.textContent = e.message || 'failed';
+    });
+  }
+  next();
 }
 </script>
 {% endblock %}

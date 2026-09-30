@@ -124,11 +124,23 @@ def create_subdomain(
         db.rollback()
         ssl_note = " (Issue SSL from the SSL page once DNS resolves.)"
 
-    _flash(
-        request,
-        f"✅ {fqdn} created. DNS A record → {config.SERVER_IP} added; public "
-        "resolution requires this domain's nameservers to point here." + ssl_note,
-    )
+    # The DNS note depends on where the zone is actually served. With the
+    # Cloudflare integration on, sync_zone already pushed the A record to
+    # Cloudflare, so it resolves within seconds (cPanel-style auto-active) as
+    # long as the domain's nameservers point at Cloudflare. Otherwise resolution
+    # waits on this server's own nameservers.
+    from .. import cloudflare
+    if cloudflare.configured():
+        dns_note = (
+            f"DNS A record → {config.SERVER_IP} published to Cloudflare — it goes "
+            "live within seconds if this domain uses Cloudflare's nameservers."
+        )
+    else:
+        dns_note = (
+            f"DNS A record → {config.SERVER_IP} added; public resolution requires "
+            "this domain's nameservers to point here."
+        )
+    _flash(request, f"✅ {fqdn} created. {dns_note}{ssl_note}")
     return RedirectResponse("/subdomains", status_code=303)
 
 

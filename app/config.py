@@ -206,6 +206,16 @@ SPAM_THRESHOLD_MIN = 1
 SPAM_THRESHOLD_MAX = 15
 
 
+# --- Cloudflare DNS integration (admin-only) -------------------------------
+# When enabled with an API token, every DNS change the panel makes (subdomain
+# create/delete, Zone Editor edits) is mirrored to Cloudflare via its API, so
+# records go live automatically — no manual DNS at the registrar/Cloudflare.
+# The panel is the source of truth; it only ever creates/updates/deletes records
+# it tagged itself (comment marker), so records you made directly in Cloudflare
+# are never touched. The token is stored encrypted at rest (see app/crypto.py).
+CLOUDFLARE_FILE = DATA_DIR / "cloudflare.json"
+
+
 # --- Email filters (Sieve / Pigeonhole) ------------------------------------
 # Per-mailbox filter rules (mail_filters table) are compiled to a single Sieve
 # script the panel owns (~/.dovecot.sieve), merged with the mailbox's
