@@ -210,6 +210,53 @@ def _list_installs(db: Session, user: User) -> list[dict]:
     return installs
 
 
+# WordPress version list for the installer dropdown. Fetched from wordpress.org's
+# stable-check API (every released version + its status), filtered to 6.0+ and
+# sorted newest-first, then cached so we don't hit the network on every page load.
+# Falls back to a static list if the API is unreachable, so the page always works.
+_WP_VERSIONS_FALLBACK = [
+    "6.8", "6.7", "6.6", "6.5", "6.4", "6.3", "6.2", "6.1", "6.0",
+]
+_WP_VERSIONS_CACHE: dict[str, object] = {"at": 0.0, "list": []}
+_WP_VERSIONS_TTL = 6 * 3600  # 6h
+
+
+def _version_key(v: str) -> tuple:
+    parts = v.split(".")
+    try:
+        return tuple(int(p) for p in parts)
+    except ValueError:
+        return (0,)
+
+
+def _wp_versions() -> list[str]:
+    """All installable WordPress versions 6.0+, newest first (cached)."""
+    now = time.time()
+    if _WP_VERSIONS_CACHE["list"] and now - float(_WP_VERSIONS_CACHE["at"]) < _WP_VERSIONS_TTL:
+        return _WP_VERSIONS_CACHE["list"]  # type: ignore[return-value]
+    versions: list[str] = []
+    try:
+        import json
+        with urllib.request.urlopen(
+            "https://api.wordpress.org/core/stable-check/1.0/", timeout=8
+        ) as r:
+            data = json.loads(r.read().decode())
+        # Keep only clean stable x.y / x.y.z releases at 6.0 or newer.
+        for ver in data:
+            if not re.fullmatch(r"\d+\.\d+(\.\d+)?", ver):
+                continue
+            if _version_key(ver) >= (6, 0):
+                versions.append(ver)
+        versions.sort(key=_version_key, reverse=True)
+    except Exception:  # noqa: BLE001 — network/parse failure -> fall back.
+        versions = []
+    if not versions:
+        versions = list(_WP_VERSIONS_FALLBACK)
+    _WP_VERSIONS_CACHE["at"] = now
+    _WP_VERSIONS_CACHE["list"] = versions
+    return versions
+
+
 @router.get("")
 def wp_page(request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
     domains = db.scalars(
@@ -226,7 +273,7 @@ def wp_page(request: Request, user: User = Depends(current_user), db: Session = 
     return templates.TemplateResponse(
         request, "wordpress.html",
         {"user": user, "domains": domains, "targets": targets, "installs": installs,
-         "active": "wordpress",
+         "active": "wordpress", "wp_versions": _wp_versions(),
          "flash": request.session.pop("flash", None), "creds": request.session.pop("wp_creds", None)},
     )
 
