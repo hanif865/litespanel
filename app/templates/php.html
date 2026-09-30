@@ -5,25 +5,40 @@
 <h1>PHP Selector</h1>
 <p class="muted">
   Choose the PHP version, toggle extensions and edit php.ini options.
-  Settings apply to the whole account, or to a single domain when you pick one.
+  Settings apply to the whole account, or to a single domain or subdomain when you pick one.
 </p>
 
-<!-- Scope selector: account global vs per domain -->
+<!-- Scope selector: account global vs per domain vs per subdomain -->
 <form method="get" action="/php" class="card">
   <label for="scope"><strong>Configuration scope</strong></label>
   <div class="inline-form" style="margin-top:.5rem;">
-    <select name="domain_id" id="scope" onchange="this.form.submit()">
+    <select name="scope" id="scope" onchange="this.form.submit()">
       <option value="">🌐 Account Global Settings</option>
-      {% for d in domains %}
-        <option value="{{ d.id }}" {{ 'selected' if scope_domain and d.id == scope_domain.id }}>
-          Per Domain — {{ d.name }}
-        </option>
-      {% endfor %}
+      {% if domains %}
+      <optgroup label="Domains">
+        {% for d in domains %}
+          <option value="d{{ d.id }}" {{ 'selected' if scope_domain and d.id == scope_domain.id }}>
+            {{ d.name }}
+          </option>
+        {% endfor %}
+      </optgroup>
+      {% endif %}
+      {% if subdomains %}
+      <optgroup label="Subdomains">
+        {% for s in subdomains %}
+          <option value="s{{ s.id }}" {{ 'selected' if scope_subdomain and s.id == scope_subdomain.id }}>
+            {{ s.fqdn }}
+          </option>
+        {% endfor %}
+      </optgroup>
+      {% endif %}
     </select>
     <noscript><button type="submit" class="btn btn-sm">Switch</button></noscript>
   </div>
   <p class="muted small" style="margin-bottom:0;">
-    {% if scope_domain %}
+    {% if scope_subdomain %}
+      Editing overrides for subdomain <strong>{{ scope_subdomain.fqdn }}</strong>.
+    {% elif scope_domain %}
       Editing overrides for <strong>{{ scope_domain.name }}</strong>.
     {% else %}
       Editing the <strong>account default</strong> used by every domain without its own override.
@@ -35,7 +50,7 @@
 <div class="card">
   <h2>PHP Version</h2>
   <form method="post" action="/php/version" class="inline-form">
-    <input type="hidden" name="domain_id" value="{{ scope_domain.id if scope_domain else '' }}">
+    <input type="hidden" name="scope" value="{{ scope_value }}">
     <span class="pill pill-ok">Current: PHP {{ current_version }}</span>
     <select name="php_version">
       {% for v in versions %}
@@ -51,7 +66,7 @@
   <h2>PHP Extensions</h2>
   <p class="muted small">Toggle extensions for this scope. Changes are saved when you click <em>Save Extensions</em>.</p>
   <form method="post" action="/php/extensions">
-    <input type="hidden" name="domain_id" value="{{ scope_domain.id if scope_domain else '' }}">
+    <input type="hidden" name="scope" value="{{ scope_value }}">
 
     <div class="php-toolbar">
       <input type="text" id="extSearch" class="php-search" placeholder="🔍 Search extensions…"
@@ -107,7 +122,7 @@
   <h2>Options (php.ini)</h2>
   <p class="muted small">Edit php.ini directives directly. Leave a field blank to use the default.</p>
   <form method="post" action="/php/directives">
-    <input type="hidden" name="domain_id" value="{{ scope_domain.id if scope_domain else '' }}">
+    <input type="hidden" name="scope" value="{{ scope_value }}">
     <div class="ext-grid">
       {% for key in directive_order %}
         {% if key not in ('session.save_handler', 'session.save_path') %}

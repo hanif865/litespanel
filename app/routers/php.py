@@ -15,8 +15,9 @@ from sqlalchemy.orm import Session
 
 from .. import php_catalog
 from ..db import get_db
-from ..models import Domain, PhpConfig, User
+from ..models import Domain, NodeApp, PhpConfig, Subdomain, User
 from ..providers import get_provider
+from ..providers.base import SiteVhost
 from ..security import current_user
 from ..web import templates
 
@@ -33,20 +34,58 @@ def _account_user(user: User) -> str:
     return user.system_user or user.username
 
 
-def _get_or_create_config(db: Session, user: User, domain: Domain | None) -> PhpConfig:
+# A PHP Selector scope is one of: the account global profile, a single domain,
+# or a single subdomain. The UI encodes it in one `scope` field:
+#   ""        -> account global
+#   "d<id>"   -> domain <id>
+#   "s<id>"   -> subdomain <id>
+def _scope_value(domain: Domain | None, subdomain: Subdomain | None) -> str:
+    if subdomain is not None:
+        return f"s{subdomain.id}"
+    if domain is not None:
+        return f"d{domain.id}"
+    return ""
+
+
+def _parse_scope(db: Session, user: User, scope: str | None
+                 ) -> tuple[Domain | None, Subdomain | None]:
+    """Resolve a `scope` string to (domain, subdomain), validating ownership.
+    Anything unrecognised or not owned falls back to the account-global scope."""
+    scope = (scope or "").strip()
+    if scope.startswith("d") and scope[1:].isdigit():
+        domain = db.get(Domain, int(scope[1:]))
+        if domain is not None and domain.owner_id == user.id:
+            return domain, None
+    elif scope.startswith("s") and scope[1:].isdigit():
+        sub = db.get(Subdomain, int(scope[1:]))
+        if sub is not None and sub.parent.owner_id == user.id:
+            return None, sub
+    return None, None
+
+
+def _get_or_create_config(db: Session, user: User,
+                          domain: Domain | None, subdomain: Subdomain | None) -> PhpConfig:
     """Fetch the PhpConfig row for a scope, creating it with defaults if absent."""
     domain_id = domain.id if domain else None
+    subdomain_id = subdomain.id if subdomain else None
     cfg = db.scalar(
         select(PhpConfig).where(
             PhpConfig.owner_id == user.id,
             PhpConfig.domain_id == domain_id,
+            PhpConfig.subdomain_id == subdomain_id,
         )
     )
     if cfg is None:
-        version = domain.php_version if domain else php_catalog.DEFAULT_PHP_VERSION
+        if subdomain is not None:
+            version = subdomain.php_version
+        elif domain is not None:
+            version = domain.php_version
+        else:
+            version = php_catalog.DEFAULT_PHP_VERSION
         cfg = PhpConfig(
             owner_id=user.id,
             domain_id=domain_id,
+            subdomain_id=subdomain_id,
             php_version=version,
             extensions=php_catalog.default_extensions(),
             directives=php_catalog.default_directives(),
@@ -56,39 +95,74 @@ def _get_or_create_config(db: Session, user: User, domain: Domain | None) -> Php
     return cfg
 
 
-def _resolve_domain(db: Session, user: User, domain_id: int | None) -> Domain | None:
-    """Validate an optional per-domain scope belongs to the user."""
-    if not domain_id:
-        return None
-    domain = db.get(Domain, domain_id)
-    if domain is None or domain.owner_id != user.id:
-        return None
-    return domain
+def _scope_label(domain: Domain | None, subdomain: Subdomain | None) -> str | None:
+    if subdomain is not None:
+        return subdomain.fqdn
+    if domain is not None:
+        return domain.name
+    return None
 
 
-def _apply(cfg: PhpConfig, user: User, domain: Domain | None) -> None:
-    """Push the stored config to the provider (extensions + php.ini)."""
+def _apply(cfg: PhpConfig, user: User,
+           domain: Domain | None, subdomain: Subdomain | None) -> None:
+    """Push the stored config to the provider (FPM pool for this version +
+    extensions + php.ini)."""
     get_provider().apply_php_config(
         _account_user(user),
         cfg.php_version,
         php_catalog.merged_extensions(cfg.extensions),
         php_catalog.merged_directives(cfg.directives),
-        domain=domain.name if domain else None,
+        domain=_scope_label(domain, subdomain),
     )
+
+
+def _rebuild_vhost(db: Session, user: User,
+                   domain: Domain | None, subdomain: Subdomain | None) -> str | None:
+    """After a version change, repoint the affected site's vhost at the new FPM
+    socket (SSL/mode-safe). Returns an error message on failure, else None. No-op
+    for the account-global scope (no single site) and for Node.js domains (they
+    reverse-proxy to a process, not PHP-FPM)."""
+    account = _account_user(user)
+    if subdomain is not None:
+        has_ssl = subdomain.certificate is not None
+        site = SiteVhost(
+            name=subdomain.fqdn, docroot=subdomain.docroot, php_version=subdomain.php_version,
+            system_user=account, has_ssl=has_ssl, force_https=has_ssl,
+            extra_names="", is_node=False,
+        )
+    elif domain is not None:
+        is_node = db.scalar(
+            select(NodeApp.id).where(NodeApp.domain_id == domain.id)
+        ) is not None
+        if is_node:
+            return None
+        site = SiteVhost(
+            name=domain.name, docroot=domain.docroot, php_version=domain.php_version,
+            system_user=account, has_ssl=domain.certificate is not None,
+            force_https=bool(domain.force_https), extra_names=f" www.{domain.name}",
+            is_node=False,
+        )
+    else:
+        return None
+    ok, message = get_provider().rebuild_site_vhost(site)
+    return None if ok else message
 
 
 @router.get("")
 def php_selector(
     request: Request,
-    domain_id: int | None = None,
+    scope: str | None = None,
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
     domains = db.scalars(
         select(Domain).where(Domain.owner_id == user.id).order_by(Domain.name)
     ).all()
-    domain = _resolve_domain(db, user, domain_id)
-    cfg = _get_or_create_config(db, user, domain)
+    # Subdomains the user owns (through their parent domains), for the scope picker.
+    subdomains = [s for d in domains for s in d.subdomains]
+    subdomains.sort(key=lambda s: s.fqdn)
+    domain, subdomain = _parse_scope(db, user, scope)
+    cfg = _get_or_create_config(db, user, domain, subdomain)
     db.commit()
 
     flash = request.session.pop("flash", None)
@@ -107,7 +181,10 @@ def php_selector(
         {
             "user": user,
             "domains": domains,
+            "subdomains": subdomains,
             "scope_domain": domain,
+            "scope_subdomain": subdomain,
+            "scope_value": _scope_value(domain, subdomain),
             "versions": PHP_VERSIONS,
             "extensions": php_catalog.AVAILABLE_EXTENSIONS,
             "ext_groups": php_catalog.grouped_extensions(),
@@ -124,8 +201,9 @@ def php_selector(
     )
 
 
-def _redirect(domain: Domain | None) -> RedirectResponse:
-    url = "/php" + (f"?domain_id={domain.id}" if domain else "")
+def _redirect(domain: Domain | None, subdomain: Subdomain | None = None) -> RedirectResponse:
+    value = _scope_value(domain, subdomain)
+    url = "/php" + (f"?scope={value}" if value else "")
     return RedirectResponse(url, status_code=303)
 
 
@@ -133,23 +211,31 @@ def _redirect(domain: Domain | None) -> RedirectResponse:
 def set_version(
     request: Request,
     php_version: str = Form(...),
-    domain_id: int | None = Form(None),
+    scope: str | None = Form(None),
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
     if php_version not in PHP_VERSIONS:
         _flash(request, "❌ Unsupported PHP version.")
         return RedirectResponse("/php", status_code=303)
-    domain = _resolve_domain(db, user, domain_id)
-    cfg = _get_or_create_config(db, user, domain)
+    domain, subdomain = _parse_scope(db, user, scope)
+    cfg = _get_or_create_config(db, user, domain, subdomain)
     cfg.php_version = php_version
-    if domain is not None:
+    if subdomain is not None:
+        subdomain.php_version = php_version
+    elif domain is not None:
         domain.php_version = php_version
-    _apply(cfg, user, domain)
+    # Materialize the FPM pool/extensions for the new version, then repoint the
+    # affected site's vhost at that version's socket (SSL/mode-safe).
+    _apply(cfg, user, domain, subdomain)
+    err = _rebuild_vhost(db, user, domain, subdomain)
     db.commit()
-    scope = domain.name if domain else "account default"
-    _flash(request, f"✅ {scope} now uses PHP {php_version}.")
-    return _redirect(domain)
+    label = _scope_label(domain, subdomain) or "account default"
+    if err:
+        _flash(request, f"⚠️ PHP {php_version} saved for {label}, but the vhost rewrite failed: {err}")
+    else:
+        _flash(request, f"✅ {label} now uses PHP {php_version}.")
+    return _redirect(domain, subdomain)
 
 
 @router.post("/extensions")
@@ -159,16 +245,15 @@ async def set_extensions(
     db: Session = Depends(get_db),
 ):
     form = await request.form()
-    domain_id = form.get("domain_id")
-    domain = _resolve_domain(db, user, int(domain_id) if domain_id else None)
-    cfg = _get_or_create_config(db, user, domain)
+    domain, subdomain = _parse_scope(db, user, form.get("scope"))
+    cfg = _get_or_create_config(db, user, domain, subdomain)
     # Checkboxes only post when checked; anything not present is disabled.
     checked = set(form.getlist("ext"))
     cfg.extensions = {name: (name in checked) for name in php_catalog.AVAILABLE_EXTENSIONS}
-    _apply(cfg, user, domain)
+    _apply(cfg, user, domain, subdomain)
     db.commit()
     _flash(request, "✅ PHP extensions updated.")
-    return _redirect(domain)
+    return _redirect(domain, subdomain)
 
 
 @router.post("/directives")
@@ -178,9 +263,8 @@ async def set_directives(
     db: Session = Depends(get_db),
 ):
     form = await request.form()
-    domain_id = form.get("domain_id")
-    domain = _resolve_domain(db, user, int(domain_id) if domain_id else None)
-    cfg = _get_or_create_config(db, user, domain)
+    domain, subdomain = _parse_scope(db, user, form.get("scope"))
+    cfg = _get_or_create_config(db, user, domain, subdomain)
     directives = {}
     for key in php_catalog.DIRECTIVE_ORDER:
         value = form.get(f"dir_{key}")
@@ -197,10 +281,10 @@ async def set_directives(
         directives.pop("session.save_handler", None)
         directives.pop("session.save_path", None)
     cfg.directives = directives
-    _apply(cfg, user, domain)
+    _apply(cfg, user, domain, subdomain)
     db.commit()
     _flash(request, "✅ php.ini options saved.")
-    return _redirect(domain)
+    return _redirect(domain, subdomain)
 
 
 @router.post("/reset-extensions")
@@ -210,11 +294,10 @@ async def reset_extensions(
     db: Session = Depends(get_db),
 ):
     form = await request.form()
-    domain_id = form.get("domain_id")
-    domain = _resolve_domain(db, user, int(domain_id) if domain_id else None)
-    cfg = _get_or_create_config(db, user, domain)
+    domain, subdomain = _parse_scope(db, user, form.get("scope"))
+    cfg = _get_or_create_config(db, user, domain, subdomain)
     cfg.extensions = php_catalog.default_extensions()
-    _apply(cfg, user, domain)
+    _apply(cfg, user, domain, subdomain)
     db.commit()
     _flash(request, "↩️ PHP extensions reset to default.")
-    return _redirect(domain)
+    return _redirect(domain, subdomain)

@@ -52,7 +52,10 @@ updating): see **[DEPLOY.md](DEPLOY.md)**.
   `PANEL_PHPMYADMIN_URL` to embed real phpMyAdmin in production.
 - 🧙 **Database Wizard** — guided create-database-and-user flow with a chosen
   username and password (vs. the one-click auto-generated Databases page)
-- 🐘 **PHP version selector** — set the PHP-FPM version per domain (rewrites vhost)
+- 🐘 **PHP version selector** — set the PHP-FPM version per **domain or subdomain**
+  (and an account default). Each (account, version) gets its own PHP-FPM pool +
+  socket, so one site on 8.1 and another on 8.3 truly run different PHP; the site's
+  vhost is repointed at the right socket on change, SSL/redirect state preserved
 - 🟢 **Node.js app hosting** — deploy from Git URL or upload a tarball; set npm install
   options, environment variables, custom start command; live streaming logs; start/stop/restart
 - 📂 **FTP Accounts** — create per-domain FTP users (ProFTPd virtual users file), each

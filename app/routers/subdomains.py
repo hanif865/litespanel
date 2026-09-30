@@ -13,7 +13,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .. import config
+from .. import config, php_catalog
 from ..accounts import account_home
 from ..db import get_db
 from ..models import Certificate, DnsRecord, Domain, Subdomain, User
@@ -51,7 +51,8 @@ def list_subdomains(request: Request, user: User = Depends(current_user), db: Se
     return templates.TemplateResponse(
         request,
         "subdomains.html",
-        {"user": user, "domains": domains, "subs": subs, "active": "subdomains", "flash": flash},
+        {"user": user, "domains": domains, "subs": subs, "active": "subdomains",
+         "php_versions": php_catalog.PHP_VERSIONS, "flash": flash},
     )
 
 
@@ -60,6 +61,7 @@ def create_subdomain(
     request: Request,
     label: str = Form(...),
     parent_id: int = Form(...),
+    php_version: str = Form(""),
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
@@ -77,15 +79,18 @@ def create_subdomain(
         _flash(request, f"❌ {fqdn} already exists.")
         return RedirectResponse("/subdomains", status_code=303)
 
+    # PHP version: an explicit valid choice, else inherit the parent domain's.
+    version = php_version if php_version in php_catalog.PHP_VERSIONS else parent.php_version
+
     # Subdomain files live inside the parent's docroot, i.e. under the same
     # isolated account. Ensure that account exists and reuse its system_user.
     account_home(db, user)
     docroot = Path(parent.docroot) / label
-    get_provider().create_subdomain(fqdn, docroot, parent.php_version, user.system_user)
+    get_provider().create_subdomain(fqdn, docroot, version, user.system_user)
     get_provider().reload_web()
     sub = Subdomain(
         label=label, fqdn=fqdn, parent_id=parent.id,
-        docroot=str(docroot), php_version=parent.php_version,
+        docroot=str(docroot), php_version=version,
     )
     db.add(sub)
 
