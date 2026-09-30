@@ -5,6 +5,8 @@ document root, so a crafted "../.." can never escape the sandbox.
 """
 from __future__ import annotations
 
+import os
+import re
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -228,6 +230,111 @@ async def upload(
         return JSONResponse({"ok": True, "name": filename, "size": dest.stat().st_size})
     _flash(request, f"⬆️ Uploaded {filename} ({human_size(dest.stat().st_size)}).")
     return RedirectResponse(f"/files?domain_id={domain_id}&path={path}", status_code=303)
+
+
+# --- Chunked upload -------------------------------------------------------
+# Large files (site backups, media, .wpress archives) are uploaded in small
+# pieces so no single request ever hits nginx's client_max_body_size or a proxy
+# (e.g. Cloudflare's 100 MB) body cap — a 5 GB file goes up as ~320 chunks of
+# 16 MB. The browser slices the file and POSTs the chunks in order; the server
+# appends each to a hidden ".part" file next to the destination and atomically
+# renames it into place on the final chunk. Only disk space limits the size.
+_UPLOAD_ID_RE = re.compile(r"[^a-f0-9]")
+# Keep a little headroom so a finalize never fills the filesystem to 0 bytes.
+_DISK_MARGIN = 32 * 1024 * 1024  # 32 MB
+
+
+def _part_path(dest_dir: Path, upload_id: str) -> Path:
+    """The temp file a chunked upload streams into, resolved safely under root.
+
+    Named only from the sanitized upload_id (hex), so a crafted filename can't
+    influence the temp path; still passed through _safe_join as a backstop."""
+    return _safe_join(dest_dir, f".upload-{upload_id}.part")
+
+
+@router.post("/upload-chunk")
+async def upload_chunk(
+    request: Request,
+    domain_id: int = Form(...),
+    path: str = Form(""),
+    filename: str = Form(...),
+    upload_id: str = Form(...),
+    chunk_index: int = Form(...),
+    total_chunks: int = Form(...),
+    total_size: int = Form(0),
+    overwrite: str = Form("0"),
+    chunk: UploadFile = File(...),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    from fastapi.responses import JSONResponse
+
+    def err(msg: str, code: int) -> JSONResponse:
+        return JSONResponse({"ok": False, "error": msg}, status_code=code)
+
+    domain = _owned_domain(db, user, domain_id)
+    dest_dir = _safe_join(Path(domain.docroot), path)
+    filename = Path(filename or "upload.bin").name  # strip any path parts
+    if not filename or filename in (".", ".."):
+        return err("Invalid filename.", 400)
+
+    # Sanitize the client-supplied upload id to hex only — it names the temp file.
+    upload_id = _UPLOAD_ID_RE.sub("", (upload_id or "").lower())[:64]
+    if len(upload_id) < 8:
+        return err("Invalid upload id.", 400)
+    if total_chunks < 1 or not (0 <= chunk_index < total_chunks):
+        return err("Invalid chunk sequence.", 400)
+
+    dest = _safe_join(dest_dir, filename)
+    part = _part_path(dest_dir, upload_id)
+
+    if chunk_index == 0:
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        # Refuse up front (before writing 5 GB) if the target exists and the user
+        # didn't opt into overwriting it.
+        if dest.exists() and overwrite != "1":
+            return err(f"'{filename}' already exists — enable Overwrite to replace it.", 409)
+        # Refuse up front if the declared size won't fit — "upload works as long
+        # as the panel has space", with a clear message when it doesn't.
+        if total_size > 0:
+            try:
+                free = shutil.disk_usage(dest_dir).free
+            except OSError:
+                free = None
+            if free is not None and total_size + _DISK_MARGIN > free:
+                return err(
+                    f"Not enough disk space: {human_size(total_size)} needed, "
+                    f"{human_size(free)} free.", 507)
+        # Fresh start (also cleans up any stale part from an aborted attempt).
+        mode = "wb"
+    else:
+        # A later chunk with no part file means the sequence was lost (server
+        # restart, earlier chunk failed) — tell the client to restart the file.
+        if not part.exists():
+            return err("Upload session lost — please retry this file.", 409)
+        mode = "ab"
+
+    # Stream the chunk to the part file (never load it fully into memory).
+    with part.open(mode) as out:
+        while data := await chunk.read(1024 * 1024):
+            out.write(data)
+
+    # Not the last chunk: acknowledge progress and wait for the next.
+    if chunk_index < total_chunks - 1:
+        return JSONResponse({"ok": True, "received": chunk_index + 1, "total": total_chunks})
+
+    # Final chunk: put the assembled file in place. os.replace is atomic on the
+    # same filesystem and overwrites an existing dest in one step.
+    if dest.exists() and overwrite != "1":
+        part.unlink(missing_ok=True)
+        return err(f"'{filename}' already exists — enable Overwrite to replace it.", 409)
+    try:
+        os.replace(part, dest)
+    except OSError as e:
+        part.unlink(missing_ok=True)
+        return err(f"Could not finalize upload: {e}", 500)
+    _own(domain, dest)
+    return JSONResponse({"ok": True, "name": filename, "size": dest.stat().st_size})
 
 
 @router.post("/mkdir")
