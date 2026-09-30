@@ -490,15 +490,33 @@ def software(request: Request, admin: User = Depends(require_admin), db: Session
         for ext in php_catalog.AVAILABLE_EXTENSIONS
         if php_catalog.apt_package(ext, php_version) is not None
     ]
+    # Which PHP versions have their FPM SAPI installed (for the "PHP Versions"
+    # card) — the ones a domain/subdomain can actually be switched to.
+    php_installed = {v: provider.php_fpm_installed(v) for v in php_catalog.PHP_VERSIONS}
     flash = request.session.pop("flash", None)
     return templates.TemplateResponse(
         request, "whm/software.html",
         {"user": admin, "active": "software", "flash": flash,
          "php_version": php_version, "php_versions": php_catalog.PHP_VERSIONS,
+         "php_installed": php_installed,
          "ext_rows": ext_rows,
          "node_runtime": provider.node_installed_version(),
          "node_versions": config.NODE_VERSIONS},
     )
+
+
+@router.post("/software/php-version/install")
+async def software_php_version_install(
+    request: Request, version: str = Form(...),
+    admin: User = Depends(require_admin), db: Session = Depends(get_db),
+):
+    version = (version or "").strip()
+    if version not in php_catalog.PHP_VERSIONS:
+        _flash(request, "❌ Unsupported PHP version.")
+        return RedirectResponse("/whm/software", status_code=303)
+    ok, message = await run_in_threadpool(get_provider().install_php_version, version)
+    _flash(request, ("✅ " if ok else "❌ ") + message)
+    return RedirectResponse("/whm/software", status_code=303)
 
 
 @router.post("/software/php/install")
