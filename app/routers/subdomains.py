@@ -104,8 +104,12 @@ def create_subdomain(
             value=config.SERVER_IP, ttl=14400,
         ))
     db.flush()
-    get_provider().sync_zone(parent.name, _zone_payload(parent))
+    payload = _zone_payload(parent)
+    get_provider().sync_zone(parent.name, payload)
     db.commit()
+    # Mirror to the owner's Cloudflare if connected (best-effort).
+    from .. import cloudflare
+    cloudflare.publish(db, parent, payload)
 
     # cPanel-style AutoSSL: try to get a cert immediately. On the linux box this
     # only works once DNS resolves, so it's best-effort — a failure just leaves
@@ -124,13 +128,12 @@ def create_subdomain(
         db.rollback()
         ssl_note = " (Issue SSL from the SSL page once DNS resolves.)"
 
-    # The DNS note depends on where the zone is actually served. With the
-    # Cloudflare integration on, sync_zone already pushed the A record to
-    # Cloudflare, so it resolves within seconds (cPanel-style auto-active) as
-    # long as the domain's nameservers point at Cloudflare. Otherwise resolution
-    # waits on this server's own nameservers.
-    from .. import cloudflare
-    if cloudflare.configured():
+    # The DNS note depends on where the zone is actually served. When the owner
+    # has connected Cloudflare, the A record was just pushed there, so it
+    # resolves within seconds (cPanel-style auto-active) as long as the domain's
+    # nameservers point at Cloudflare. Otherwise resolution waits on this
+    # server's own nameservers.
+    if cloudflare.enabled_for(db, parent.owner_id):
         dns_note = (
             f"DNS A record → {config.SERVER_IP} published to Cloudflare — it goes "
             "live within seconds if this domain uses Cloudflare's nameservers."
@@ -173,7 +176,12 @@ def delete_subdomain(
         db.delete(record)
     db.delete(sub)
     db.flush()
-    get_provider().sync_zone(parent.name, _zone_payload(parent))
+    payload = _zone_payload(parent)
+    get_provider().sync_zone(parent.name, payload)
     db.commit()
+    # Mirror the retraction to the owner's Cloudflare (removes the subdomain's
+    # A record there too, since the panel only deletes records it created).
+    from .. import cloudflare
+    cloudflare.publish(db, parent, payload)
     _flash(request, f"🗑️ {fqdn} removed.")
     return RedirectResponse("/subdomains", status_code=303)

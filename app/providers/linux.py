@@ -1242,17 +1242,6 @@ class LinuxProvider(Provider):
         return Path("/etc/cron.d/certbot").exists()
 
     def sync_zone(self, domain: str, records: list[dict]) -> None:
-        # Mirror the zone to Cloudflare first (independent of local BIND): when
-        # the admin has enabled the Cloudflare integration this is what makes
-        # subdomains and Zone Editor edits go live automatically. Best-effort —
-        # a CF failure must never break the panel action that triggered the sync.
-        try:
-            from .. import cloudflare
-            if cloudflare.configured():
-                cloudflare.push_zone(domain, records)
-        except Exception:  # noqa: BLE001 — defensive: never let CF break DNS ops
-            pass
-
         # DNS is only served locally when BIND is installed on this host. Many
         # setups use the registrar's or an external nameserver and have no local
         # BIND — there the panel DB stays the source of truth and we skip writing

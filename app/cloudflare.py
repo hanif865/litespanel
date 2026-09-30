@@ -1,22 +1,27 @@
-"""Cloudflare DNS integration — mirror the panel's zones into Cloudflare.
+"""Cloudflare DNS integration — mirror each account's zones into *their own*
+Cloudflare account.
 
-The panel DB is the source of truth for DNS. When Cloudflare is enabled (an API
-token is saved on the WHM → Cloudflare page), every DNS change funnels through
-`provider.sync_zone(domain, records)`, which calls `push_zone()` here. That makes
-subdomains and Zone Editor edits go live automatically — the cPanel experience,
-without touching DNS by hand.
+Per-client: every hosting account can save its own scoped Cloudflare API token
+(cPanel-side "Cloudflare" page). When enabled, every DNS change that account
+makes — subdomains and Zone Editor edits — is mirrored to that client's own
+Cloudflare, so records go live automatically without touching DNS by hand. The
+token lives in the `cloudflare_credentials` table, one row per owner, encrypted
+at rest (app/crypto.py) and never re-displayed.
+
+The push happens at the router layer (dns.py / subdomains.py) right after
+`provider.sync_zone(...)`, because resolving the domain's owner and their token
+needs the database — and the provider layer never touches the ORM.
 
 Safety model — the panel only manages records it created:
   * Every record the panel creates on Cloudflare is tagged with a comment marker
     (`_MARKER`). Reconciliation only ever deletes records carrying that marker.
-  * Records you added directly in the Cloudflare dashboard have no marker, so
-    they are never modified or removed. If a record identical to a panel record
-    already exists (same type/name/content), it's left as-is (no duplicate).
+  * Records the client added directly in the Cloudflare dashboard have no marker,
+    so they are never modified or removed. If a record identical to a panel
+    record already exists (same type/name/content), it's left as-is (no dup).
 
 Everything is best-effort: a Cloudflare outage, a wrong token, or a zone that
-isn't on this Cloudflare account must never break the panel action that
-triggered the sync — errors are swallowed and surfaced through the WHM page's
-"Test connection" instead.
+isn't on that account must never break the panel action that triggered the sync
+— errors are swallowed and surfaced through the page's "Test connection" button.
 
 Stdlib only (urllib) so the panel gains no new dependency.
 """
@@ -27,8 +32,10 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-from . import config
+from sqlalchemy.orm import Session
+
 from .crypto import decrypt, encrypt
+from .models import CloudflareCredential, Domain
 
 _API = "https://api.cloudflare.com/client/v4"
 _MARKER = "litespanel"          # tags records this panel owns
@@ -41,56 +48,55 @@ _PROXIABLE = {"A", "AAAA", "CNAME"}
 
 
 # --------------------------------------------------------------------------
-# Settings (persisted, token encrypted at rest)
+# Per-account credentials (DB-backed, token encrypted at rest)
 # --------------------------------------------------------------------------
-def _load() -> dict:
-    try:
-        data = json.loads(config.CLOUDFLARE_FILE.read_text())
-        if isinstance(data, dict):
-            return data
-    except (OSError, ValueError):
-        pass
-    return {}
+def get_cred(db: Session, owner_id: int) -> CloudflareCredential | None:
+    return db.query(CloudflareCredential).filter_by(owner_id=owner_id).one_or_none()
 
 
-def _token() -> str | None:
-    """The decrypted API token, or None if unset/undecryptable."""
-    return decrypt(_load().get("token_enc"))
+def token_of(cred: CloudflareCredential | None) -> str | None:
+    """The decrypted API token for an account, or None if unset/undecryptable."""
+    return decrypt(cred.token_enc) if cred else None
 
 
-def settings() -> dict:
-    """Display-safe settings for the WHM page — never exposes the token itself."""
-    data = _load()
+def settings_for(db: Session, owner_id: int) -> dict:
+    """Display-safe settings for the account's page — never exposes the token."""
+    cred = get_cred(db, owner_id)
     return {
-        "enabled": bool(data.get("enabled", False)),
-        "proxied": bool(data.get("proxied", False)),
-        "token_set": bool(_token()),
+        "enabled": bool(cred.enabled) if cred else False,
+        "proxied": bool(cred.proxied) if cred else False,
+        "token_set": bool(token_of(cred)),
     }
 
 
-def configured() -> bool:
-    """True when the integration is switched on AND a usable token is stored."""
-    data = _load()
-    return bool(data.get("enabled", False)) and bool(_token())
+def enabled_for(db: Session, owner_id: int) -> bool:
+    """True when this account has auto-sync on AND a usable token stored."""
+    cred = get_cred(db, owner_id)
+    return bool(cred and cred.enabled and token_of(cred))
 
 
-def save(*, enabled: bool, token: str | None, proxied: bool) -> None:
-    """Persist settings. A blank/None `token` keeps the existing one; pass the
-    sentinel "" only via clear_token() to actually remove it."""
-    data = _load()
-    data["enabled"] = bool(enabled)
-    data["proxied"] = bool(proxied)
+def save_cred(db: Session, owner_id: int, *, enabled: bool, token: str | None,
+              proxied: bool) -> None:
+    """Create/update an account's Cloudflare settings. A blank/None `token`
+    keeps the existing one (so re-saving other fields doesn't wipe it)."""
+    cred = get_cred(db, owner_id)
+    if cred is None:
+        cred = CloudflareCredential(owner_id=owner_id)
+        db.add(cred)
+    cred.enabled = bool(enabled)
+    cred.proxied = bool(proxied)
     token = (token or "").strip()
     if token:
-        data["token_enc"] = encrypt(token)
-    config.CLOUDFLARE_FILE.write_text(json.dumps(data, indent=2))
+        cred.token_enc = encrypt(token)
+    db.commit()
 
 
-def clear_token() -> None:
-    data = _load()
-    data.pop("token_enc", None)
-    data["enabled"] = False
-    config.CLOUDFLARE_FILE.write_text(json.dumps(data, indent=2))
+def clear_cred(db: Session, owner_id: int) -> None:
+    """Remove an account's token and switch auto-sync off."""
+    cred = get_cred(db, owner_id)
+    if cred is not None:
+        db.delete(cred)
+        db.commit()
 
 
 # --------------------------------------------------------------------------
@@ -126,9 +132,8 @@ def _api(method: str, path: str, token: str, body: dict | None = None) -> dict:
     return payload
 
 
-def verify() -> tuple[bool, str]:
-    """Validate the stored token (WHM 'Test connection' button)."""
-    token = _token()
+def verify(token: str | None) -> tuple[bool, str]:
+    """Validate an API token (the 'Test connection' button)."""
     if not token:
         return False, "No API token saved."
     try:
@@ -190,9 +195,8 @@ def _key(rtype: str, fqdn: str, content: str) -> tuple[str, str, str]:
     return (rtype.upper(), fqdn, content)
 
 
-def _desired(domain: str, records: list[dict]) -> dict[tuple, dict]:
+def _desired(domain: str, records: list[dict], proxied_default: bool) -> dict[tuple, dict]:
     """Panel records → {key: cf_create_body}, managed types only."""
-    proxied_default = bool(_load().get("proxied", False))
     out: dict[tuple, dict] = {}
     for r in records:
         rtype = str(r.get("type", "")).upper()
@@ -220,17 +224,15 @@ def _desired(domain: str, records: list[dict]) -> dict[tuple, dict]:
 
 
 # --------------------------------------------------------------------------
-# The public entry point
+# Core reconcile (parametrized by token/proxied)
 # --------------------------------------------------------------------------
-def push_zone(domain: str, records: list[dict]) -> tuple[bool, str]:
+def push_zone(token: str, proxied: bool, domain: str,
+              records: list[dict]) -> tuple[bool, str]:
     """Mirror `records` into the domain's Cloudflare zone (best-effort).
 
-    Returns (ok, message). Callers in the provider ignore the result — this is
-    fire-and-forget — but the WHM 'Sync now' button surfaces it.
+    Returns (ok, message). Low-level: callers pass the account's token/proxied
+    flag. Prefer `publish()` from routers, which resolves those from the DB.
     """
-    if not configured():
-        return False, "Cloudflare integration is off."
-    token = _token()
     if not token:
         return False, "No API token saved."
 
@@ -256,7 +258,7 @@ def push_zone(domain: str, records: list[dict]) -> tuple[bool, str]:
                    _norm_content(rtype, e.get("content", "")))
         existing_keys[key] = e
 
-    desired = _desired(domain, records)
+    desired = _desired(domain, records, proxied)
     created = deleted = 0
     errors: list[str] = []
 
@@ -287,3 +289,57 @@ def push_zone(domain: str, records: list[dict]) -> tuple[bool, str]:
     if errors:
         return False, msg + " — " + "; ".join(errors[:5])
     return True, msg
+
+
+# --------------------------------------------------------------------------
+# Router-facing entry points (resolve the owner's token from the DB)
+# --------------------------------------------------------------------------
+def verify_owner(db: Session, owner_id: int) -> tuple[bool, str]:
+    """Validate the account's saved token."""
+    return verify(token_of(get_cred(db, owner_id)))
+
+
+def publish(db: Session, domain: Domain, records: list[dict]) -> tuple[bool, str]:
+    """Mirror a domain's records to its owner's Cloudflare (best-effort).
+
+    Called from dns.py / subdomains.py right after provider.sync_zone(). No-op
+    (returns ok=False) when that account hasn't enabled Cloudflare. Never
+    raises — a CF problem must not break the DNS operation that triggered it.
+    """
+    try:
+        cred = get_cred(db, domain.owner_id)
+        if not (cred and cred.enabled):
+            return False, "Cloudflare not enabled for this account."
+        token = token_of(cred)
+        if not token:
+            return False, "No API token saved."
+        return push_zone(token, bool(cred.proxied), domain.name, records)
+    except Exception as e:  # noqa: BLE001 — defensive: never break the caller
+        return False, f"{getattr(domain, 'name', '?')}: {e}"
+
+
+def sync_all_for(db: Session, owner_id: int) -> tuple[int, int, list[str]]:
+    """Push every domain owned by this account to their Cloudflare.
+
+    Returns (ok_count, fail_count, notes). Used by the page's 'Sync now' button.
+    """
+    cred = get_cred(db, owner_id)
+    token = token_of(cred)
+    if not (cred and cred.enabled and token):
+        return 0, 0, ["Cloudflare not enabled."]
+    ok_n = fail_n = 0
+    notes: list[str] = []
+    domains = db.query(Domain).filter_by(owner_id=owner_id).order_by(Domain.name).all()
+    for d in domains:
+        payload = [
+            {"type": r.rtype, "name": r.name, "value": r.value,
+             "ttl": r.ttl, "priority": r.priority}
+            for r in d.dns_records
+        ]
+        ok, msg = push_zone(token, bool(cred.proxied), d.name, payload)
+        if ok:
+            ok_n += 1
+        else:
+            fail_n += 1
+            notes.append(msg)
+    return ok_n, fail_n, notes

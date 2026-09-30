@@ -58,6 +58,9 @@ class User(Base):
     package: Mapped["Package | None"] = relationship(
         back_populates="users", foreign_keys="User.package_id"
     )
+    cloudflare_cred: Mapped["CloudflareCredential | None"] = relationship(
+        back_populates="owner", cascade="all, delete-orphan", uselist=False
+    )
 
     @property
     def unlimited(self) -> bool:
@@ -646,6 +649,32 @@ class Certificate(Base):
 
     domain: Mapped["Domain | None"] = relationship(back_populates="certificate")
     subdomain: Mapped["Subdomain | None"] = relationship(back_populates="certificate")
+
+
+class CloudflareCredential(Base):
+    """One hosting account's own Cloudflare API token (per-client DNS sync).
+
+    Each client connects their own Cloudflare account by saving a scoped API
+    token here; the panel then mirrors that account's domains' DNS to *their*
+    Cloudflare (see app/cloudflare.py). One row per owner. The token is stored
+    encrypted at rest (app/crypto.py) and never re-displayed. `enabled` is the
+    per-account auto-sync switch; `proxied` chooses orange-cloud (CDN) vs
+    DNS-only for records the panel creates.
+    """
+    __tablename__ = "cloudflare_credentials"
+    __table_args__ = (UniqueConstraint("owner_id", name="uq_cloudflare_owner"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    token_enc: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    enabled: Mapped[bool] = mapped_column(default=False, server_default="0")
+    proxied: Mapped[bool] = mapped_column(default=False, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
+
+    owner: Mapped["User"] = relationship(back_populates="cloudflare_cred")
 
 
 class ErrorLog(Base):

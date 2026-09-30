@@ -1,16 +1,15 @@
-{% extends "whm_base.html" %}
+{% extends "base.html" %}
 {% from "_icons.html" import icon %}
 {% block title %}Cloudflare DNS{% endblock %}
 {% block content %}
-<div class="whm-page-head">
-  <h1>Cloudflare DNS</h1>
-  <p class="muted">Connect a Cloudflare API token and the panel will mirror every
-    DNS change it makes — <strong>subdomains</strong> and <strong>Zone Editor</strong>
-    edits — straight to Cloudflare, so records go live automatically. No more editing
-    DNS by hand after creating a subdomain.</p>
-</div>
+<div class="breadcrumb"><a href="/">🏠 Home</a> / Cloudflare DNS</div>
+<h1>Cloudflare DNS</h1>
+<p class="muted">Connect <strong>your own</strong> Cloudflare account and the panel
+  will mirror every DNS change you make — <strong>subdomains</strong> and
+  <strong>Zone Editor</strong> edits — straight to your Cloudflare, so records go
+  live automatically. No editing DNS by hand after creating a subdomain.</p>
 
-<div class="whm-cards">
+<div class="whm-cards" style="margin-bottom:1.25rem">
   <div class="whm-card">
     <div class="whm-card-ico {{ 'ok' if cf.enabled }}">{{ icon("dns", 22) }}</div>
     <div class="whm-card-num">{{ 'ON' if cf.enabled else 'OFF' }}</div>
@@ -24,22 +23,22 @@
   <div class="whm-card">
     <div class="whm-card-ico">{{ icon("domains", 22) }}</div>
     <div class="whm-card-num">{{ zone_count }}</div>
-    <div class="whm-card-lbl">Hosted zones</div>
+    <div class="whm-card-lbl">Your domains</div>
   </div>
 </div>
 
 <div class="card">
   <h2 style="margin-top:0">Connection</h2>
   <p class="muted">
-    Create a scoped token in Cloudflare with the
+    In your Cloudflare dashboard, create an API token with the
     <strong>Zone → DNS → Edit</strong> permission (and <strong>Zone → Zone → Read</strong>)
     for the zones you host here:
     <a href="https://dash.cloudflare.com/profile/api-tokens" target="_blank" rel="noopener">
-      dash.cloudflare.com/profile/api-tokens</a>. The token is stored encrypted at rest
-    and is never shown again after saving.
+      dash.cloudflare.com/profile/api-tokens</a>. The token is stored encrypted and
+    is never shown again after saving.
   </p>
 
-  <form method="post" action="/whm/cloudflare/save">
+  <form method="post" action="/cloudflare/save">
     <label class="small" style="display:block;max-width:640px">API token
       <input type="password" name="api_token" autocomplete="off" spellcheck="false"
              placeholder="{{ '•••••••• (a token is saved — leave blank to keep it)' if cf.token_set else 'Paste your Cloudflare API token' }}"
@@ -48,7 +47,7 @@
 
     <label class="chk" style="display:block;margin-top:1rem">
       <input type="checkbox" name="enabled" value="1" {{ 'checked' if cf.enabled }}>
-      Enable auto-sync — mirror every DNS change to Cloudflare
+      Enable auto-sync — mirror every DNS change to my Cloudflare
     </label>
     <label class="chk" style="display:block;margin-top:.5rem">
       <input type="checkbox" name="proxied" value="1" {{ 'checked' if cf.proxied }}>
@@ -64,11 +63,11 @@
 
   <div style="margin-top:1rem;display:flex;gap:.5rem;flex-wrap:wrap">
     {% if cf.token_set %}
-    <form method="post" action="/whm/cloudflare/test" class="inline-form">
+    <form method="post" action="/cloudflare/test" class="inline-form">
       <button class="btn">Test connection</button>
     </form>
-    <form method="post" action="/whm/cloudflare/disconnect" class="inline-form"
-          onsubmit="return confirm('Remove the saved token and turn auto-sync off? Records already on Cloudflare stay as they are.');">
+    <form method="post" action="/cloudflare/disconnect" class="inline-form"
+          onsubmit="return confirm('Remove your saved token and turn auto-sync off? Records already on Cloudflare stay as they are.');">
       <button class="btn btn-danger">Disconnect</button>
     </form>
     {% endif %}
@@ -76,16 +75,16 @@
 </div>
 
 <div class="card">
-  <h2 style="margin-top:0">Sync all zones now</h2>
+  <h2 style="margin-top:0">Sync all my zones now</h2>
   <p class="muted">
-    Push every hosted domain's current DNS records to Cloudflare in one pass. Use
-    this once after connecting, to bring existing zones up to date. The panel only
-    creates or removes records it tagged itself — records you made directly in the
-    Cloudflare dashboard are never touched.
+    Push every one of your domains' current DNS records to your Cloudflare in one
+    pass. Use this once after connecting. The panel only creates or removes
+    records it tagged itself — records you made directly in the Cloudflare
+    dashboard are never touched.
   </p>
   {% if cf.enabled and cf.token_set %}
-  <form method="post" action="/whm/cloudflare/sync-all" class="inline-form"
-        onsubmit="return confirm('Mirror all {{ zone_count }} hosted zone(s) to Cloudflare now?');">
+  <form method="post" action="/cloudflare/sync-all" class="inline-form"
+        onsubmit="return confirm('Mirror all {{ zone_count }} of your zone(s) to Cloudflare now?');">
     <button class="btn btn-primary">Sync {{ zone_count }} zone(s) now</button>
   </form>
   {% else %}
@@ -96,15 +95,16 @@
 <div class="card">
   <h2 style="margin-top:0">How it works</h2>
   <ul class="muted" style="line-height:1.7">
-    <li>The panel database stays the source of truth for DNS. Whenever it writes a
-      zone, it also mirrors the records to Cloudflare via the API.</li>
-    <li>Managed record types: <code>A, AAAA, CNAME, MX, TXT, NS</code>. Other types
-      on the Cloudflare zone are left alone.</li>
-    <li>Point your domain's nameservers at Cloudflare (as Cloudflare instructs on
-      the dashboard). Then a new subdomain resolves within seconds — no manual DNS.</li>
+    <li>Add your domain to Cloudflare and point its nameservers at Cloudflare
+      (as Cloudflare instructs). Then a new subdomain resolves within seconds —
+      no manual DNS.</li>
+    <li>Managed record types: <code>A, AAAA, CNAME, MX, TXT, NS</code>. Other
+      types on your Cloudflare zone are left alone.</li>
     <li>Records the panel creates are tagged internally, so it will only ever
       update or delete <em>its own</em> records — never ones you added by hand in
       Cloudflare.</li>
+    <li>One token covers every zone in your Cloudflare account, so all your
+      domains are managed together.</li>
   </ul>
 </div>
 {% endblock %}
