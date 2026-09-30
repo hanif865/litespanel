@@ -94,9 +94,9 @@
         <span class="cron-lbl">Version</span>
         <select name="version">
           <option value="latest">Latest</option>
-          <option value="6.6">6.6</option>
-          <option value="6.5.2">6.5.2</option>
-          <option value="6.4.3">6.4.3</option>
+          {% for v in wp_versions %}
+            <option value="{{ v }}">{{ v }}</option>
+          {% endfor %}
         </select>
       </div>
     </div>
