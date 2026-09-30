@@ -53,6 +53,11 @@ def _sync(db: Session, domain: Domain) -> None:
         for r in records
     ]
     get_provider().sync_zone(domain.name, payload)
+    # If this domain's owner has connected their Cloudflare, mirror the zone
+    # there too so the change goes live automatically (best-effort; a CF
+    # problem never breaks the edit the user just made).
+    from .. import cloudflare
+    cloudflare.publish(db, domain, payload)
 
 
 @router.get("")

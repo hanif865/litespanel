@@ -536,15 +536,6 @@ class DemoProvider(Provider):
             else:
                 lines.append(f"{name}\t{ttl}\tIN\t{r['type']}\t{r['value']}")
         (config.DNS_DIR / f"{domain}.zone").write_text("\n".join(lines) + "\n", encoding="utf-8")
-        # Mirror to Cloudflare when the integration is configured (best-effort).
-        # Off by default, so the demo box stays fully offline unless an admin
-        # deliberately saves a token.
-        try:
-            from .. import cloudflare
-            if cloudflare.configured():
-                cloudflare.push_zone(domain, records)
-        except Exception:  # noqa: BLE001
-            pass
 
     def generate_dkim(self, domain: str, selector: str = "default") -> tuple[str, str]:
         # Real openssl keypair when available (it usually is, even on the demo
