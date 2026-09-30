@@ -197,10 +197,19 @@ class LinuxProvider(Provider):
         return v
 
     def _php_sock(self, username: str, version: str | None = None) -> str:
-        # One socket per (account, version). Different versions run as separate
-        # FPM pools, so a domain on 8.1 and one on 8.3 under the same account
-        # truly serve different PHP runtimes (not just a cosmetic version label).
-        return f"/run/php/{username}-{self._php_ver(version)}.sock"
+        # One socket per (account, version), so a domain on 8.1 and one on 8.3
+        # under the same account truly serve different PHP runtimes.
+        #
+        # The DEFAULT version keeps the legacy, version-less name
+        # (/run/php/<user>.sock): every vhost created before this feature points
+        # there and runs the default version, so keeping that name means existing
+        # sites keep working untouched — no mass vhost rewrite, no 502 window.
+        # Only a site explicitly switched to a NON-default version gets a
+        # version-suffixed socket (and its vhost is rewritten to match).
+        v = self._php_ver(version)
+        if v == config.PHP_FPM_VERSION:
+            return f"/run/php/{username}.sock"
+        return f"/run/php/{username}-{v}.sock"
 
     def _pool_path(self, username: str, version: str | None = None) -> Path:
         return Path(f"/etc/php/{self._php_ver(version)}/fpm/pool.d/{username}.conf")
@@ -217,6 +226,11 @@ class LinuxProvider(Provider):
                         directives: dict[str, str] | None = None,
                         reload: bool = True) -> None:
         version = self._php_ver(version)
+        # Only write into a version that's actually installed. Creating the pool
+        # dir for an absent version would leave a bogus /etc/php/<ver> tree (and
+        # make php_fpm_installed lie); the caller validates installation first.
+        if not self.php_fpm_installed(version):
+            return
         pool = self._pool_path(username, version)
         group = self._primary_group(username)
         lines = [
@@ -266,7 +280,20 @@ class LinuxProvider(Provider):
             self._reload_php(version)
 
     def _reload_php(self, version: str | None = None) -> None:
-        _run(["systemctl", "reload", f"php{self._php_ver(version)}-fpm"])
+        version = self._php_ver(version)
+        # Never crash trying to reload an FPM master that isn't installed — the
+        # PHP Selector offers every catalog version, not only installed ones.
+        if not self.php_fpm_installed(version):
+            return
+        _run(["systemctl", "reload", f"php{version}-fpm"])
+
+    def php_fpm_installed(self, version: str) -> bool:
+        """True when php<version>-fpm is installed (its pool.d dir exists)."""
+        try:
+            v = self._php_ver(version)
+        except ValueError:
+            return False
+        return Path(f"/etc/php/{v}/fpm/pool.d").is_dir()
 
     def _installed_php_versions(self) -> list[str]:
         """PHP versions with an FPM pool dir present on the box (i.e. installed).

@@ -201,6 +201,12 @@ class DemoProvider(Provider):
             f"client_max_body_size {cap}m;\n", encoding="utf-8"
         )
 
+    def php_fpm_installed(self, version: str) -> bool:
+        # The demo box "has" every catalog version, so version switching always
+        # works end-to-end without a real PHP-FPM install.
+        from .. import php_catalog
+        return version in php_catalog.PHP_VERSIONS
+
     # --- PHP extension packages (simulated) -------------------------------
     def _installed_ext_file(self) -> Path:
         return config.PHP_DIR / "installed_extensions.txt"

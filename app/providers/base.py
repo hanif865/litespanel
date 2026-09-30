@@ -350,6 +350,16 @@ class Provider(ABC):
         """
 
     @abstractmethod
+    def php_fpm_installed(self, version: str) -> bool:
+        """True when php<version>-fpm is installed on the host.
+
+        The PHP Selector offers every catalog version; switching a site to a
+        version whose FPM package isn't installed would try to reload a
+        non-existent systemd unit. The router checks this first and refuses with
+        a friendly message instead of erroring.
+        """
+
+    @abstractmethod
     def list_installed_extensions(self, php_version: str) -> set[str]:
         """Return the set of PHP extensions actually loaded on this host.
 

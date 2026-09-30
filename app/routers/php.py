@@ -175,6 +175,8 @@ def php_selector(
         ext: php_catalog.apt_package(ext, cfg.php_version) is not None
         for ext in php_catalog.AVAILABLE_EXTENSIONS
     }
+    # Which PHP versions can actually be selected (FPM installed on the host).
+    installed_versions = [v for v in PHP_VERSIONS if get_provider().php_fpm_installed(v)]
     return templates.TemplateResponse(
         request,
         "php.html",
@@ -186,6 +188,7 @@ def php_selector(
             "scope_subdomain": subdomain,
             "scope_value": _scope_value(domain, subdomain),
             "versions": PHP_VERSIONS,
+            "installed_versions": installed_versions,
             "extensions": php_catalog.AVAILABLE_EXTENSIONS,
             "ext_groups": php_catalog.grouped_extensions(),
             "directive_order": php_catalog.DIRECTIVE_ORDER,
@@ -218,6 +221,13 @@ def set_version(
     if php_version not in PHP_VERSIONS:
         _flash(request, "❌ Unsupported PHP version.")
         return RedirectResponse("/php", status_code=303)
+    # The Selector lists every catalog version; only switch to one that's actually
+    # installed, or reloading its (missing) PHP-FPM unit would fail.
+    if not get_provider().php_fpm_installed(php_version):
+        _flash(request, f"❌ PHP {php_version} isn't installed on the server. "
+                        f"An admin can install it in WHM → Server Software first.")
+        domain, subdomain = _parse_scope(db, user, scope)
+        return _redirect(domain, subdomain)
     domain, subdomain = _parse_scope(db, user, scope)
     cfg = _get_or_create_config(db, user, domain, subdomain)
     cfg.php_version = php_version
