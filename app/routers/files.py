@@ -82,11 +82,37 @@ def browse(
     domain = _owned_domain(db, user, domain_id) if domain_id else domains[0]
     docroot = Path(domain.docroot)
     docroot.mkdir(parents=True, exist_ok=True)
+
+    listing = _list_entries(docroot, path, bool(hidden))
+
+    ctx.update({
+        "selected": domain, "entries": listing["entries"], "path": listing["path"],
+        "parent": listing["parent"], "crumbs": listing["crumbs"],
+        "in_trash": listing["in_trash"], "show_hidden": bool(hidden),
+        # Left tree is lazy: render only the top-level folders; deeper levels are
+        # fetched on expand via /files/api/tree. (A full recursive dump was both
+        # slow and, capped at 300 entries, often truncated the folders that
+        # matter on a big WordPress site.)
+        "tree_roots": _child_dirs(docroot, ""),
+        # Folder tree of every domain on this account, so the Copy/Move dialog
+        # can offer another domain as the destination (cross-domain within the
+        # same account). Guard non-existent docroots so no stray dirs are made.
+        "domain_trees": [
+            {"id": d.id, "name": d.name,
+             "tree": _folder_tree(Path(d.docroot)) if Path(d.docroot).is_dir() else []}
+            for d in domains
+        ],
+    })
+    return templates.TemplateResponse(request, "files.html", ctx)
+
+
+def _list_entries(docroot: Path, path: str, hidden: bool) -> dict:
+    """Build the directory listing (entries + breadcrumbs + parent) for `path`.
+    Shared by the full page and the JSON API so they can never disagree."""
     current = _safe_join(docroot, path)
     if not current.is_dir():
         current = docroot
         path = ""
-
     in_trash = path.split("/")[0] == ".trash"
     entries = []
     for child in sorted(current.iterdir(), key=lambda p: (p.is_file(), p.name.lower())):
@@ -94,7 +120,10 @@ def browse(
             continue  # hide the trash folder from the normal root view
         if child.name.startswith(".") and not hidden:
             continue  # dotfiles hidden unless "Show Hidden" is on
-        stat = child.stat()
+        try:
+            stat = child.stat()
+        except OSError:
+            continue
         rel = child.relative_to(docroot.resolve()).as_posix()
         is_dir = child.is_dir()
         entries.append({
@@ -102,6 +131,7 @@ def browse(
             "rel": rel,
             "is_dir": is_dir,
             "size": stat.st_size,
+            "size_h": "" if is_dir else human_size(stat.st_size),
             "mtime": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
             "perms": oct(stat.st_mode)[-4:],
             "icon": _file_icon(child.name, is_dir),
@@ -118,26 +148,77 @@ def browse(
         parent = str(Path(path).parent.as_posix())
         parent = "" if parent == "." else parent
 
-    # Breadcrumb segments for the current path.
     crumbs, acc = [], ""
     for seg in [s for s in path.split("/") if s]:
         acc = f"{acc}/{seg}" if acc else seg
         crumbs.append({"name": seg, "path": acc})
 
-    ctx.update({
-        "selected": domain, "entries": entries, "path": path, "parent": parent,
-        "crumbs": crumbs, "tree": _folder_tree(docroot), "in_trash": in_trash,
-        "show_hidden": bool(hidden),
-        # Folder tree of every domain on this account, so the Copy/Move dialog
-        # can offer another domain as the destination (cross-domain within the
-        # same account). Guard non-existent docroots so no stray dirs are made.
-        "domain_trees": [
-            {"id": d.id, "name": d.name,
-             "tree": _folder_tree(Path(d.docroot)) if Path(d.docroot).is_dir() else []}
-            for d in domains
-        ],
-    })
-    return templates.TemplateResponse(request, "files.html", ctx)
+    return {"entries": entries, "path": path, "parent": parent,
+            "crumbs": crumbs, "in_trash": in_trash}
+
+
+def _child_dirs(docroot: Path, rel: str) -> list[dict]:
+    """Immediate sub-folders of `rel` (for lazy left-tree expansion). Each carries
+    `has_sub` so the UI knows whether to show an expand arrow — computed cheaply
+    by peeking for the first child directory."""
+    base = _safe_join(docroot, rel)
+    root = docroot.resolve()
+    out: list[dict] = []
+    if not base.is_dir():
+        return out
+    for p in sorted(base.iterdir(), key=lambda x: x.name.lower()):
+        try:
+            if not p.is_dir() or p.name.startswith(".") or p.name == ".trash":
+                continue
+            has_sub = False
+            try:
+                for c in p.iterdir():
+                    if c.is_dir() and not c.name.startswith("."):
+                        has_sub = True
+                        break
+            except OSError:
+                pass
+            out.append({"name": p.name, "rel": p.relative_to(root).as_posix(),
+                        "has_sub": has_sub})
+        except (OSError, ValueError):
+            continue
+    return out
+
+
+@router.get("/api/list")
+def api_list(
+    request: Request,
+    domain_id: int,
+    path: str = "",
+    hidden: int = 0,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """JSON directory listing — powers folder navigation without a full reload."""
+    from fastapi.responses import JSONResponse
+
+    domain = _owned_domain(db, user, domain_id)
+    docroot = Path(domain.docroot)
+    docroot.mkdir(parents=True, exist_ok=True)
+    data = _list_entries(docroot, path, bool(hidden))
+    data["ok"] = True
+    return JSONResponse(data)
+
+
+@router.get("/api/tree")
+def api_tree(
+    request: Request,
+    domain_id: int,
+    path: str = "",
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """JSON immediate sub-folders of `path` — powers lazy left-tree expansion."""
+    from fastapi.responses import JSONResponse
+
+    domain = _owned_domain(db, user, domain_id)
+    docroot = Path(domain.docroot)
+    return JSONResponse({"ok": True, "dirs": _child_dirs(docroot, path)})
 
 
 def _file_kind(name: str) -> str:

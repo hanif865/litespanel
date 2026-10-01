@@ -20,7 +20,7 @@
   <button type="button" class="fm-btn" onclick="actNewFolder()"><span>📁</span>Folder</button>
   <button type="button" class="fm-btn" onclick="actCopy()"><span>📋</span>Copy</button>
   <button type="button" class="fm-btn" onclick="actMove()"><span>➡️</span>Move</button>
-  <button type="button" class="fm-btn" onclick="location.href='/files/upload?domain_id={{ selected.id }}&path={{ path }}'"><span>⬆️</span>Upload</button>
+  <button type="button" class="fm-btn" onclick="location.href='/files/upload?domain_id='+FM.did+'&path='+encodeURIComponent(FM.path)"><span>⬆️</span>Upload</button>
   <button type="button" class="fm-btn" onclick="actDownload()"><span>⬇️</span>Download</button>
   {% if in_trash %}
   <button type="button" class="fm-btn" onclick="fmSubmit('restore')"><span>♻️</span>Restore</button>
@@ -37,42 +37,43 @@
 </div>
 
 <div class="fm-subbar">
-  <a href="/files?domain_id={{ selected.id }}&path=">🏠 Home</a>
-  {% if parent is not none %}<a href="/files?domain_id={{ selected.id }}&path={{ parent }}">⬆️ Up</a>{% endif %}
-  <a href="/files?domain_id={{ selected.id }}&path={{ path }}&hidden={{ 1 if show_hidden else 0 }}">🔄 Reload</a>
+  <a href="#" onclick="fmNavigate('');return false;">🏠 Home</a>
+  <a href="#" id="fm-up" onclick="fmGoUp();return false;">⬆️ Up</a>
+  <a href="#" onclick="fmReload();return false;">🔄 Reload</a>
   <a href="#" onclick="fmToggle(true);return false;">☑️ Select All</a>
   <a href="#" onclick="fmToggle(false);return false;">◻️ Unselect All</a>
-  <a href="/files?domain_id={{ selected.id }}&path={{ path }}&hidden={{ 0 if show_hidden else 1 }}">
+  <a href="#" id="fm-hidden-toggle" onclick="fmToggleHidden();return false;">
     {{ '🙈 Hide Hidden' if show_hidden else '👁️ Show Hidden' }}</a>
   <span class="fm-spacer"></span>
-  <a href="/files?domain_id={{ selected.id }}&path=.trash">🗑️ View Trash</a>
+  <a href="#" onclick="fmNavigate('.trash');return false;">🗑️ View Trash</a>
   <a href="#" onclick="if(confirm('Empty the trash permanently?'))document.getElementById('emptytrash').submit();return false;">🧹 Empty Trash</a>
 </div>
 
 <div class="fm-body">
   <aside class="fm-tree">
     <div class="fm-tree-head">📂 {{ selected.name }}</div>
-    <div class="fm-tnode {{ 'active' if not path }}" style="padding-left:6px">
-      <span class="tw"></span><a href="/files?domain_id={{ selected.id }}&path=">🏠 public_html</a>
+    <div class="fm-tnode" data-rel="" data-depth="0" style="padding-left:6px">
+      <span class="tw"></span><a href="#" class="fm-tree-link" data-rel="">🏠 public_html</a>
     </div>
-    {% for node in tree %}
-      <div class="fm-tnode {{ 'active' if node.rel == path }}" data-rel="{{ node.rel|e }}" data-depth="{{ node.depth }}"
-           style="padding-left:{{ 6 + node.depth * 14 }}px">
-        <span class="tw" onclick="treeToggle(this,event)"></span><a href="/files?domain_id={{ selected.id }}&path={{ node.rel }}">📁 {{ node.name }}</a>
-      </div>
-    {% endfor %}
+    <div id="fm-tree-list">
+      {% for node in tree_roots %}
+        <div class="fm-tnode" data-rel="{{ node.rel|e }}" data-depth="1" style="padding-left:20px">
+          <span class="tw">{{ '▸' if node.has_sub else '' }}</span><a href="#" class="fm-tree-link" data-rel="{{ node.rel|e }}">📁 {{ node.name }}</a>
+        </div>
+      {% endfor %}
+    </div>
   </aside>
 
   <section class="fm-main" id="fm-main">
-    <div class="fm-crumbs">
-      <a href="/files?domain_id={{ selected.id }}&path=">public_html</a>
-      {% for c in crumbs %} / <a href="/files?domain_id={{ selected.id }}&path={{ c.path }}">{{ c.name }}</a>{% endfor %}
+    <div class="fm-crumbs" id="fm-crumbs">
+      <a href="#" class="fm-crumb" data-path="">public_html</a>
+      {% for c in crumbs %} / <a href="#" class="fm-crumb" data-path="{{ c.path|e }}">{{ c.name }}</a>{% endfor %}
       {% if in_trash %} <span class="pill" style="background:#fdecec;color:#e5484d">Trash</span>{% endif %}
     </div>
 
     <form id="fm" method="post">
       <input type="hidden" name="domain_id" value="{{ selected.id }}">
-      <input type="hidden" name="path" value="{{ path }}">
+      <input type="hidden" name="path" id="fm-path" value="{{ path }}">
       <input type="hidden" name="name" id="fm-name">
       <input type="hidden" name="new_name" id="fm-new_name">
       <input type="hidden" name="dest" id="fm-dest">
@@ -85,22 +86,22 @@
           <th>Name</th><th style="width:90px">Size</th><th style="width:145px">Last Modified</th>
           <th style="width:100px">Type</th><th style="width:70px">Perms</th>
         </tr></thead>
-        <tbody>
+        <tbody id="fm-tbody">
         {% for e in entries %}
           <tr data-rel="{{ e.rel|e }}" data-name="{{ e.name|e }}" data-perms="{{ e.perms }}"
               data-dir="{{ 1 if e.is_dir else 0 }}" data-archive="{{ 1 if e.is_archive else 0 }}"
               data-html="{{ 1 if e.is_html else 0 }}" data-editable="{{ 1 if e.editable else 0 }}" draggable="true">
             <td><input type="checkbox" name="targets" value="{{ e.rel }}" onclick="event.stopPropagation();rowSync(this)"></td>
             <td class="fm-name"><span class="fm-ico">{{ e.icon }}</span>
-              {% if e.is_dir %}<a href="/files?domain_id={{ selected.id }}&path={{ e.rel }}"><strong>{{ e.name }}</strong></a>
+              {% if e.is_dir %}<a href="#" class="fm-dir" data-rel="{{ e.rel|e }}"><strong>{{ e.name }}</strong></a>
               {% else %}{{ e.name }}{% endif %}</td>
-            <td class="muted">{{ '' if e.is_dir else e.size | human_size }}</td>
+            <td class="muted">{{ e.size_h }}</td>
             <td class="muted small">{{ e.mtime }}</td>
             <td class="muted small">{{ e.kind }}</td>
             <td class="muted small">{{ e.perms }}</td>
           </tr>
         {% endfor %}
-        {% if not entries %}<tr><td colspan="6" class="muted">Empty folder — drop files here to upload.</td></tr>{% endif %}
+        {% if not entries %}<tr class="fm-empty"><td colspan="6" class="muted">Empty folder — drop files here to upload.</td></tr>{% endif %}
         </tbody>
       </table>
     </form>
@@ -151,7 +152,7 @@
   <label class="fm-fld-label">Destination folder</label>
   <select id="fm-folder-select" style="width:100%;margin-bottom:1rem">
     <option value="">🏠 public_html (root)</option>
-    {% for node in tree %}<option value="{{ node.rel }}">{{ '  ' * node.depth }}📁 {{ node.name }}</option>{% endfor %}
+    <!-- populated by fmPopulateFolders() from DOMAIN_TREES on open -->
   </select>
   <div class="fm-modal-actions">
     <button type="button" class="btn btn-primary btn-sm" onclick="fmFolderOk()">OK</button>
@@ -201,7 +202,10 @@
 </style>
 <script>
 function $(id){ return document.getElementById(id); }
-var DID = {{ selected.id }};
+var FM = { did: {{ selected.id }}, path: {{ path|tojson }},
+           hidden: {{ 1 if show_hidden else 0 }}, inTrash: {{ in_trash|tojson }} };
+var DID = FM.did;
+function cssesc(s){ return (window.CSS&&CSS.escape)?CSS.escape(s):String(s).replace(/["\\]/g,'\\$&'); }
 function fmSubmit(a){ var f=$('fm'); f.action='/files/'+a; f.submit(); }
 function fmSetField(n,v){ $('fm-'+n).value=v; }
 function fmSelected(){ return Array.prototype.slice.call(document.querySelectorAll('#fm input[name=targets]:checked')); }
@@ -244,11 +248,13 @@ function actEdit(){ var r=fmSingleRow(); if(r) location.href='/files/edit?domain
 function actHtml(){ var r=fmSingleRow(); if(r) location.href='/files/htmledit?domain_id='+DID+'&path='+encodeURIComponent(r.dataset.rel); }
 function actDownload(){ var r=fmSingleRow(); if(r) location.href='/files/download?domain_id='+DID+'&path='+encodeURIComponent(r.dataset.rel); }
 
-// row interactions + drag/drop move
+// row interactions + drag/drop move (rebound after every AJAX re-render)
 var _drag=[];
-document.querySelectorAll('#fm tbody tr[data-rel]').forEach(function(tr){
+function fmBindRows(){
+ document.querySelectorAll('#fm tbody tr[data-rel]').forEach(function(tr){
+  if(tr.dataset.bound==='1') return; tr.dataset.bound='1';
   tr.addEventListener('click', function(e){ if(e.target.closest('a')||e.target.closest('input'))return; var cb=tr.querySelector('input[name=targets]'); cb.checked=!cb.checked; rowSync(cb); });
-  tr.addEventListener('dblclick', function(){ if(tr.dataset.dir==='1') location.href='/files?domain_id='+DID+'&path='+encodeURIComponent(tr.dataset.rel); else if(tr.dataset.editable==='1') location.href='/files/edit?domain_id='+DID+'&path='+encodeURIComponent(tr.dataset.rel); });
+  tr.addEventListener('dblclick', function(){ if(tr.dataset.dir==='1') fmNavigate(tr.dataset.rel); else if(tr.dataset.editable==='1') location.href='/files/edit?domain_id='+DID+'&path='+encodeURIComponent(tr.dataset.rel); });
   tr.addEventListener('contextmenu', function(e){ e.preventDefault(); fmToggle(false); var cb=tr.querySelector('input[name=targets]'); cb.checked=true; rowSync(cb);
     $('ctx-extract').style.display=tr.dataset.archive==='1'?'':'none'; $('ctx-edit').style.display=tr.dataset.editable==='1'?'':'none'; $('ctx-html').style.display=tr.dataset.html==='1'?'':'none';
     var m=$('fm-ctx'); m.style.display='block'; m.style.left=e.pageX+'px'; m.style.top=e.pageY+'px'; });
@@ -257,10 +263,18 @@ document.querySelectorAll('#fm tbody tr[data-rel]').forEach(function(tr){
     tr.addEventListener('dragover', function(e){ if(_drag.length){ e.preventDefault(); tr.classList.add('drop'); } });
     tr.addEventListener('dragleave', function(){ tr.classList.remove('drop'); });
     tr.addEventListener('drop', function(e){ e.preventDefault(); tr.classList.remove('drop'); if(!_drag.length||_drag.indexOf(tr.dataset.rel)!==-1)return;
-      fmToggle(false); _drag.forEach(function(rel){ var cb=document.querySelector('#fm input[name=targets][value="'+CSS.escape(rel)+'"]'); if(cb)cb.checked=true; }); fmSetField('dest_domain_id',''); fmSetField('dest',tr.dataset.rel); fmSubmit('move'); });
+      fmToggle(false); _drag.forEach(function(rel){ var cb=document.querySelector('#fm input[name=targets][value="'+cssesc(rel)+'"]'); if(cb)cb.checked=true; }); fmSetField('dest_domain_id',''); fmSetField('dest',tr.dataset.rel); fmSubmit('move'); });
   }
+ });
+}
+
+// Delegated navigation — folder rows, tree links, breadcrumbs (server- or JS-rendered).
+document.addEventListener('click', function(e){
+  $('fm-ctx').style.display='none';
+  var dir=e.target.closest('.fm-dir'); if(dir){ e.preventDefault(); fmNavigate(dir.dataset.rel); return; }
+  var tl=e.target.closest('.fm-tree-link'); if(tl){ e.preventDefault(); fmNavigate(tl.dataset.rel); return; }
+  var cr=e.target.closest('.fm-crumb'); if(cr){ e.preventDefault(); fmNavigate(cr.dataset.path); return; }
 });
-document.addEventListener('click', function(){ $('fm-ctx').style.display='none'; });
 
 // drag-drop upload onto the main area
 var main=$('fm-main');
@@ -270,20 +284,153 @@ main.addEventListener('drop', async function(e){
   if(e.dataTransfer.types.indexOf('Files')===-1) return;
   e.preventDefault(); main.classList.remove('dragging');
   var files=e.dataTransfer.files; if(!files.length) return;
-  for(var i=0;i<files.length;i++){ var fd=new FormData(); fd.append('domain_id',DID); fd.append('path','{{ path }}'); fd.append('file',files[i]);
+  for(var i=0;i<files.length;i++){ var fd=new FormData(); fd.append('domain_id',DID); fd.append('path',FM.path); fd.append('file',files[i]);
     await fetch('/files/upload',{method:'POST',body:fd,credentials:'same-origin'}); }
-  location.reload();
+  fmReload();
 });
 
-// collapsible tree
-var tnodes=Array.prototype.slice.call(document.querySelectorAll('.fm-tnode[data-rel]'));
-tnodes.forEach(function(n){ var rel=n.dataset.rel;
-  var hasChild=tnodes.some(function(m){ var r=m.dataset.rel; return r.indexOf(rel+'/')===0 && r.slice(rel.length+1).indexOf('/')===-1; });
-  if(hasChild) n.querySelector('.tw').textContent='▾';
+// ---- AJAX folder navigation (no full-page reload) ----
+function fmApplyPath(){
+  $('fm-path').value=FM.path;
+  var up=document.querySelector('#upform input[name=path]'); if(up) up.value=FM.path;
+  var et=document.querySelector('#emptytrash input[name=path]'); if(et) et.value=FM.path;
+  var upBtn=$('fm-up'); if(upBtn) upBtn.style.visibility = FM.path ? 'visible' : 'hidden';
+}
+function fmBuildRow(e){
+  var tr=document.createElement('tr');
+  tr.dataset.rel=e.rel; tr.dataset.name=e.name; tr.dataset.perms=e.perms;
+  tr.dataset.dir=e.is_dir?'1':'0'; tr.dataset.archive=e.is_archive?'1':'0';
+  tr.dataset.html=e.is_html?'1':'0'; tr.dataset.editable=e.editable?'1':'0';
+  tr.draggable=true;
+  var cbtd=document.createElement('td'); var cb=document.createElement('input');
+  cb.type='checkbox'; cb.name='targets'; cb.value=e.rel;
+  cb.addEventListener('click', function(ev){ ev.stopPropagation(); rowSync(cb); });
+  cbtd.appendChild(cb); tr.appendChild(cbtd);
+  var nt=document.createElement('td'); nt.className='fm-name';
+  var ico=document.createElement('span'); ico.className='fm-ico'; ico.textContent=e.icon;
+  nt.appendChild(ico); nt.appendChild(document.createTextNode(' '));
+  if(e.is_dir){ var a=document.createElement('a'); a.href='#'; a.className='fm-dir'; a.dataset.rel=e.rel;
+    var st=document.createElement('strong'); st.textContent=e.name; a.appendChild(st); nt.appendChild(a); }
+  else { nt.appendChild(document.createTextNode(e.name)); }
+  tr.appendChild(nt);
+  function td(c,t){ var x=document.createElement('td'); x.className=c; x.textContent=t||''; return x; }
+  tr.appendChild(td('muted', e.size_h)); tr.appendChild(td('muted small', e.mtime));
+  tr.appendChild(td('muted small', e.kind)); tr.appendChild(td('muted small', e.perms));
+  return tr;
+}
+function fmRenderEntries(entries){
+  var tb=$('fm-tbody'); tb.innerHTML='';
+  if(!entries.length){ var tr=document.createElement('tr'); tr.className='fm-empty';
+    var td=document.createElement('td'); td.colSpan=6; td.className='muted';
+    td.textContent='Empty folder — drop files here to upload.'; tr.appendChild(td); tb.appendChild(tr); }
+  else entries.forEach(function(e){ tb.appendChild(fmBuildRow(e)); });
+  fmBindRows();
+}
+function fmRenderCrumbs(crumbs){
+  var c=$('fm-crumbs'); c.innerHTML='';
+  var root=document.createElement('a'); root.href='#'; root.className='fm-crumb'; root.dataset.path='';
+  root.textContent='public_html'; c.appendChild(root);
+  crumbs.forEach(function(cr){ c.appendChild(document.createTextNode(' / '));
+    var a=document.createElement('a'); a.href='#'; a.className='fm-crumb'; a.dataset.path=cr.path;
+    a.textContent=cr.name; c.appendChild(a); });
+  if(FM.inTrash){ var pp=document.createElement('span'); pp.className='pill';
+    pp.style.background='#fdecec'; pp.style.color='#e5484d'; pp.textContent='Trash';
+    c.appendChild(document.createTextNode(' ')); c.appendChild(pp); }
+}
+function fmUrl(path){ return '/files?domain_id='+FM.did+'&path='+encodeURIComponent(path)+(FM.hidden?'&hidden=1':''); }
+async function fmNavigate(path, push){
+  if(push===undefined) push=true;
+  try{
+    var r=await fetch('/files/api/list?domain_id='+FM.did+'&path='+encodeURIComponent(path)+'&hidden='+FM.hidden, {credentials:'same-origin'});
+    if(!r.ok){ location.href=fmUrl(path); return; }
+    var d=await r.json();
+    FM.path=d.path; FM.inTrash=d.in_trash;
+    fmRenderEntries(d.entries); fmRenderCrumbs(d.crumbs); fmApplyPath();
+    if(push) history.pushState({path:FM.path}, '', fmUrl(FM.path));
+    fmTreeReveal(FM.path);
+    var m=$('fm-main'); if(m) m.scrollTop=0;
+  }catch(err){ location.href=fmUrl(path); }
+}
+function fmReload(){ fmNavigate(FM.path, false); }
+function fmGoUp(){ if(!FM.path) return; var i=FM.path.lastIndexOf('/'); fmNavigate(i===-1?'':FM.path.slice(0,i)); }
+function fmToggleHidden(){ FM.hidden=FM.hidden?0:1;
+  $('fm-hidden-toggle').innerHTML = FM.hidden ? '🙈 Hide Hidden' : '👁️ Show Hidden';
+  fmNavigate(FM.path, false); }
+window.addEventListener('popstate', function(ev){
+  var pth=(ev.state&&ev.state.path!==undefined)?ev.state.path:'';
+  fmNavigate(pth, false);
 });
-function treeToggle(el,e){ e.preventDefault(); e.stopPropagation(); var node=el.closest('.fm-tnode'); var rel=node.dataset.rel; var open=node.dataset.collapsed!=='1';
-  tnodes.forEach(function(m){ if(m.dataset.rel.indexOf(rel+'/')===0) m.style.display=open?'none':'flex'; });
-  node.dataset.collapsed=open?'1':'0'; el.textContent=open?'▸':'▾'; }
+
+// ---- lazy left tree ----
+function fmTreeNodeByRel(rel){
+  var list=document.querySelectorAll('.fm-tnode');
+  for(var i=0;i<list.length;i++){ if(list[i].dataset.rel===rel) return list[i]; }
+  return null;
+}
+function fmTreeMakeNode(sub, depth){
+  var div=document.createElement('div'); div.className='fm-tnode'; div.dataset.rel=sub.rel; div.dataset.depth=depth;
+  div.style.paddingLeft=(6+depth*14)+'px';
+  var tw=document.createElement('span'); tw.className='tw'; tw.textContent=sub.has_sub?'▸':'';
+  if(sub.has_sub) tw.addEventListener('click', function(e){ fmTreeToggle(div,e); });
+  var a=document.createElement('a'); a.href='#'; a.className='fm-tree-link'; a.dataset.rel=sub.rel;
+  a.textContent='📁 '+sub.name;
+  div.appendChild(tw); div.appendChild(a); return div;
+}
+function fmTreeDirectChildren(rel){
+  var pref = rel ? rel+'/' : '';
+  return Array.prototype.filter.call(document.querySelectorAll('.fm-tnode'), function(n){
+    var r=n.dataset.rel; if(!r) return false;
+    if(pref){ return r.indexOf(pref)===0 && r.slice(pref.length).indexOf('/')===-1; }
+    return r.indexOf('/')===-1;
+  });
+}
+async function fmTreeLoad(node){
+  if(node.dataset.loaded==='1') return;
+  var rel=node.dataset.rel, depth=parseInt(node.dataset.depth||'0',10);
+  var tw=node.querySelector('.tw'); var prev=tw?tw.textContent:'';
+  if(tw) tw.textContent='…';
+  try{
+    var r=await fetch('/files/api/tree?domain_id='+FM.did+'&path='+encodeURIComponent(rel), {credentials:'same-origin'});
+    var d=await r.json();
+    var frag=document.createDocumentFragment();
+    d.dirs.forEach(function(sub){ frag.appendChild(fmTreeMakeNode(sub, depth+1)); });
+    node.parentNode.insertBefore(frag, node.nextSibling);
+    node.dataset.loaded='1';
+  }catch(e){}
+  if(tw) tw.textContent = prev || '▸';
+}
+async function fmTreeExpand(rel){
+  var node=fmTreeNodeByRel(rel); if(!node) return;
+  await fmTreeLoad(node);
+  node.dataset.open='1'; var tw=node.querySelector('.tw'); if(tw&&tw.textContent.trim()) tw.textContent='▾';
+  fmTreeDirectChildren(rel).forEach(function(c){ c.style.display='flex'; });
+}
+function fmTreeCollapse(rel){
+  var node=fmTreeNodeByRel(rel); if(node){ node.dataset.open='0'; var tw=node.querySelector('.tw'); if(tw&&tw.textContent.trim()) tw.textContent='▸'; }
+  var pref = rel ? rel+'/' : '';
+  Array.prototype.forEach.call(document.querySelectorAll('.fm-tnode'), function(n){
+    var r=n.dataset.rel; if(r && pref && r.indexOf(pref)===0){ n.style.display='none';
+      n.dataset.open='0'; var t=n.querySelector('.tw'); if(t&&t.textContent.trim())t.textContent='▸'; }
+  });
+}
+async function fmTreeToggle(node,e){ e.preventDefault(); e.stopPropagation();
+  if(node.dataset.open==='1') fmTreeCollapse(node.dataset.rel); else await fmTreeExpand(node.dataset.rel); }
+async function fmTreeReveal(path){
+  Array.prototype.forEach.call(document.querySelectorAll('.fm-tnode.active'), function(n){ n.classList.remove('active'); });
+  var segs=path?path.split('/'):[]; var acc='';
+  for(var i=0;i<segs.length;i++){ acc = acc ? acc+'/'+segs[i] : segs[i];
+    if(i<segs.length-1){ await fmTreeExpand(acc); } }
+  var node=fmTreeNodeByRel(path);
+  if(node){ node.classList.add('active'); try{ node.scrollIntoView({block:'nearest'}); }catch(e){} }
+  else if(!path){ var r=fmTreeNodeByRel(''); if(r) r.classList.add('active'); }
+}
+// wire the server-rendered root-folder arrows
+Array.prototype.forEach.call(document.querySelectorAll('#fm-tree-list .fm-tnode'), function(n){
+  var tw=n.querySelector('.tw'); if(tw && tw.textContent.trim()==='▸') tw.addEventListener('click', function(e){ fmTreeToggle(n,e); });
+});
+
+// init
+fmBindRows(); fmApplyPath(); fmTreeReveal(FM.path);
 </script>
 {% endif %}
 {% endblock %}
