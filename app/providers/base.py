@@ -1041,3 +1041,16 @@ class Provider(ABC):
         Empty list when absent. Caller enforces domain ownership.
         """
 
+    @abstractmethod
+    def account_live_usage(self, users: Sequence[str]) -> dict[str, dict]:
+        """Live CPU% and RAM per hosting account, for the WHM Resource Usage page.
+
+        Maps each account's system user to the processes it owns and returns
+        {system_user: {"cpu": <percent of total CPU>, "mem_mb": <RSS in MB>,
+        "procs": <process count>}}. CPU is the delta since the previous call
+        (so the first call reads 0 and it becomes live once the page polls),
+        which keeps it cheap enough to refresh every few seconds without a
+        blocking sample. Disk is computed separately (it's a slow directory
+        walk, not real-time). Admin-only at the router layer.
+        """
+

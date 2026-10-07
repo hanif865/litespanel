@@ -726,6 +726,95 @@ async def service_status(
     )
 
 
+# --- Resource Usage (admin-only, real-time) -------------------------------
+# WHM "which account is eating disk / RAM / CPU", refreshed live. CPU & RAM come
+# from the provider (per system-user /proc sampling on linux) on a short poll;
+# disk is a slower directory walk, cached briefly and shown per account.
+import time as _time
+
+_DISK_CACHE: dict = {"at": 0.0, "by_id": {}}
+_DISK_TTL = 120  # seconds — a per-account disk walk is expensive, so don't redo it each poll
+
+
+def _resource_accounts(db: Session) -> list[User]:
+    """Every account, newest-name order, for the resource table."""
+    return list(db.scalars(select(User).order_by(User.username)).all())
+
+
+def _sys_user(acc: User) -> str:
+    return acc.system_user or acc.username
+
+
+def _disk_sizes(site_map: dict[int, list[str]]) -> dict[int, float]:
+    """Sum each account's on-disk footprint (MB) from its site directories.
+    Pure paths only (no ORM), so it is safe to run in a threadpool."""
+    out: dict[int, float] = {}
+    for acc_id, sites in site_map.items():
+        total = 0
+        for s in sites:
+            p = Path(s)
+            if p.exists():
+                total += _dir_size(p)
+        out[acc_id] = round(total / (1024 * 1024), 1)
+    return out
+
+
+def _live_rows(db: Session) -> tuple[list[dict], dict]:
+    """Per-account live CPU%/RAM/procs + a host summary. No disk (slow)."""
+    from .. import metrics
+
+    accounts = _resource_accounts(db)
+    sysusers = {a.id: _sys_user(a) for a in accounts}
+    live = get_provider().account_live_usage(list(dict.fromkeys(sysusers.values())))
+    rows = []
+    for a in accounts:
+        u = live.get(sysusers[a.id], {})
+        rows.append({
+            "id": a.id, "account": a.username, "user": sysusers[a.id],
+            "role": a.role, "suspended": bool(a.suspended),
+            "cpu": u.get("cpu", 0.0), "mem_mb": u.get("mem_mb", 0.0),
+            "procs": u.get("procs", 0),
+        })
+    host = {"cpu": metrics.cpu_percent(0.1), "mem": metrics.mem_percent()}
+    return rows, host
+
+
+@router.get("/resources")
+async def resources(request: Request, refresh: int = 0,
+                    admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    accounts = _resource_accounts(db)
+    # Disk — cached; recompute when stale or when explicitly asked (?refresh=1).
+    now = _time.time()
+    if refresh or not _DISK_CACHE["by_id"] or (now - _DISK_CACHE["at"]) > _DISK_TTL:
+        site_map = {a.id: [str(Path(d.docroot).parent) for d in a.domains] for a in accounts}
+        by_id = await run_in_threadpool(_disk_sizes, site_map)
+        _DISK_CACHE.update(at=now, by_id=by_id)
+    disk = _DISK_CACHE["by_id"]
+    rows, host = _live_rows(db)
+    for r in rows:
+        r["disk_mb"] = disk.get(r["id"], 0.0)
+    disk_age = int(now - _DISK_CACHE["at"])
+    return templates.TemplateResponse(
+        request, "whm/resources.html",
+        {"user": admin, "active": "resources", "rows": rows, "host": host,
+         "disk_age": disk_age},
+    )
+
+
+@router.get("/resources/live")
+def resources_live(request: Request, admin: User = Depends(require_admin),
+                   db: Session = Depends(get_db)):
+    from fastapi.responses import JSONResponse
+
+    rows, host = _live_rows(db)
+    # Fold in the cached disk so the poll can keep the disk column populated
+    # without re-walking the tree.
+    disk = _DISK_CACHE["by_id"]
+    for r in rows:
+        r["disk_mb"] = disk.get(r["id"], 0.0)
+    return JSONResponse({"ok": True, "rows": rows, "host": host})
+
+
 # --- Panel Update (self-update — admin only) ------------------------------
 # Update the panel software itself: sync to the latest code, run migrations, and
 # restart — all hosted data preserved. Like cPanel/WHM's "Upgrade to Latest

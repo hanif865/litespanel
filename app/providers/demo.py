@@ -207,6 +207,24 @@ class DemoProvider(Provider):
         from .. import php_catalog
         return version in php_catalog.PHP_VERSIONS
 
+    def account_live_usage(self, users) -> dict[str, dict]:
+        # No real /proc on the dev box: synthesize plausible, lightly-jittering
+        # numbers so the WHM Resource Usage page is live end-to-end in demo.
+        import hashlib
+        import random
+
+        out: dict[str, dict] = {}
+        for u in users:
+            seed = int(hashlib.sha256(u.encode()).hexdigest(), 16) % 1000
+            base_mem = 40 + seed % 180          # stable per-account baseline
+            base_cpu = (seed % 25)
+            out[u] = {
+                "cpu": round(max(0.0, base_cpu + random.uniform(-4, 8)), 1),
+                "mem_mb": round(base_mem + random.uniform(-6, 6), 1),
+                "procs": 1 + seed % 5,
+            }
+        return out
+
     def install_php_version(self, version: str) -> tuple[bool, str]:
         from .. import php_catalog
         if version not in php_catalog.PHP_VERSIONS:

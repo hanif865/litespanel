@@ -1,0 +1,123 @@
+{% extends "whm_base.html" %}
+{% block title %}Resource Usage{% endblock %}
+{% block content %}
+<div class="whm-page-head">
+  <h1>Resource Usage</h1>
+  <p class="muted">Live per-account CPU and memory, refreshed automatically, plus each
+    account's disk footprint — so you can see at a glance which account is working the
+    server hardest. CPU and RAM update every few seconds; disk is heavier to measure, so
+    it's cached (<span id="disk-age">{{ disk_age }}</span>s ago · <a href="/whm/resources?refresh=1">recalculate</a>).</p>
+</div>
+
+<div class="card" style="display:flex;gap:1.4rem;flex-wrap:wrap;align-items:center">
+  <div><div class="small muted">HOST CPU</div><div style="font-size:1.4rem;font-weight:700"><span id="host-cpu">{{ host.cpu }}</span>%</div></div>
+  <div style="flex:1;min-width:160px"><div class="meter"><span id="host-cpu-bar" style="width:{{ host.cpu }}%"></span></div></div>
+  <div><div class="small muted">HOST MEMORY</div><div style="font-size:1.4rem;font-weight:700"><span id="host-mem">{{ host.mem }}</span>%</div></div>
+  <div style="flex:1;min-width:160px"><div class="meter"><span id="host-mem-bar" style="width:{{ host.mem }}%"></span></div></div>
+  <label class="small" style="display:flex;align-items:center;gap:.4rem;margin-left:auto">
+    <input type="checkbox" id="auto" checked> Auto-refresh
+  </label>
+</div>
+
+<div class="card">
+  <table class="table" id="res-table">
+    <thead><tr>
+      <th data-sort="account">Account</th>
+      <th data-sort="cpu" class="num">CPU %</th>
+      <th data-sort="mem_mb" class="num">RAM (MB)</th>
+      <th data-sort="disk_mb" class="num">Disk (MB)</th>
+      <th data-sort="procs" class="num">Procs</th>
+    </tr></thead>
+    <tbody id="res-body">
+      {% for r in rows %}
+      <tr data-id="{{ r.id }}">
+        <td>
+          <a href="/whm/accounts/{{ r.id }}"><strong>{{ r.account }}</strong></a>
+          {% if r.suspended %}<span class="pill" style="background:#fdecec;color:#e5484d">suspended</span>{% endif %}
+          <div class="small muted">{{ r.user }} · {{ r.role }}</div>
+        </td>
+        <td class="num cpu">{{ r.cpu }}</td>
+        <td class="num mem">{{ r.mem_mb }}</td>
+        <td class="num disk">{{ r.disk_mb }}</td>
+        <td class="num procs">{{ r.procs }}</td>
+      </tr>
+      {% endfor %}
+      {% if not rows %}<tr><td colspan="5" class="muted">No accounts yet.</td></tr>{% endif %}
+    </tbody>
+  </table>
+</div>
+
+<style>
+  #res-table th[data-sort]{ cursor:pointer; user-select:none; white-space:nowrap; }
+  #res-table th[data-sort]:hover{ color:var(--orange); }
+  #res-table th.num, #res-table td.num{ text-align:right; }
+  #res-table td.cpu.hot{ color:var(--danger); font-weight:700; }
+  .meter{ display:block; height:10px; background:var(--border,#e5e7eb); border-radius:6px; overflow:hidden; }
+  .meter > span{ display:block; height:100%; background:var(--orange,#ff6c2c); transition:width .4s; }
+</style>
+
+<script>
+(function(){
+  var sortKey='cpu', sortDir=-1;  // default: busiest CPU first
+  function fmt(n){ return (Math.round(n*10)/10).toLocaleString(); }
+
+  function applyRow(tr, r){
+    tr.querySelector('.cpu').textContent = fmt(r.cpu);
+    tr.querySelector('.cpu').classList.toggle('hot', r.cpu >= 50);
+    tr.querySelector('.mem').textContent = fmt(r.mem_mb);
+    tr.querySelector('.disk').textContent = fmt(r.disk_mb);
+    tr.querySelector('.procs').textContent = r.procs;
+    tr.dataset.cpu=r.cpu; tr.dataset.mem_mb=r.mem_mb; tr.dataset.disk_mb=r.disk_mb;
+    tr.dataset.procs=r.procs; tr.dataset.account=r.account;
+  }
+  function sortRows(){
+    var body=document.getElementById('res-body');
+    var rows=[].slice.call(body.querySelectorAll('tr[data-id]'));
+    rows.sort(function(a,b){
+      var x=a.dataset[sortKey], y=b.dataset[sortKey];
+      if(sortKey==='account'){ return sortDir * String(x).localeCompare(String(y)); }
+      return sortDir * ((parseFloat(x)||0) - (parseFloat(y)||0));
+    });
+    rows.forEach(function(r){ body.appendChild(r); });
+  }
+  document.querySelectorAll('#res-table th[data-sort]').forEach(function(th){
+    th.addEventListener('click', function(){
+      var k=th.dataset.sort;
+      if(sortKey===k) sortDir=-sortDir; else { sortKey=k; sortDir = (k==='account')?1:-1; }
+      sortRows();
+    });
+  });
+
+  async function refresh(){
+    try{
+      var r=await fetch('/whm/resources/live',{credentials:'same-origin'});
+      if(!r.ok) return;
+      var d=await r.json();
+      document.getElementById('host-cpu').textContent=fmt(d.host.cpu);
+      document.getElementById('host-mem').textContent=fmt(d.host.mem);
+      document.getElementById('host-cpu-bar').style.width=Math.min(100,d.host.cpu)+'%';
+      document.getElementById('host-mem-bar').style.width=Math.min(100,d.host.mem)+'%';
+      var byId={}; d.rows.forEach(function(x){ byId[x.id]=x; });
+      document.querySelectorAll('#res-body tr[data-id]').forEach(function(tr){
+        var x=byId[parseInt(tr.dataset.id,10)]; if(x) applyRow(tr,x);
+      });
+      sortRows();
+    }catch(e){/* keep last values on a hiccup */}
+  }
+
+  // seed dataset from server-rendered cells so the first sort works before any poll
+  document.querySelectorAll('#res-body tr[data-id]').forEach(function(tr){
+    tr.dataset.cpu=tr.querySelector('.cpu').textContent;
+    tr.dataset.mem_mb=tr.querySelector('.mem').textContent;
+    tr.dataset.disk_mb=tr.querySelector('.disk').textContent;
+    tr.dataset.procs=tr.querySelector('.procs').textContent;
+    tr.dataset.account=tr.querySelector('strong').textContent;
+  });
+  sortRows();
+
+  var timer=setInterval(function(){ if(document.getElementById('auto').checked) refresh(); }, 3000);
+  // one quick refresh so CPU (which is a delta, 0 on first server render) goes live fast
+  setTimeout(refresh, 1200);
+})();
+</script>
+{% endblock %}
