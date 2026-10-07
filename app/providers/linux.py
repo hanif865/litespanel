@@ -30,6 +30,9 @@ from .. import db_privileges
 # On Debian/Ubuntu these are the conventional locations.
 NGINX_SITES = Path("/etc/nginx/sites-enabled")
 WEB_ROOT = Path("/var/www")
+# Previous per-UID CPU-jiffies sample, so account_live_usage() can report CPU%
+# as the delta since the last poll (cheap — no blocking sample per request).
+_CPU_SAMPLE: dict = {}
 # Web Disk (WebDAV) artifacts: a shared htpasswd credential store plus a
 # per-login nginx dav location snippet an admin includes into a WebDAV server
 # block. Kept out of sites-enabled so it never disturbs a real vhost.
@@ -3220,3 +3223,69 @@ say "=== panel update finished successfully (now at $NEW) ==="
     def read_error_log(self, domain: str, max_lines: int = 200) -> list[str]:
         text = tail_file(WEBLOG_DIR / f"{domain}.error.log", lines=max_lines)
         return text.splitlines() if text else []
+
+    def account_live_usage(self, users: Sequence[str]) -> dict[str, dict]:
+        import os
+        import time
+
+        try:
+            import pwd
+        except ImportError:  # not Linux — nothing to sample
+            return {u: {"cpu": 0.0, "mem_mb": 0.0, "procs": 0} for u in users}
+
+        # Resolve each account's uid, and keep a uid->user map (an account with no
+        # system user yet, or a since-deleted one, simply reports zero).
+        uid_user: dict[int, str] = {}
+        for u in users:
+            try:
+                uid_user[pwd.getpwnam(u).pw_uid] = u
+            except (KeyError, TypeError):
+                continue
+
+        page = os.sysconf("SC_PAGE_SIZE")
+        clk = os.sysconf("SC_CLK_TCK") or 100
+        ncpu = os.cpu_count() or 1
+
+        jiffies: dict[int, int] = {}   # uid -> utime+stime (ticks)
+        rss_bytes: dict[int, int] = {}
+        nproc: dict[int, int] = {}
+        for pid in os.listdir("/proc"):
+            if not pid.isdigit():
+                continue
+            try:
+                uid = os.stat(f"/proc/{pid}").st_uid
+                if uid not in uid_user:
+                    continue
+                with open(f"/proc/{pid}/stat") as fh:
+                    data = fh.read()
+                # comm (field 2) is parenthesised and may contain spaces/parens,
+                # so split on the text AFTER the last ')'. Then field 3 (state)
+                # is rest[0]; utime=field14=rest[11], stime=field15=rest[12],
+                # rss(pages)=field24=rest[21].
+                rest = data[data.rindex(")") + 2:].split()
+                jiffies[uid] = jiffies.get(uid, 0) + int(rest[11]) + int(rest[12])
+                rss_bytes[uid] = rss_bytes.get(uid, 0) + int(rest[21]) * page
+                nproc[uid] = nproc.get(uid, 0) + 1
+            except (OSError, ValueError, IndexError):
+                continue  # process vanished mid-scan, or unreadable
+
+        now = time.monotonic()
+        prev = _CPU_SAMPLE.get("at")
+        prev_j = _CPU_SAMPLE.get("jiffies", {})
+        dt = (now - prev) if prev else 0.0
+        _CPU_SAMPLE["at"] = now
+        _CPU_SAMPLE["jiffies"] = jiffies
+
+        out: dict[str, dict] = {}
+        for uid, user in uid_user.items():
+            cpu = 0.0
+            if dt > 0 and uid in prev_j:
+                dj = jiffies.get(uid, 0) - prev_j[uid]
+                # ticks -> CPU-seconds -> fraction of all cores -> percent.
+                cpu = max(0.0, round((dj / clk) / dt / ncpu * 100, 1))
+            out[user] = {
+                "cpu": cpu,
+                "mem_mb": round(rss_bytes.get(uid, 0) / (1024 * 1024), 1),
+                "procs": nproc.get(uid, 0),
+            }
+        return out
