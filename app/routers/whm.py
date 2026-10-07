@@ -760,20 +760,28 @@ def _disk_sizes(site_map: dict[int, list[str]]) -> dict[int, float]:
 
 
 def _live_rows(db: Session) -> tuple[list[dict], dict]:
-    """Per-account live CPU%/RAM/procs + a host summary. No disk (slow)."""
-    from .. import metrics
+    """Per-account live CPU%/RAM/procs (+ 60s peak) and a host summary. No disk.
+
+    Prefers the background sampler's snapshot (so bursty ondemand-FPM workers are
+    caught and a short peak is retained); falls back to an on-demand sample if the
+    sampler hasn't produced a tick yet."""
+    from .. import metrics, resmon
 
     accounts = _resource_accounts(db)
     sysusers = {a.id: _sys_user(a) for a in accounts}
-    live = get_provider().account_live_usage(list(dict.fromkeys(sysusers.values())))
+    snap = resmon.snapshot()
+    if not snap:  # sampler not warmed up yet — sample once now
+        snap = get_provider().account_live_usage(list(dict.fromkeys(sysusers.values())))
     rows = []
     for a in accounts:
-        u = live.get(sysusers[a.id], {})
+        u = snap.get(sysusers[a.id], {})
         rows.append({
             "id": a.id, "account": a.username, "user": sysusers[a.id],
             "role": a.role, "suspended": bool(a.suspended),
-            "cpu": u.get("cpu", 0.0), "mem_mb": u.get("mem_mb", 0.0),
+            "cpu": round(u.get("cpu", 0.0), 1), "mem_mb": round(u.get("mem_mb", 0.0), 1),
             "procs": u.get("procs", 0),
+            "peak_cpu": round(u.get("peak_cpu", u.get("cpu", 0.0)), 1),
+            "peak_mem_mb": round(u.get("peak_mem_mb", u.get("mem_mb", 0.0)), 1),
         })
     host = {"cpu": metrics.cpu_percent(0.1), "mem": metrics.mem_percent()}
     return rows, host
