@@ -23,8 +23,8 @@
   <table class="table" id="res-table">
     <thead><tr>
       <th data-sort="account">Account</th>
-      <th data-sort="cpu" class="num">CPU %</th>
-      <th data-sort="mem_mb" class="num">RAM (MB)</th>
+      <th data-sort="cpu" class="num">CPU % <span class="muted small">(60s peak)</span></th>
+      <th data-sort="mem_mb" class="num">RAM MB <span class="muted small">(60s peak)</span></th>
       <th data-sort="disk_mb" class="num">Disk (MB)</th>
       <th data-sort="procs" class="num">Procs</th>
     </tr></thead>
@@ -36,8 +36,8 @@
           {% if r.suspended %}<span class="pill" style="background:#fdecec;color:#e5484d">suspended</span>{% endif %}
           <div class="small muted">{{ r.user }} · {{ r.role }}</div>
         </td>
-        <td class="num cpu">{{ r.cpu }}</td>
-        <td class="num mem">{{ r.mem_mb }}</td>
+        <td class="num"><span class="cpu">{{ r.cpu }}</span> <span class="pk muted small">↑{{ r.peak_cpu }}</span></td>
+        <td class="num"><span class="mem">{{ r.mem_mb }}</span> <span class="pkm muted small">↑{{ r.peak_mem_mb }}</span></td>
         <td class="num disk">{{ r.disk_mb }}</td>
         <td class="num procs">{{ r.procs }}</td>
       </tr>
@@ -45,6 +45,11 @@
       {% if not rows %}<tr><td colspan="5" class="muted">No accounts yet.</td></tr>{% endif %}
     </tbody>
   </table>
+  <p class="muted small" style="margin:.6rem 0 0">
+    CPU & RAM are live (ondemand PHP-FPM means an idle account shows 0 — the small
+    <strong>↑peak</strong> is the highest seen in the last 60 seconds, so a bursty
+    site still registers). Disk is the account's total on-disk size.
+  </p>
 </div>
 
 <style>
@@ -58,13 +63,15 @@
 
 <script>
 (function(){
-  var sortKey='cpu', sortDir=-1;  // default: busiest CPU first
+  var sortKey='disk_mb', sortDir=-1;  // default: biggest disk first (the "space" question)
   function fmt(n){ return (Math.round(n*10)/10).toLocaleString(); }
 
   function applyRow(tr, r){
     tr.querySelector('.cpu').textContent = fmt(r.cpu);
     tr.querySelector('.cpu').classList.toggle('hot', r.cpu >= 50);
     tr.querySelector('.mem').textContent = fmt(r.mem_mb);
+    if(tr.querySelector('.pk'))  tr.querySelector('.pk').textContent  = '↑'+fmt(r.peak_cpu);
+    if(tr.querySelector('.pkm')) tr.querySelector('.pkm').textContent = '↑'+fmt(r.peak_mem_mb);
     tr.querySelector('.disk').textContent = fmt(r.disk_mb);
     tr.querySelector('.procs').textContent = r.procs;
     tr.dataset.cpu=r.cpu; tr.dataset.mem_mb=r.mem_mb; tr.dataset.disk_mb=r.disk_mb;

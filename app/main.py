@@ -92,6 +92,26 @@ def _startup() -> None:
     init_db()
     _bootstrap_admin()
     _security_warnings()
+    _start_resource_sampler()
+
+
+def _start_resource_sampler() -> None:
+    """Begin background per-account CPU/RAM sampling for the WHM Resource Usage
+    page, so idle-but-bursty accounts (ondemand PHP-FPM) still register. Defensive:
+    any failure here must never stop the app from serving."""
+    try:
+        from . import resmon
+        from sqlalchemy import select
+        from .providers import get_provider
+
+        def _sample() -> dict:
+            with SessionLocal() as db:
+                users = [u.system_user or u.username for u in db.scalars(select(User)).all()]
+            return get_provider().account_live_usage(list(dict.fromkeys(users)))
+
+        resmon.start(_sample)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _security_warnings() -> None:
