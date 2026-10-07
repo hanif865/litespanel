@@ -3017,22 +3017,34 @@ class LinuxProvider(Provider):
         if cur["commit"] is None:
             return {"available": False, "current": cur["short"], "latest": cur["short"],
                     "behind": 0, "message": "The panel is not a git repository."}
-        # Fetch the remote (read-only, doesn't change the working tree)
+        # Fetch the remote (read-only, doesn't change the working tree).
+        # -c safe.directory=* preempts git's "dubious ownership" refusal when the
+        # checkout is owned by a different user than the panel process. On failure
+        # we surface git's own stderr (auth prompt, DNS, no such branch, …) — the
+        # bare CalledProcessError string only says "exit status 128", which hides
+        # the actual reason an admin needs to fix it.
         try:
-            subprocess.run(["git", "fetch", "origin", config.PANEL_REPO_BRANCH],
-                           cwd=str(panel_dir), capture_output=True, text=True,
-                           timeout=30, check=True)
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
+            proc = subprocess.run(
+                ["git", "-c", "safe.directory=*", "fetch", "origin", config.PANEL_REPO_BRANCH],
+                cwd=str(panel_dir), capture_output=True, text=True, timeout=30)
+        except (subprocess.TimeoutExpired, OSError) as exc:
             return {"available": False, "current": cur["short"], "latest": cur["short"],
                     "behind": 0, "message": f"Could not fetch remote: {exc}"}
+        if proc.returncode != 0:
+            reason = (proc.stderr or proc.stdout).strip() or f"git exited {proc.returncode}"
+            return {"available": False, "current": cur["short"], "latest": cur["short"],
+                    "behind": 0, "message": f"Could not fetch remote: {reason}"}
         # Compare HEAD with origin/<branch>
         try:
             proc = subprocess.run(
-                ["git", "rev-list", "--count", f"HEAD..origin/{config.PANEL_REPO_BRANCH}"],
+                ["git", "-c", "safe.directory=*", "rev-list", "--count",
+                 f"HEAD..origin/{config.PANEL_REPO_BRANCH}"],
                 cwd=str(panel_dir), capture_output=True, text=True, timeout=10)
             behind = int(proc.stdout.strip()) if proc.returncode == 0 else 0
-            proc = subprocess.run(["git", "rev-parse", f"origin/{config.PANEL_REPO_BRANCH}"],
-                                  cwd=str(panel_dir), capture_output=True, text=True)
+            proc = subprocess.run(
+                ["git", "-c", "safe.directory=*", "rev-parse",
+                 f"origin/{config.PANEL_REPO_BRANCH}"],
+                cwd=str(panel_dir), capture_output=True, text=True)
             latest_hash = proc.stdout.strip() if proc.returncode == 0 else cur["commit"]
             latest_short = latest_hash[:7] if latest_hash else cur["short"]
         except (ValueError, subprocess.TimeoutExpired, OSError):
@@ -3080,15 +3092,23 @@ say "=== panel update started ==="
 command -v git >/dev/null 2>&1 || {{ apt-get update -qq && apt-get install -y -qq git; }} >> "$LOG" 2>&1
 cd "{panel_dir}" || fail "cannot cd into {panel_dir}"
 
+# Never let git refuse over "dubious ownership" when the checkout and the panel
+# process are owned by different users.
+git config --global --add safe.directory "{panel_dir}" >> "$LOG" 2>&1 || true
+
 # Ensure the install dir is a git checkout tracking origin/{branch}. install.sh
 # copies files (no .git), so on the first update we initialise in place. This
 # only rewrites tracked files; .venv and DATA_DIR are untouched.
 if [ ! -d .git ]; then
     say "not a git checkout yet — initialising from {repo}"
     git init -q >> "$LOG" 2>&1 || fail "git init failed"
-    git remote add origin "{repo}" 2>/dev/null || git remote set-url origin "{repo}"
 fi
-git fetch origin "{branch}" >> "$LOG" 2>&1 || fail "git fetch failed"
+# ALWAYS point origin at the configured public repo URL. A pre-existing checkout
+# may have a stale/SSH/token origin that now fails to fetch (exit 128); forcing
+# the known HTTPS URL here makes the Update button self-heal that.
+git remote add origin "{repo}" 2>/dev/null || git remote set-url origin "{repo}"
+say "origin -> $(git remote get-url origin 2>/dev/null)"
+git fetch origin "{branch}" >> "$LOG" 2>&1 || fail "git fetch failed (origin: $(git remote get-url origin 2>/dev/null)) — see errors above"
 git reset --hard "origin/{branch}" >> "$LOG" 2>&1 || fail "git reset failed"
 git branch --set-upstream-to="origin/{branch}" 2>/dev/null || true
 
