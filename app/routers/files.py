@@ -516,6 +516,19 @@ def _redir(domain_id: int, path: str) -> RedirectResponse:
     return RedirectResponse(f"/files?domain_id={domain_id}&path={path}", status_code=303)
 
 
+def _op_flash(verb: str, where: str, n: int, errors: list[str]) -> str:
+    """One flash summarising a bulk file op: how many succeeded, and the first
+    failure's reason if any (so a permission/ownership error surfaces to the user
+    instead of a 500 page)."""
+    if n and errors:
+        return f"{verb} {n} item(s) {where}; {len(errors)} failed — {errors[0]}"
+    if errors:
+        return f"❌ Nothing {where} — {errors[0]}"
+    if n:
+        return f"{verb} {n} item(s) {where}."
+    return "❌ Nothing selected."
+
+
 def _resolve_targets(docroot: Path, rels: list[str]) -> list[Path]:
     """Resolve a list of relative paths under docroot, dropping the root itself."""
     root = docroot.resolve()
@@ -605,8 +618,12 @@ def trash(
     domain = _owned_domain(db, user, domain_id)
     docroot = Path(domain.docroot)
     trash_dir = _safe_join(docroot, TRASH)
-    trash_dir.mkdir(exist_ok=True)
-    n = 0
+    try:
+        trash_dir.mkdir(exist_ok=True)
+    except OSError as exc:
+        _flash(request, f"❌ Could not create the Trash folder: {exc}")
+        return _redir(domain_id, path)
+    n, errors = 0, []
     for t in _resolve_targets(docroot, targets):
         if TRASH in t.relative_to(docroot.resolve()).parts:
             continue
@@ -614,9 +631,12 @@ def trash(
         i = 1
         while dest.exists():
             dest, i = trash_dir / f"{t.name}.{i}", i + 1
-        shutil.move(str(t), str(dest))
-        n += 1
-    _flash(request, f"🗑️ Moved {n} item(s) to Trash." if n else "❌ Nothing selected.")
+        try:
+            shutil.move(str(t), str(dest))
+            n += 1
+        except OSError as exc:
+            errors.append(f"{t.name}: {exc}")
+    _flash(request, _op_flash("🗑️ Moved", "to Trash", n, errors))
     return _redir(domain_id, path)
 
 
@@ -668,14 +688,17 @@ def delete_permanent(
     db: Session = Depends(get_db),
 ):
     domain = _owned_domain(db, user, domain_id)
-    n = 0
+    n, errors = 0, []
     for t in _resolve_targets(Path(domain.docroot), targets):
-        if t.is_dir():
-            shutil.rmtree(t, ignore_errors=True)
-        elif t.exists():
-            t.unlink()
-        n += 1
-    _flash(request, f"❌ Permanently deleted {n} item(s).")
+        try:
+            if t.is_dir():
+                shutil.rmtree(t, ignore_errors=True)
+            elif t.exists():
+                t.unlink()
+            n += 1
+        except OSError as exc:
+            errors.append(f"{t.name}: {exc}")
+    _flash(request, _op_flash("❌ Permanently deleted", "", n, errors))
     return _redir(domain_id, path)
 
 
@@ -699,8 +722,11 @@ def rename_entry(
     if dest.exists():
         _flash(request, f"❌ '{dest.name}' already exists.")
     else:
-        src.rename(dest)
-        _flash(request, f"✏️ Renamed to '{dest.name}'.")
+        try:
+            src.rename(dest)
+            _flash(request, f"✏️ Renamed to '{dest.name}'.")
+        except OSError as exc:
+            _flash(request, f"❌ Could not rename '{src.name}': {exc}")
     return _redir(domain_id, path)
 
 
@@ -720,18 +746,21 @@ def copy_entries(
     dest_domain, dest_dir = _resolve_dest(request, db, user, domain, dest_domain_id, dest)
     if dest_dir is None:
         return _redir(domain_id, path)
-    n = 0
+    n, errors = 0, []
     for src in _resolve_targets(docroot, targets):
         out = dest_dir / src.name
         if out == src or out.exists():
             continue
-        if src.is_dir():
-            shutil.copytree(src, out)
-        else:
-            shutil.copy2(src, out)
-        _own(dest_domain, out)
-        n += 1
-    _flash(request, f"📋 Copied {n} item(s) into '{_dest_label(dest_domain, domain, dest)}'.")
+        try:
+            if src.is_dir():
+                shutil.copytree(src, out)
+            else:
+                shutil.copy2(src, out)
+            _own(dest_domain, out)
+            n += 1
+        except OSError as exc:
+            errors.append(f"{src.name}: {exc}")
+    _flash(request, _op_flash("📋 Copied", f"into '{_dest_label(dest_domain, domain, dest)}'", n, errors))
     return _redir(domain_id, path)
 
 
@@ -751,14 +780,17 @@ def move_entries(
     dest_domain, dest_dir = _resolve_dest(request, db, user, domain, dest_domain_id, dest)
     if dest_dir is None:
         return _redir(domain_id, path)
-    n = 0
+    n, errors = 0, []
     for t in _resolve_targets(docroot, targets):
         target = dest_dir / t.name
         if target != t and not target.exists():
-            shutil.move(str(t), str(target))
-            _own(dest_domain, target)
-            n += 1
-    _flash(request, f"➡️ Moved {n} item(s) to '{_dest_label(dest_domain, domain, dest)}'.")
+            try:
+                shutil.move(str(t), str(target))
+                _own(dest_domain, target)
+                n += 1
+            except OSError as exc:
+                errors.append(f"{t.name}: {exc}")
+    _flash(request, _op_flash("➡️ Moved", f"to '{_dest_label(dest_domain, domain, dest)}'", n, errors))
     return _redir(domain_id, path)
 
 
@@ -811,14 +843,18 @@ def compress_entries(
     if not name.lower().endswith(".zip"):
         name += ".zip"
     dest = _safe_join(_safe_join(docroot, path), name)
-    with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as zf:
-        for t in items:
-            if t.is_dir():
-                for f in t.rglob("*"):
-                    if f.is_file():
-                        zf.write(f, f"{t.name}/{f.relative_to(t).as_posix()}")
-            elif t.is_file():
-                zf.write(t, t.name)
+    try:
+        with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as zf:
+            for t in items:
+                if t.is_dir():
+                    for f in t.rglob("*"):
+                        if f.is_file():
+                            zf.write(f, f"{t.name}/{f.relative_to(t).as_posix()}")
+                elif t.is_file():
+                    zf.write(t, t.name)
+    except OSError as exc:
+        _flash(request, f"❌ Could not create '{name}': {exc}")
+        return _redir(domain_id, path)
     _own(domain, dest)
     _flash(request, f"🗜️ Created '{name}' from {len(items)} item(s).")
     return _redir(domain_id, path)
